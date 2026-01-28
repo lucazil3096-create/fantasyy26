@@ -1494,7 +1494,7 @@
         }
 
         // Buscar estatísticas dos jogadores em uma partida
-        // Cache de estatísticas de jogadores no Firebase (5 minutos)
+        // Cache de estatísticas de jogadores no Firebase (10 minutos)
         async function getPlayerStats(fixtureId) {
             try {
                 // Verificar cache no Firebase primeiro
@@ -1504,8 +1504,8 @@
                     
                     if (cache && cache.updatedAt) {
                         const cacheAge = Date.now() - cache.updatedAt;
-                        // Cache válido por 5 minutos
-                        if (cacheAge < 5 * 60 * 1000) {
+                        // Cache válido por 10 minutos
+                        if (cacheAge < 10 * 60 * 1000) {
                             console.log(`📦 Stats do jogo ${fixtureId} (cache Firebase)`);
                             return cache.data || [];
                         }
@@ -6941,36 +6941,23 @@
             await fetchLiveFixtures();
         }, 1500);
 
-        // Atualizar jogos a cada 2 MINUTOS
-        // Como usa cache no Firebase, não gasta muitas requisições da API!
+        // Atualizar PONTUAÇÃO a cada 5 MINUTOS (placar não atualiza auto - economia de requisições)
+        // Usuário pode atualizar placar manualmente clicando no botão
         setInterval(() => {
-            if (state.screen === 'lineup') {
-                // Se não tem jogos carregados, tentar carregar
-                if (!state.liveFixtures || state.liveFixtures.length === 0) {
-                    console.log('🔄 Tentando carregar jogos...');
-                    fetchLiveFixtures();
-                    return;
-                }
-                
-                // Se tem jogos, verificar se algum está ao vivo para atualizar
-                const hasLive = state.liveFixtures.some(f => {
+            if (state.screen === 'lineup' && state.isConfirmed && !state.isUpdatingScores) {
+                // Verificar se tem jogos ao vivo para atualizar pontuação
+                const hasLive = state.liveFixtures && state.liveFixtures.some(f => {
                     if (!f || !f.fixture || !f.fixture.status) return false;
                     const status = f.fixture.status.short;
-                    return ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'INT', 'LIVE'].includes(status);
+                    return ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'INT', 'LIVE', 'FT'].includes(status);
                 });
                 
                 if (hasLive) {
-                    console.log('🔄 Atualizando jogos ao vivo...');
-                    fetchLiveFixtures();
-                    
-                    // Também atualizar pontuação se confirmado
-                    if (state.isConfirmed && !state.isUpdatingScores) {
-                        console.log('📊 Atualizando pontuação ao vivo...');
-                        syncRoundScores();
-                    }
+                    console.log('📊 Atualizando pontuação...');
+                    syncRoundScores();
                 }
             }
-        }, 2 * 60 * 1000); // 2 minutos
+        }, 5 * 60 * 1000); // 5 minutos
     </script>
 </body>
 </html>
