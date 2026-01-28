@@ -306,6 +306,9 @@
             liveFixtures: [],
             isLoadingFixtures: false,
             fixturesLastUpdate: null,
+            // Pontuação ao vivo
+            liveScoresUpdating: false,
+            hasLiveGames: false,
             // Chat
             chatMessages: [],
             chatInput: '',
@@ -319,6 +322,44 @@
         };
 
         // ==================== FUNÇÕES AUXILIARES ====================
+        
+        // Logos dos times do Brasileirão
+        const TEAM_LOGOS = {
+            'Flamengo': 'https://media.api-sports.io/football/teams/127.png',
+            'Palmeiras': 'https://media.api-sports.io/football/teams/121.png',
+            'São Paulo': 'https://media.api-sports.io/football/teams/126.png',
+            'Corinthians': 'https://media.api-sports.io/football/teams/131.png',
+            'Fluminense': 'https://media.api-sports.io/football/teams/124.png',
+            'Botafogo': 'https://media.api-sports.io/football/teams/120.png',
+            'Vasco': 'https://media.api-sports.io/football/teams/133.png',
+            'Grêmio': 'https://media.api-sports.io/football/teams/130.png',
+            'Internacional': 'https://media.api-sports.io/football/teams/119.png',
+            'Atlético-MG': 'https://media.api-sports.io/football/teams/1062.png',
+            'Cruzeiro': 'https://media.api-sports.io/football/teams/129.png',
+            'Santos': 'https://media.api-sports.io/football/teams/128.png',
+            'Bahia': 'https://media.api-sports.io/football/teams/118.png',
+            'Vitória': 'https://media.api-sports.io/football/teams/2129.png',
+            'Athletico-PR': 'https://media.api-sports.io/football/teams/134.png',
+            'Coritiba': 'https://media.api-sports.io/football/teams/123.png',
+            'Bragantino': 'https://media.api-sports.io/football/teams/1193.png',
+            'Fortaleza': 'https://media.api-sports.io/football/teams/1189.png',
+            'Ceará': 'https://media.api-sports.io/football/teams/2304.png',
+            'Sport': 'https://media.api-sports.io/football/teams/137.png',
+            'Juventude': 'https://media.api-sports.io/football/teams/1185.png',
+            'Cuiabá': 'https://media.api-sports.io/football/teams/1200.png',
+            'América-MG': 'https://media.api-sports.io/football/teams/1191.png',
+            'Goiás': 'https://media.api-sports.io/football/teams/1195.png',
+            'Avaí': 'https://media.api-sports.io/football/teams/1198.png',
+            'Mirassol': 'https://media.api-sports.io/football/teams/7848.png',
+            'Chapecoense': 'https://media.api-sports.io/football/teams/1196.png',
+            'Remo': 'https://media.api-sports.io/football/teams/1186.png'
+        };
+        
+        // Função para obter logo do time
+        function getTeamLogo(teamName) {
+            if (!teamName) return null;
+            return TEAM_LOGOS[teamName] || null;
+        }
         
         // Garante que um valor seja um array (Firebase pode retornar objetos)
         function ensureArray(value, defaultLength = 0) {
@@ -1019,6 +1060,7 @@
                             state.users[nick] = {};
                         }
                         // Mesclar dados da nuvem (incluindo starters e reserves para o draft)
+                        // Usar ensureArray para garantir que são arrays
                         state.users[nick] = {
                             ...state.users[nick],
                             // Carregar senha da nuvem se não tiver localmente
@@ -1026,8 +1068,8 @@
                             teamName: cloudUsers[nick].teamName || state.users[nick].teamName,
                             teamLogo: cloudUsers[nick].teamLogo || state.users[nick].teamLogo,
                             coach: cloudUsers[nick].coach || state.users[nick].coach,
-                            starters: cloudUsers[nick].starters || state.users[nick].starters || Array(11).fill(null),
-                            reserves: cloudUsers[nick].reserves || state.users[nick].reserves || Array(7).fill(null),
+                            starters: ensureArray(cloudUsers[nick].starters || state.users[nick].starters, 11),
+                            reserves: ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7),
                             formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                             isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
                             scores: cloudUsers[nick].scores || state.users[nick].scores || {},
@@ -1195,11 +1237,8 @@
                         state.teamName = userData.teamName || '';
                         state.teamLogo = userData.teamLogo || null;
                         state.formation = userData.formation || '4-3-3';
-                        state.starters = Array.isArray(userData.starters) ? userData.starters : Array(11).fill(null);
-                        state.reserves = Array.isArray(userData.reserves) ? userData.reserves : Array(7).fill(null);
-                        // Garantir que têm o tamanho correto
-                        while (state.starters.length < 11) state.starters.push(null);
-                        while (state.reserves.length < 7) state.reserves.push(null);
+                        state.starters = ensureArray(userData.starters, 11);
+                        state.reserves = ensureArray(userData.reserves, 7);
                         state.coach = userData.coach || null;
                         state.isConfirmed = userData.isConfirmed || false;
                         state.scores = userData.scores || {};
@@ -1455,10 +1494,39 @@
         }
 
         // Buscar estatísticas dos jogadores em uma partida
+        // Cache de estatísticas de jogadores no Firebase (5 minutos)
         async function getPlayerStats(fixtureId) {
             try {
+                // Verificar cache no Firebase primeiro
+                if (db) {
+                    const cacheSnapshot = await db.ref('statsCache/' + fixtureId).once('value');
+                    const cache = cacheSnapshot.val();
+                    
+                    if (cache && cache.updatedAt) {
+                        const cacheAge = Date.now() - cache.updatedAt;
+                        // Cache válido por 5 minutos
+                        if (cacheAge < 5 * 60 * 1000) {
+                            console.log(`📦 Stats do jogo ${fixtureId} (cache Firebase)`);
+                            return cache.data || [];
+                        }
+                    }
+                }
+                
+                // Buscar da API
+                console.log(`🌐 Buscando stats do jogo ${fixtureId} (API)`);
                 const res = await apiCall(`/fixtures/players?fixture=${fixtureId}`);
-                return res.response || [];
+                const data = res.response || [];
+                
+                // Salvar no cache do Firebase
+                if (db && data.length > 0) {
+                    db.ref('statsCache/' + fixtureId).set({
+                        data: data,
+                        updatedAt: Date.now()
+                    });
+                    console.log(`💾 Stats salvos no cache Firebase`);
+                }
+                
+                return data;
             } catch (e) {
                 console.error('Erro ao buscar stats:', e);
                 return [];
@@ -1664,13 +1732,14 @@
             return score;
         }
 
-        // Sincronizar pontuação da rodada (silencioso)
+        // Sincronizar pontuação da rodada (silencioso) - INCLUI JOGOS AO VIVO!
         async function syncRoundScores() {
             if (state.isUpdatingScores) return;
             if (!state.isConfirmed) return;
             
             const round = state.selectedRound;
             state.isUpdatingScores = true;
+            state.liveScoresUpdating = true;
             render();
 
             try {
@@ -1681,28 +1750,55 @@
                 if (fixtures.length === 0) {
                     console.log('Nenhum jogo encontrado para esta rodada');
                     state.isUpdatingScores = false;
+                    state.liveScoresUpdating = false;
                     render();
                     return;
                 }
 
-                // Verificar se há jogos finalizados
-                const finishedGames = fixtures.filter(f => f.fixture?.status?.short === 'FT');
-                console.log(`${finishedGames.length} jogos finalizados`);
+                // Status de jogos que queremos processar:
+                // FT = Finalizado, 1H = Primeiro tempo, HT = Intervalo, 2H = Segundo tempo
+                const liveStatuses = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'];
+                const finishedStatuses = ['FT', 'AET', 'PEN'];
+                
+                // Jogos ao vivo
+                const liveGames = fixtures.filter(f => {
+                    const status = f.fixture?.status?.short;
+                    return liveStatuses.includes(status);
+                });
+                
+                // Jogos finalizados
+                const finishedGames = fixtures.filter(f => {
+                    const status = f.fixture?.status?.short;
+                    return finishedStatuses.includes(status);
+                });
+                
+                // Todos os jogos que vamos processar
+                const gamesToProcess = [...liveGames, ...finishedGames];
+                
+                console.log(`🔴 ${liveGames.length} jogos AO VIVO`);
+                console.log(`✅ ${finishedGames.length} jogos finalizados`);
+                
+                // Marcar se tem jogos ao vivo
+                state.hasLiveGames = liveGames.length > 0;
 
-                if (finishedGames.length === 0) {
+                if (gamesToProcess.length === 0) {
                     state.isUpdatingScores = false;
+                    state.liveScoresUpdating = false;
                     render();
                     return;
                 }
 
                 // Inicializar pontuação da rodada
                 if (!state.scores[round]) {
-                    state.scores[round] = { players: {}, coach: 0 };
+                    state.scores[round] = { players: {}, coach: 0, live: false };
                 }
+                
+                // Marcar se a pontuação é ao vivo (ainda tem jogos rolando)
+                state.scores[round].live = liveGames.length > 0;
 
                 // Buscar estatísticas de cada jogo
-                for (let i = 0; i < finishedGames.length; i++) {
-                    const fixture = finishedGames[i];
+                for (let i = 0; i < gamesToProcess.length; i++) {
+                    const fixture = gamesToProcess[i];
                     
                     // Verificar se fixture tem todos os dados necessários
                     if (!fixture || !fixture.teams || !fixture.teams.home || !fixture.teams.away) {
@@ -1760,6 +1856,7 @@
             }
 
             state.isUpdatingScores = false;
+            state.liveScoresUpdating = false;
             render();
         }
 
@@ -2072,7 +2169,8 @@
                                                     onerror="this.src='https://via.placeholder.com/64/1a1a1a/ffffff?text=${state.starters[i].name.charAt(0)}'">
                                                 ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? `
                                                     <div class="absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold
-                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-green-500' : 'bg-red-500'} text-white">
+                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-green-500' : 'bg-red-500'} text-white
+                                                        ${state.scores[state.selectedRound]?.live ? 'animate-pulse ring-2 ring-white/50' : ''}">
                                                         ${state.scores[state.selectedRound].players[state.starters[i].id]}
                                                     </div>
                                                 ` : ''}
@@ -2109,7 +2207,20 @@
                                             <option value="${i+1}" ${state.selectedRound === i+1 ? 'selected' : ''}>Rodada ${i+1}${i+1 === state.currentRound ? ' ⚽' : ''}</option>
                                         `).join('')}
                                     </select>
-                                    <span class="px-3 py-2 bg-zinc-800 rounded-lg text-green-400 font-semibold">${getRoundScore(state.selectedRound || 1)} pts</span>
+                                    <div class="flex items-center gap-1">
+                                        ${state.hasLiveGames || state.scores[state.selectedRound]?.live ? `
+                                            <span class="px-2 py-1 bg-red-500/20 text-red-400 text-xs rounded-lg animate-pulse flex items-center gap-1">
+                                                <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                                                AO VIVO
+                                            </span>
+                                        ` : ''}
+                                        <span class="px-3 py-2 bg-zinc-800 rounded-lg text-green-400 font-semibold">${getRoundScore(state.selectedRound || 1)} pts</span>
+                                        <button onclick="syncRoundScores()" 
+                                            class="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition ${state.liveScoresUpdating ? 'animate-spin' : ''}"
+                                            title="Atualizar pontuação">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -2966,9 +3077,12 @@
                             
                             <!-- Time que torce -->
                             ${user.favoriteTeam ? `
-                                <div class="mt-4 inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-800 rounded-full">
-                                    <span class="text-lg">⚽</span>
-                                    <span class="text-white text-sm">${user.favoriteTeam}</span>
+                                <div class="mt-4 inline-flex items-center gap-2 px-4 py-2 bg-zinc-800 rounded-full">
+                                    ${getTeamLogo(user.favoriteTeam) ? 
+                                        `<img src="${getTeamLogo(user.favoriteTeam)}" class="w-6 h-6 object-contain">` : 
+                                        `<span class="text-lg">⚽</span>`
+                                    }
+                                    <span class="text-white text-sm font-medium">Torce para ${user.favoriteTeam}</span>
                                 </div>
                             ` : ''}
                             
@@ -3792,6 +3906,7 @@
                     nick,
                     team: u.teamName,
                     logo: u.teamLogo,
+                    favoriteTeam: u.favoriteTeam,
                     score: calculateUserScore(u)
                 }))
                 .sort((a, b) => b.score - a.score);
@@ -3833,7 +3948,13 @@
                                                     `<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/30 font-medium">${(r.nick || 'U')[0].toUpperCase()}</div>`
                                                 }
                                                 <div class="flex-1 min-w-0">
-                                                    <p class="text-white font-medium truncate text-sm">${r.team}</p>
+                                                    <div class="flex items-center gap-2">
+                                                        <p class="text-white font-medium truncate text-sm">${r.team}</p>
+                                                        ${r.favoriteTeam && getTeamLogo(r.favoriteTeam) ? 
+                                                            `<img src="${getTeamLogo(r.favoriteTeam)}" class="w-4 h-4 object-contain" title="Torce para ${r.favoriteTeam}">` : 
+                                                            ''
+                                                        }
+                                                    </div>
                                                     <p class="text-white/40 text-xs">@${r.nick}</p>
                                                 </div>
                                                 <div class="text-right">
@@ -3864,8 +3985,8 @@
                                             return `
                                                 <div class="flex gap-2 ${isMe ? 'flex-row-reverse' : ''}">
                                                     ${m.teamLogo ? 
-                                                        `<img src="${m.teamLogo}" class="w-8 h-8 rounded-full object-cover flex-shrink-0">` :
-                                                        `<div class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 text-xs font-bold flex-shrink-0">${(m.user || 'U')[0].toUpperCase()}</div>`
+                                                        `<img src="${m.teamLogo}" onclick="event.stopPropagation();viewProfile('${m.user}')" class="w-8 h-8 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-green-500 transition">` :
+                                                        `<div onclick="event.stopPropagation();viewProfile('${m.user}')" class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 text-xs font-bold flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-green-500 transition">${(m.user || 'U')[0].toUpperCase()}</div>`
                                                     }
                                                     <div class="${isMe ? 'bg-green-500/20 border-green-500/30' : 'bg-zinc-800/80'} rounded-xl px-3 py-2 max-w-[75%] border border-transparent">
                                                         <div class="flex items-center gap-2 mb-0.5">
@@ -4269,16 +4390,16 @@
                     nick,
                     teamName: data.teamName || 'Sem time',
                     teamLogo: data.teamLogo,
-                    starters: Array.isArray(data.starters) ? data.starters : Object.values(data.starters || {}),
-                    reserves: Array.isArray(data.reserves) ? data.reserves : Object.values(data.reserves || {}),
+                    starters: ensureArray(data.starters, 11),
+                    reserves: ensureArray(data.reserves, 7),
                     coach: data.coach
                 }));
             
             // Jogadores já draftados (de todos os usuários)
             const allDraftedPlayerIds = new Set();
             registeredUsers.forEach(u => {
-                const starters = Array.isArray(u.starters) ? u.starters : [];
-                const reserves = Array.isArray(u.reserves) ? u.reserves : [];
+                const starters = ensureArray(u.starters, 11);
+                const reserves = ensureArray(u.reserves, 7);
                 starters.forEach(p => { if (p) allDraftedPlayerIds.add(p.id); });
                 reserves.forEach(p => { if (p) allDraftedPlayerIds.add(p.id); });
             });
@@ -4967,29 +5088,53 @@
                 return;
             }
             
-            // Verificar se usuário existe
-            if (!state.users[nickname]) {
-                errorEl.textContent = '❌ Usuário não encontrado';
-                errorEl.classList.remove('hidden');
-                return;
-            }
+            errorEl.textContent = '⏳ Atualizando senha...';
+            errorEl.classList.remove('hidden');
             
-            // Atualizar senha
-            state.users[nickname].password = password;
-            
-            // Salvar no Firebase
+            // Verificar se usuário existe no Firebase
             if (db) {
-                db.ref('users/' + nickname + '/password').set(password);
+                db.ref('users/' + nickname).once('value').then(snapshot => {
+                    const firebaseUser = snapshot.val();
+                    
+                    if (!firebaseUser && !state.users[nickname]) {
+                        errorEl.textContent = '❌ Usuário não encontrado';
+                        return;
+                    }
+                    
+                    // Atualizar senha no Firebase
+                    db.ref('users/' + nickname + '/password').set(password).then(() => {
+                        // Atualizar localmente também
+                        if (!state.users[nickname]) {
+                            state.users[nickname] = firebaseUser || {};
+                        }
+                        state.users[nickname].password = password;
+                        saveState();
+                        
+                        alert('✅ Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
+                        state.authMode = 'login';
+                        render();
+                    }).catch(err => {
+                        console.error('Erro ao atualizar senha:', err);
+                        errorEl.textContent = '❌ Erro ao atualizar. Tente novamente.';
+                    });
+                }).catch(err => {
+                    console.error('Erro ao verificar usuário:', err);
+                    errorEl.textContent = '❌ Erro ao verificar. Tente novamente.';
+                });
+            } else {
+                // Sem Firebase, verificar localmente
+                if (!state.users[nickname]) {
+                    errorEl.textContent = '❌ Usuário não encontrado';
+                    return;
+                }
+                
+                state.users[nickname].password = password;
+                saveState();
+                
+                alert('✅ Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
+                state.authMode = 'login';
+                render();
             }
-            
-            // Salvar localmente
-            saveState();
-            
-            alert('✅ Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
-            
-            // Voltar para login
-            state.authMode = 'login';
-            render();
         };
 
         window.handleAuth = function() {
@@ -5074,56 +5219,114 @@
                 saveState();
                 render();
             } else {
-                if (!state.users[nickname]) {
+                // Verificar se o usuário existe localmente
+                const localUser = state.users[nickname];
+                
+                // Se o usuário não existe localmente, tentar buscar do Firebase
+                if (!localUser && db) {
+                    errorEl.textContent = '⏳ Verificando...';
+                    errorEl.classList.remove('hidden');
+                    
+                    // Buscar usuário do Firebase
+                    db.ref('users/' + nickname).once('value').then(snapshot => {
+                        const firebaseUser = snapshot.val();
+                        
+                        if (!firebaseUser) {
+                            errorEl.textContent = '❌ Usuário não encontrado';
+                            return;
+                        }
+                        
+                        // Verificar senha do Firebase
+                        if (firebaseUser.password !== password) {
+                            errorEl.textContent = '❌ Senha incorreta';
+                            return;
+                        }
+                        
+                        // Login bem sucedido - salvar usuário localmente
+                        state.users[nickname] = firebaseUser;
+                        state.users[nickname].starters = ensureArray(firebaseUser.starters, 11);
+                        state.users[nickname].reserves = ensureArray(firebaseUser.reserves, 7);
+                        
+                        completeLogin(nickname, state.users[nickname]);
+                    }).catch(err => {
+                        console.error('Erro ao buscar usuário:', err);
+                        errorEl.textContent = '❌ Erro ao verificar. Tente novamente.';
+                    });
+                    return;
+                }
+                
+                if (!localUser) {
                     errorEl.textContent = '❌ Usuário não encontrado';
                     errorEl.classList.remove('hidden');
                     return;
                 }
                 
-                if (state.users[nickname].password !== password) {
+                // Verificar senha local ou do Firebase
+                const storedPassword = localUser.password;
+                if (storedPassword !== password) {
+                    // Tentar verificar no Firebase se a senha local não bate
+                    if (db) {
+                        db.ref('users/' + nickname + '/password').once('value').then(snapshot => {
+                            const firebasePassword = snapshot.val();
+                            if (firebasePassword === password) {
+                                // Atualizar senha local
+                                state.users[nickname].password = password;
+                                completeLogin(nickname, state.users[nickname]);
+                            } else {
+                                errorEl.textContent = '❌ Senha incorreta';
+                                errorEl.classList.remove('hidden');
+                            }
+                        });
+                        return;
+                    }
+                    
                     errorEl.textContent = '❌ Senha incorreta';
                     errorEl.classList.remove('hidden');
                     return;
                 }
                 
-                state.currentUser = nickname;
-                state.isAdmin = false;
-                const userData = state.users[nickname];
-                state.teamName = userData.teamName || '';
-                state.teamLogo = userData.teamLogo || null;
-                state.formation = userData.formation || '4-3-3';
-                state.starters = userData.starters || Array(11).fill(null);
-                state.reserves = userData.reserves || Array(7).fill(null);
-                state.coach = userData.coach || null;
-                state.isConfirmed = userData.isConfirmed || false;
-                state.scores = userData.scores || {};
-                state.screen = userData.teamName ? 'lineup' : 'createTeam';
-                
-                // Limpar campos temporários do login
-                state.tempNickname = '';
-                state.tempPassword = '';
-                state.tempAccessCode = '';
-                
-                saveState();
-                render();
-                
-                // Se foi para lineup, detectar rodada atual
-                if (state.screen === 'lineup') {
-                    setTimeout(async () => {
-                        await detectCurrentRound();
-                        render();
-                        fetchLiveFixtures();
-                    }, 500);
-                }
-                
-                // Escutar chat do draft
-                listenToDraftChat();
-                listenToDraftStatus();
-                
-                // Escutar mensagens privadas
-                listenToPrivateMessages();
+                completeLogin(nickname, localUser);
             }
         };
+        
+        // Função para completar o login
+        function completeLogin(nickname, userData) {
+            state.currentUser = nickname;
+            state.isAdmin = false;
+            state.teamName = userData.teamName || '';
+            state.teamLogo = userData.teamLogo || null;
+            state.formation = userData.formation || '4-3-3';
+            state.starters = ensureArray(userData.starters, 11);
+            state.reserves = ensureArray(userData.reserves, 7);
+            state.coach = userData.coach || null;
+            state.isConfirmed = userData.isConfirmed || false;
+            state.scores = userData.scores || {};
+            state.screen = userData.teamName ? 'lineup' : 'createTeam';
+            
+            // Limpar campos temporários do login
+            state.tempNickname = '';
+            state.tempPassword = '';
+            state.tempAccessCode = '';
+            
+            saveState();
+            render();
+            
+            // Se foi para lineup, detectar rodada atual
+            if (state.screen === 'lineup') {
+                setTimeout(async () => {
+                    await detectCurrentRound();
+                    render();
+                    fetchLiveFixtures();
+                }, 500);
+            }
+            
+            // Escutar chat do draft
+            listenToDraftChat();
+            listenToDraftStatus();
+            
+            // Escutar mensagens privadas
+            listenToPrivateMessages();
+        }
 
         window.createTeam = function() {
             const teamName = document.getElementById('teamName').value.trim();
@@ -5275,6 +5478,22 @@
             state.selectedChatUser = nick;
             state.modal = 'privateChat';
             
+            // Marcar mensagens como lidas
+            if (db && state.currentUser) {
+                const chatKey = [state.currentUser, nick].sort().join('_');
+                state.privateMessages.forEach(m => {
+                    if (m.chatKey === chatKey && m.to === state.currentUser && !m.read) {
+                        // Marcar como lida no Firebase
+                        db.ref('privateMessages').orderByChild('timestamp').equalTo(m.timestamp).once('value', snapshot => {
+                            snapshot.forEach(child => {
+                                child.ref.update({ read: true });
+                            });
+                        });
+                        m.read = true;
+                    }
+                });
+            }
+            
             // Iniciar listener se não estiver ativo
             if (!state.privateMessagesListenerActive) {
                 listenToPrivateMessages();
@@ -5283,12 +5502,11 @@
             
             render();
             
-            // Scroll para o final
+            // Scroll para o final e focar no input
             setTimeout(() => {
                 const el = document.getElementById('privateChatMessages');
                 if (el) el.scrollTop = el.scrollHeight;
                 
-                // Focar no input
                 const input = document.getElementById('privateMsgInput');
                 if (input) input.focus();
             }, 100);
@@ -5988,9 +6206,9 @@
             const user = state.users[state.selectedDraftUser];
             if (!user) return;
             
-            // Inicializar arrays se necessário
-            if (!user.starters) user.starters = Array(11).fill(null);
-            if (!user.reserves) user.reserves = Array(7).fill(null);
+            // Inicializar arrays se necessário (usando ensureArray para garantir que são arrays)
+            user.starters = ensureArray(user.starters, 11);
+            user.reserves = ensureArray(user.reserves, 7);
             
             const playerPos = normalizePosition(player.position);
             
@@ -6147,6 +6365,10 @@
             
             const user = state.users[state.selectedDraftUser];
             if (!user) return;
+            
+            // Garantir que são arrays
+            user.starters = ensureArray(user.starters, 11);
+            user.reserves = ensureArray(user.reserves, 7);
             
             if (type === 'starter') {
                 user.starters[index] = null;
@@ -6352,7 +6574,9 @@
         window.confirmAllLineups = function() {
             const users = Object.entries(state.users).filter(([nick, _]) => nick !== 'admin');
             const incompleteUsers = users.filter(([nick, u]) => {
-                const totalPlayers = (u.starters || []).filter(p => p).length + (u.reserves || []).filter(p => p).length;
+                const starters = ensureArray(u.starters, 11);
+                const reserves = ensureArray(u.reserves, 7);
+                const totalPlayers = starters.filter(p => p).length + reserves.filter(p => p).length;
                 return totalPlayers < 18;
             });
             
@@ -6738,6 +6962,12 @@
                 if (hasLive) {
                     console.log('🔄 Atualizando jogos ao vivo...');
                     fetchLiveFixtures();
+                    
+                    // Também atualizar pontuação se confirmado
+                    if (state.isConfirmed && !state.isUpdatingScores) {
+                        console.log('📊 Atualizando pontuação ao vivo...');
+                        syncRoundScores();
+                    }
                 }
             }
         }, 2 * 60 * 1000); // 2 minutos
