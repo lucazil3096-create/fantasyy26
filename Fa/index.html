@@ -318,6 +318,27 @@
             viewingProfile: null // Perfil sendo visualizado
         };
 
+        // ==================== FUNÇÕES AUXILIARES ====================
+        
+        // Garante que um valor seja um array (Firebase pode retornar objetos)
+        function ensureArray(value, defaultLength = 0) {
+            if (!value) return Array(defaultLength).fill(null);
+            if (Array.isArray(value)) return value;
+            // Se for objeto, converter para array
+            if (typeof value === 'object') {
+                const arr = [];
+                Object.keys(value).forEach(key => {
+                    const idx = parseInt(key);
+                    if (!isNaN(idx)) {
+                        arr[idx] = value[key];
+                    }
+                });
+                while (arr.length < defaultLength) arr.push(null);
+                return arr;
+            }
+            return Array(defaultLength).fill(null);
+        }
+
         // ==================== SISTEMA DE PREÇOS ====================
         
         // Preço BASE igual para todos - o desempenho é que muda o preço!
@@ -2122,7 +2143,7 @@
 
                             <!-- Reservas -->
                             <div class="card rounded-xl p-4">
-                                <h3 class="text-zinc-400 text-sm font-medium mb-3">RESERVAS <span class="text-zinc-600">${state.reserves.filter(r => r).length}/7</span></h3>
+                                <h3 class="text-zinc-400 text-sm font-medium mb-3">RESERVAS <span class="text-zinc-600">${ensureArray(state.reserves, 7).filter(r => r).length}/7</span></h3>
                                 ${(() => {
                                     const reservePositions = [
                                         { pos: 'GOL', label: 'Goleiro' },
@@ -2222,7 +2243,7 @@
 
                             <!-- Status do Time -->
                             ${(() => {
-                                const totalPlayers = state.starters.filter(p => p).length + state.reserves.filter(p => p).length;
+                                const totalPlayers = ensureArray(state.starters, 11).filter(p => p).length + ensureArray(state.reserves, 7).filter(p => p).length;
                                 const hasCoach = !!state.coach;
                                 const isTeamComplete = totalPlayers === 18 && hasCoach;
                                 
@@ -4002,7 +4023,10 @@
         }
         
         function renderUserDraft() {
-            const totalPlayers = state.starters.filter(p => p).length + state.reserves.filter(p => p).length;
+            // Garantir que são arrays
+            const safeStarters = ensureArray(state.starters, 11);
+            const safeReserves = ensureArray(state.reserves, 7);
+            const totalPlayers = safeStarters.filter(p => p).length + safeReserves.filter(p => p).length;
             const isTeamComplete = totalPlayers === 18 && !!state.coach;
             
             return `
@@ -4195,7 +4219,7 @@
                                         </div>
                                     ` : `
                                         <div class="space-y-2 max-h-48 overflow-y-auto">
-                                            ${state.starters.filter(p => p).map(p => `
+                                            ${safeStarters.filter(p => p).map(p => `
                                                 <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
                                                     <img src="${p.photo}" class="w-8 h-8 rounded-full object-cover" onerror="this.src='https://via.placeholder.com/32'">
                                                     <div class="flex-1 min-w-0">
@@ -4205,7 +4229,7 @@
                                                     <span class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded">Titular</span>
                                                 </div>
                                             `).join('')}
-                                            ${state.reserves.filter(p => p).map(p => `
+                                            ${safeReserves.filter(p => p).map(p => `
                                                 <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
                                                     <img src="${p.photo}" class="w-8 h-8 rounded-full object-cover" onerror="this.src='https://via.placeholder.com/32'">
                                                     <div class="flex-1 min-w-0">
@@ -4608,8 +4632,9 @@
             const user = state.users[state.selectedDraftUser];
             if (!user) return '';
             
-            const starters = user.starters || Array(11).fill(null);
-            const reserves = user.reserves || Array(7).fill(null);
+            // Garantir que são arrays (Firebase pode retornar objetos)
+            const starters = ensureArray(user.starters, 11);
+            const reserves = ensureArray(user.reserves, 7);
             
             // Posições mais centralizadas para não cortar nas bordas
             const fieldPositions = [
@@ -5830,7 +5855,9 @@
             }
             
             // Separar jogadores atuais por posição
-            const allPlayers = [...state.starters.filter(p => p), ...state.reserves.filter(p => p)];
+            const safeStarters = ensureArray(state.starters, 11);
+            const safeReserves = ensureArray(state.reserves, 7);
+            const allPlayers = [...safeStarters.filter(p => p), ...safeReserves.filter(p => p)];
             const playersByPos = {
                 'GOL': allPlayers.filter(p => normalizePosition(p.position) === 'GOL'),
                 'DEF': allPlayers.filter(p => normalizePosition(p.position) === 'DEF'),
