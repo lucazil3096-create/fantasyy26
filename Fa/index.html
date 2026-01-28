@@ -4256,36 +4256,38 @@
                 const userReserves = ensureArray(user.reserves, 7);
                 const roundScores = user.scores?.[round]?.players || {};
                 
-                // Processar titulares
+                // Processar titulares (pontuação 100%)
                 userStarters.forEach(player => {
                     if (player && player.id && roundScores[player.id] !== undefined) {
-                        if (!playerScores[player.id] || roundScores[player.id] > playerScores[player.id].score) {
+                        const score = roundScores[player.id];
+                        // Guardar a maior pontuação (100%) encontrada
+                        if (!playerScores[player.id] || score > playerScores[player.id].score) {
                             playerScores[player.id] = {
                                 id: player.id,
                                 name: player.name,
                                 photo: player.photo,
                                 team: player.team,
                                 position: player.position,
-                                score: roundScores[player.id],
-                                owner: user.teamName || nick
+                                score: score
                             };
                         }
                     }
                 });
                 
-                // Processar reservas (já vem com 50%)
+                // Processar reservas - converter de volta para 100%
                 userReserves.forEach(player => {
                     if (player && player.id && roundScores[player.id] !== undefined) {
-                        if (!playerScores[player.id] || roundScores[player.id] > playerScores[player.id].score) {
+                        // Reserva salva com 50%, multiplicar por 2 para obter 100%
+                        const realScore = roundScores[player.id] * 2;
+                        // Só atualizar se for maior que o atual (priorizar titular se existir)
+                        if (!playerScores[player.id] || realScore > playerScores[player.id].score) {
                             playerScores[player.id] = {
                                 id: player.id,
                                 name: player.name,
                                 photo: player.photo,
                                 team: player.team,
                                 position: player.position,
-                                score: roundScores[player.id],
-                                owner: user.teamName || nick,
-                                isReserve: true
+                                score: realScore
                             };
                         }
                     }
@@ -4384,7 +4386,7 @@
                                                     onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${p.name?.charAt(0) || '?'}'">
                                                 <div class="flex-1 min-w-0">
                                                     <p class="text-white font-medium truncate text-xs">${p.name?.split(' ').pop() || 'Jogador'}</p>
-                                                    <p class="text-zinc-500 text-[10px] truncate">${p.team || ''} • ${p.owner || ''}</p>
+                                                    <p class="text-zinc-500 text-[10px] truncate">${p.team || ''}</p>
                                                 </div>
                                                 <div class="text-right">
                                                     <p class="text-lg font-bold ${p.score >= 0 ? 'text-green-400' : 'text-red-400'}">${p.score}</p>
