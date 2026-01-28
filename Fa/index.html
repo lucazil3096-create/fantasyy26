@@ -2169,7 +2169,7 @@
                                                     onerror="this.src='https://via.placeholder.com/64/1a1a1a/ffffff?text=${state.starters[i].name.charAt(0)}'">
                                                 ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? `
                                                     <div class="absolute -top-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold
-                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-green-500' : 'bg-red-500'} text-white
+                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-yellow-400 text-black' : 'bg-red-500 text-white'}
                                                         ${state.scores[state.selectedRound]?.live ? 'animate-pulse ring-2 ring-white/50' : ''}">
                                                         ${state.scores[state.selectedRound].players[state.starters[i].id]}
                                                     </div>
@@ -2223,9 +2223,6 @@
                                     </div>
                                 </div>
                             </div>
-
-                            <!-- Jogos da Rodada -->
-                            ${renderFixturesCard()}
 
                             <!-- Técnico -->
                             <div class="card rounded-xl p-4">
@@ -5316,7 +5313,6 @@
                 setTimeout(async () => {
                     await detectCurrentRound();
                     render();
-                    fetchLiveFixtures();
                 }, 500);
             }
             
@@ -5339,11 +5335,10 @@
             saveState();
             render();
             
-            // Detectar rodada atual e carregar jogos
+            // Detectar rodada atual
             setTimeout(async () => {
                 await detectCurrentRound();
                 render();
-                fetchLiveFixtures();
             }, 500);
         };
 
@@ -6053,9 +6048,7 @@
 
         window.changeRound = function(round) {
             state.selectedRound = parseInt(round);
-            state.liveFixtures = []; // Limpar jogos antigos
             render();
-            fetchLiveFixtures(); // Buscar jogos da nova rodada
         };
         
         window.changeFormation = function(formation) {
@@ -6932,30 +6925,17 @@
             }
         }, 3000);
 
-        // Carregar jogos da rodada ao iniciar - AUTOMÁTICO
+        // Detectar rodada atual ao iniciar
         setTimeout(async () => {
-            // Primeiro detectar a rodada atual
             await detectCurrentRound();
             render();
-            // Depois buscar os jogos SEMPRE
-            await fetchLiveFixtures();
         }, 1500);
 
-        // Atualizar PONTUAÇÃO a cada 5 MINUTOS (placar não atualiza auto - economia de requisições)
-        // Usuário pode atualizar placar manualmente clicando no botão
+        // Atualizar PONTUAÇÃO a cada 5 MINUTOS automaticamente
         setInterval(() => {
             if (state.screen === 'lineup' && state.isConfirmed && !state.isUpdatingScores) {
-                // Verificar se tem jogos ao vivo para atualizar pontuação
-                const hasLive = state.liveFixtures && state.liveFixtures.some(f => {
-                    if (!f || !f.fixture || !f.fixture.status) return false;
-                    const status = f.fixture.status.short;
-                    return ['1H', '2H', 'HT', 'ET', 'BT', 'P', 'INT', 'LIVE', 'FT'].includes(status);
-                });
-                
-                if (hasLive) {
-                    console.log('📊 Atualizando pontuação...');
-                    syncRoundScores();
-                }
+                console.log('📊 Atualizando pontuação...');
+                syncRoundScores();
             }
         }, 5 * 60 * 1000); // 5 minutos
     </script>
