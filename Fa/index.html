@@ -1187,9 +1187,12 @@
             if (!db) return;
             try {
                 const dataToSave = {
-                    password: userData.password || null, // Salvar senha para login
+                    password: userData.password || null,
                     teamName: userData.teamName || '',
                     teamLogo: userData.teamLogo || null,
+                    formation: userData.formation || '4-3-3',
+                    starters: userData.starters || [],
+                    reserves: userData.reserves || [],
                     coach: userData.coach || null,
                     isConfirmed: userData.isConfirmed || false,
                     scores: userData.scores || {},
@@ -4240,64 +4243,152 @@
                     score: calculateUserScore(u)
                 }))
                 .sort((a, b) => b.score - a.score);
+            
+            // Calcular melhores jogadores da rodada
+            const round = state.selectedRound;
+            const playerScores = {};
+            
+            // Coletar pontuação de todos os jogadores de todos os usuários
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (!user.isConfirmed || nick === 'admin') return;
+                
+                const userStarters = ensureArray(user.starters, 11);
+                const userReserves = ensureArray(user.reserves, 7);
+                const roundScores = user.scores?.[round]?.players || {};
+                
+                // Processar titulares
+                userStarters.forEach(player => {
+                    if (player && player.id && roundScores[player.id] !== undefined) {
+                        if (!playerScores[player.id] || roundScores[player.id] > playerScores[player.id].score) {
+                            playerScores[player.id] = {
+                                id: player.id,
+                                name: player.name,
+                                photo: player.photo,
+                                team: player.team,
+                                position: player.position,
+                                score: roundScores[player.id],
+                                owner: user.teamName || nick
+                            };
+                        }
+                    }
+                });
+                
+                // Processar reservas (já vem com 50%)
+                userReserves.forEach(player => {
+                    if (player && player.id && roundScores[player.id] !== undefined) {
+                        if (!playerScores[player.id] || roundScores[player.id] > playerScores[player.id].score) {
+                            playerScores[player.id] = {
+                                id: player.id,
+                                name: player.name,
+                                photo: player.photo,
+                                team: player.team,
+                                position: player.position,
+                                score: roundScores[player.id],
+                                owner: user.teamName || nick,
+                                isReserve: true
+                            };
+                        }
+                    }
+                });
+            });
+            
+            // Ordenar e pegar top 10
+            const topPlayers = Object.values(playerScores)
+                .sort((a, b) => b.score - a.score)
+                .slice(0, 10);
 
             return `
                 <div class="min-h-screen bg-[#09090b]">
                     <!-- Header -->
                     <nav class="border-b border-white/5 bg-[#0f0f10]">
-                        <div class="max-w-5xl mx-auto px-4 h-16 flex items-center justify-between">
+                        <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
                             <h1 class="font-display text-2xl text-white tracking-wider">FANTASY</h1>
-                            <button onclick="state.screen='lineup';render()" class="px-4 py-2 btn-secondary text-white/70 rounded-lg text-sm">
-                                Voltar
-                            </button>
+                            <div class="flex items-center gap-3">
+                                <select onchange="state.selectedRound=parseInt(this.value);render()" class="px-3 py-2 input-dark rounded-lg text-white text-sm">
+                                    ${Array.from({length: state.currentRound || 1}, (_, i) => `
+                                        <option value="${i+1}" ${state.selectedRound === i+1 ? 'selected' : ''}>Rodada ${i+1}</option>
+                                    `).join('')}
+                                </select>
+                                <button onclick="state.screen='lineup';render()" class="px-4 py-2 btn-secondary text-white/70 rounded-lg text-sm">
+                                    Voltar
+                                </button>
+                            </div>
                         </div>
                     </nav>
 
-                    <div class="max-w-5xl mx-auto p-4">
-                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <!-- Coluna do Ranking -->
+                    <div class="max-w-6xl mx-auto p-4">
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                            <!-- Coluna do Ranking de Times -->
                             <div>
                                 <div class="mb-4 flex items-center justify-between">
                                     <div>
-                                        <h2 class="font-display text-2xl text-white tracking-wider">RANKING</h2>
-                                        <p class="text-white/40 text-sm">${rankings.length} times confirmados</p>
+                                        <h2 class="font-display text-xl text-white tracking-wider">🏆 RANKING</h2>
+                                        <p class="text-white/40 text-xs">${rankings.length} times</p>
                                     </div>
                                     <button onclick="updateAllScores()" 
-                                        class="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition" 
+                                        class="flex items-center gap-1 px-2 py-1.5 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition text-xs" 
                                         title="Atualizar pontuações">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                        <span class="text-xs">Atualizar</span>
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                        Atualizar
                                     </button>
                                 </div>
 
                                 ${rankings.length === 0 ? `
-                                    <div class="card rounded-xl p-8 text-center">
-                                        <p class="text-white/40">Nenhum time confirmado ainda</p>
+                                    <div class="card rounded-xl p-6 text-center">
+                                        <p class="text-white/40 text-sm">Nenhum time confirmado</p>
                                     </div>
                                 ` : `
-                                    <div class="space-y-2 max-h-[60vh] overflow-y-auto pr-2">
+                                    <div class="space-y-2 max-h-[65vh] overflow-y-auto pr-1">
                                         ${rankings.map((r, i) => `
-                                            <div onclick="viewProfile('${r.nick}')" class="card rounded-xl p-3 flex items-center gap-3 cursor-pointer hover:bg-zinc-800/50 transition ${r.nick === state.currentUser ? 'border border-green-500/30' : ''}">
-                                                <div class="w-8 h-8 flex items-center justify-center rounded-lg ${i === 0 ? 'bg-yellow-500/10 text-yellow-500' : i === 1 ? 'bg-white/5 text-white/60' : i === 2 ? 'bg-orange-500/10 text-orange-500' : 'bg-white/5 text-white/30'} font-bold text-sm">
+                                            <div onclick="viewProfile('${r.nick}')" class="card rounded-xl p-2.5 flex items-center gap-2 cursor-pointer hover:bg-zinc-800/50 transition ${r.nick === state.currentUser ? 'border border-green-500/30' : ''}">
+                                                <div class="w-6 h-6 flex items-center justify-center rounded ${i === 0 ? 'bg-yellow-500/20 text-yellow-500' : i === 1 ? 'bg-gray-400/20 text-gray-400' : i === 2 ? 'bg-orange-500/20 text-orange-500' : 'bg-white/5 text-white/30'} font-bold text-xs">
                                                     ${i + 1}
                                                 </div>
                                                 ${r.logo ? 
-                                                    `<img src="${r.logo}" class="w-10 h-10 rounded-full object-cover border-2 border-green-500/50">` :
-                                                    `<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/30 font-medium">${(r.nick || 'U')[0].toUpperCase()}</div>`
+                                                    `<img src="${r.logo}" class="w-8 h-8 rounded-full object-cover border border-green-500/50">` :
+                                                    `<div class="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs font-medium">${(r.nick || 'U')[0].toUpperCase()}</div>`
                                                 }
                                                 <div class="flex-1 min-w-0">
-                                                    <div class="flex items-center gap-2">
-                                                        <p class="text-white font-medium truncate text-sm">${r.team}</p>
-                                                        ${r.favoriteTeam && getTeamLogo(r.favoriteTeam) ? 
-                                                            `<img src="${getTeamLogo(r.favoriteTeam)}" class="w-4 h-4 object-contain" title="Torce para ${r.favoriteTeam}">` : 
-                                                            ''
-                                                        }
-                                                    </div>
-                                                    <p class="text-white/40 text-xs">@${r.nick}</p>
+                                                    <p class="text-white font-medium truncate text-xs">${r.team}</p>
+                                                    <p class="text-white/40 text-[10px]">@${r.nick}</p>
                                                 </div>
                                                 <div class="text-right">
-                                                    <p class="text-xl font-bold text-white">${r.score}</p>
-                                                    <p class="text-white/40 text-xs">pts</p>
+                                                    <p class="text-lg font-bold text-white">${r.score}</p>
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                `}
+                            </div>
+                            
+                            <!-- Coluna dos Melhores Jogadores da Rodada -->
+                            <div>
+                                <div class="mb-4">
+                                    <h2 class="font-display text-xl text-white tracking-wider">⭐ TOP RODADA ${round}</h2>
+                                    <p class="text-white/40 text-xs">Melhores pontuadores</p>
+                                </div>
+                                
+                                ${topPlayers.length === 0 ? `
+                                    <div class="card rounded-xl p-6 text-center">
+                                        <p class="text-white/40 text-sm">Nenhuma pontuação ainda</p>
+                                        <p class="text-zinc-600 text-xs mt-1">Clique em "Atualizar" para calcular</p>
+                                    </div>
+                                ` : `
+                                    <div class="space-y-2 max-h-[65vh] overflow-y-auto pr-1">
+                                        ${topPlayers.map((p, i) => `
+                                            <div class="card rounded-xl p-2.5 flex items-center gap-2">
+                                                <div class="w-6 h-6 flex items-center justify-center rounded ${i === 0 ? 'bg-yellow-500/20 text-yellow-500' : i === 1 ? 'bg-gray-400/20 text-gray-400' : i === 2 ? 'bg-orange-500/20 text-orange-500' : 'bg-white/5 text-white/30'} font-bold text-xs">
+                                                    ${i + 1}
+                                                </div>
+                                                <img src="${p.photo}" class="w-8 h-8 rounded-full object-cover border border-zinc-700"
+                                                    onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${p.name?.charAt(0) || '?'}'">
+                                                <div class="flex-1 min-w-0">
+                                                    <p class="text-white font-medium truncate text-xs">${p.name?.split(' ').pop() || 'Jogador'}</p>
+                                                    <p class="text-zinc-500 text-[10px] truncate">${p.team || ''} • ${p.owner || ''}</p>
+                                                </div>
+                                                <div class="text-right">
+                                                    <p class="text-lg font-bold ${p.score >= 0 ? 'text-green-400' : 'text-red-400'}">${p.score}</p>
+                                                    ${p.isReserve ? '<p class="text-orange-400 text-[9px]">50%</p>' : ''}
                                                 </div>
                                             </div>
                                         `).join('')}
@@ -4306,7 +4397,7 @@
                             </div>
                             
                             <!-- Coluna do Chat -->
-                            <div class="card rounded-xl overflow-hidden flex flex-col" style="height: 70vh;">
+                            <div class="card rounded-xl overflow-hidden flex flex-col" style="height: 65vh;">
                                 <div class="p-4 border-b border-zinc-800 flex items-center gap-2">
                                     <span class="text-lg">💬</span>
                                     <h3 class="font-display text-lg text-white">CHAT</h3>
@@ -5557,20 +5648,30 @@
                 saveState();
                 render();
             } else {
-                // Verificar se o usuário existe localmente
-                const localUser = state.users[nickname];
-                
-                // Se o usuário não existe localmente, tentar buscar do Firebase
-                if (!localUser && db) {
-                    errorEl.textContent = '⏳ Verificando...';
+                // SEMPRE buscar do Firebase para garantir dados atualizados
+                if (db) {
+                    errorEl.textContent = '⏳ Carregando...';
                     errorEl.classList.remove('hidden');
                     
                     // Buscar usuário do Firebase
                     db.ref('users/' + nickname).once('value').then(snapshot => {
                         const firebaseUser = snapshot.val();
                         
+                        // Se não existe no Firebase, verificar local
                         if (!firebaseUser) {
-                            errorEl.textContent = '❌ Usuário não encontrado';
+                            const localUser = state.users[nickname];
+                            if (!localUser) {
+                                errorEl.textContent = '❌ Usuário não encontrado';
+                                return;
+                            }
+                            
+                            // Verificar senha local
+                            if (localUser.password !== password) {
+                                errorEl.textContent = '❌ Senha incorreta';
+                                return;
+                            }
+                            
+                            completeLogin(nickname, localUser);
                             return;
                         }
                         
@@ -5580,44 +5681,43 @@
                             return;
                         }
                         
-                        // Login bem sucedido - salvar usuário localmente
-                        state.users[nickname] = firebaseUser;
-                        state.users[nickname].starters = ensureArray(firebaseUser.starters, 11);
-                        state.users[nickname].reserves = ensureArray(firebaseUser.reserves, 7);
+                        // Login bem sucedido - MESCLAR dados do Firebase com locais
+                        const localUser = state.users[nickname] || {};
+                        state.users[nickname] = {
+                            ...localUser,
+                            ...firebaseUser,
+                            // Garantir arrays válidos
+                            starters: ensureArray(firebaseUser.starters || localUser.starters, 11),
+                            reserves: ensureArray(firebaseUser.reserves || localUser.reserves, 7),
+                            formation: firebaseUser.formation || localUser.formation || '4-3-3',
+                            scores: firebaseUser.scores || localUser.scores || {}
+                        };
                         
+                        console.log('☁️ Dados carregados do Firebase:', nickname);
                         completeLogin(nickname, state.users[nickname]);
                     }).catch(err => {
                         console.error('Erro ao buscar usuário:', err);
-                        errorEl.textContent = '❌ Erro ao verificar. Tente novamente.';
+                        
+                        // Fallback para dados locais em caso de erro
+                        const localUser = state.users[nickname];
+                        if (localUser && localUser.password === password) {
+                            completeLogin(nickname, localUser);
+                        } else {
+                            errorEl.textContent = '❌ Erro ao verificar. Tente novamente.';
+                        }
                     });
                     return;
                 }
                 
+                // Sem Firebase, usar dados locais
+                const localUser = state.users[nickname];
                 if (!localUser) {
                     errorEl.textContent = '❌ Usuário não encontrado';
                     errorEl.classList.remove('hidden');
                     return;
                 }
                 
-                // Verificar senha local ou do Firebase
-                const storedPassword = localUser.password;
-                if (storedPassword !== password) {
-                    // Tentar verificar no Firebase se a senha local não bate
-                    if (db) {
-                        db.ref('users/' + nickname + '/password').once('value').then(snapshot => {
-                            const firebasePassword = snapshot.val();
-                            if (firebasePassword === password) {
-                                // Atualizar senha local
-                                state.users[nickname].password = password;
-                                completeLogin(nickname, state.users[nickname]);
-                            } else {
-                                errorEl.textContent = '❌ Senha incorreta';
-                                errorEl.classList.remove('hidden');
-                            }
-                        });
-                        return;
-                    }
-                    
+                if (localUser.password !== password) {
                     errorEl.textContent = '❌ Senha incorreta';
                     errorEl.classList.remove('hidden');
                     return;
@@ -5639,6 +5739,8 @@
             state.coach = userData.coach || null;
             state.isConfirmed = userData.isConfirmed || false;
             state.scores = userData.scores || {};
+            state.favoriteTeam = userData.favoriteTeam || null;
+            state.userBio = userData.userBio || '';
             state.screen = userData.teamName ? 'lineup' : 'createTeam';
             
             // Limpar campos temporários do login
