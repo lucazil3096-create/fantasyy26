@@ -1,0 +1,1381 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Brasileirão 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .campo-bg {
+            background: linear-gradient(to bottom, #1a472a 0%, #2d5a3d 50%, #1a472a 100%);
+            position: relative;
+        }
+        .campo-bg::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 10%;
+            right: 10%;
+            height: 2px;
+            background: rgba(255,255,255,0.4);
+            pointer-events: none;
+            z-index: 1;
+        }
+        .campo-bg::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .player-slot {
+            transition: none;
+            z-index: 10;
+        }
+        .sync-log {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .sync-log::-webkit-scrollbar {
+            width: 6px;
+        }
+        .sync-log::-webkit-scrollbar-thumb {
+            background: #4ade80;
+            border-radius: 3px;
+        }
+        body.modal-open {
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-gray-900 via-green-900 to-gray-900 min-h-screen">
+    <div id="root"></div>
+    
+    <script>
+        // ==================== JSONBIN.IO CONFIG (PERSISTÊNCIA NA NUVEM) ====================
+        const JSONBIN_API_KEY = '$2a$10$RL6C.LqJlFkQxqQxqQxqQu';
+        const JSONBIN_BIN_ID = 'fantasy-brasileirao-2026';
+        
+        // Usar localStorage com sincronização periódica entre abas
+        const STORAGE_KEY = 'fantasyBrasileirao2026';
+        const PLAYERS_KEY = 'fantasyPlayers2026';
+
+        // ==================== CONFIGURAÇÃO API ====================
+        const API_KEY = "7323cf974437eebed0866f3138cea56d";
+        const API_BASE = "https://v3.football.api-sports.io";
+        const LEAGUE_ID = 71; // Brasileirão Série A
+        const SEASON = 2026;
+        const SEASON_FALLBACK = 2025;
+
+        // ==================== TÉCNICOS 2026 ====================
+        const TECNICOS_2026 = [
+            { id: 1, name: "Abel Ferreira", team: "Palmeiras", teamId: 121, country: "🇵🇹" },
+            { id: 2, name: "Filipe Luís", team: "Flamengo", teamId: 127, country: "🇧🇷" },
+            { id: 3, name: "Dorival Júnior", team: "Corinthians", teamId: 131, country: "🇧🇷" },
+            { id: 4, name: "Hernán Crespo", team: "São Paulo", teamId: 126, country: "🇦🇷" },
+            { id: 5, name: "Martín Anselmi", team: "Botafogo", teamId: 120, country: "🇦🇷" },
+            { id: 6, name: "Luis Zubeldía", team: "Fluminense", teamId: 124, country: "🇦🇷" },
+            { id: 7, name: "Jorge Sampaoli", team: "Atlético-MG", teamId: 1062, country: "🇦🇷" },
+            { id: 8, name: "Paulo Pezzolano", team: "Internacional", teamId: 119, country: "🇺🇾" },
+            { id: 9, name: "Luís Castro", team: "Grêmio", teamId: 130, country: "🇵🇹" },
+            { id: 10, name: "Tite", team: "Cruzeiro", teamId: 129, country: "🇧🇷" },
+            { id: 11, name: "Rogério Ceni", team: "Bahia", teamId: 118, country: "🇧🇷" },
+            { id: 12, name: "Juan Pablo Vojvoda", team: "Santos", teamId: 128, country: "🇦🇷" },
+            { id: 13, name: "Fernando Diniz", team: "Vasco", teamId: 133, country: "🇧🇷" },
+            { id: 14, name: "Odair Hellmann", team: "Athletico-PR", teamId: 134, country: "🇧🇷" },
+            { id: 15, name: "Vagner Mancini", team: "Bragantino", teamId: 1193, country: "🇧🇷" },
+            { id: 16, name: "Jair Ventura", team: "Vitória", teamId: 2129, country: "🇧🇷" },
+            { id: 17, name: "Fernando Seabra", team: "Coritiba", teamId: 123, country: "🇧🇷" },
+            { id: 18, name: "Gilmar Dal Pozzo", team: "Chapecoense", teamId: 1196, country: "🇧🇷" },
+            { id: 19, name: "Rafael Guanaes", team: "Mirassol", teamId: 7848, country: "🇧🇷" },
+            { id: 20, name: "Juan Carlos Osorio", team: "Remo", teamId: 1186, country: "🇨🇴" }
+        ];
+
+        // ==================== STATE ====================
+        let state = {
+            screen: 'auth',
+            authMode: 'login',
+            currentUser: null,
+            users: {},
+            teamName: '',
+            teamLogo: null,
+            formation: '4-3-3',
+            starters: Array(11).fill(null),
+            reserves: Array(7).fill(null),
+            coach: null,
+            isConfirmed: false,
+            selectedRound: 1,
+            players: [],
+            teams: [],
+            coaches: TECNICOS_2026,
+            isLoading: false,
+            syncStatus: '',
+            syncLogs: [],
+            modal: null,
+            slotIndex: null,
+            slotType: null,
+            scores: {},
+            filterTeam: '',
+            filterPosition: '',
+            searchName: '',
+            scrollY: 0,
+            isUpdatingScores: false,
+            autoSyncInterval: null,
+            scoreUpdateInterval: null
+        };
+
+        // ==================== STORAGE (LOCALSTORAGE) ====================
+        
+        function loadState() {
+            try {
+                const saved = localStorage.getItem('fantasyBrasileirao2026');
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    state.users = data.users || {};
+                    state.currentUser = data.currentUser || null;
+                    
+                    if (state.currentUser && state.users[state.currentUser]) {
+                        const userData = state.users[state.currentUser];
+                        state.teamName = userData.teamName || '';
+                        state.teamLogo = userData.teamLogo || null;
+                        state.formation = userData.formation || '4-3-3';
+                        state.starters = userData.starters || Array(11).fill(null);
+                        state.reserves = userData.reserves || Array(7).fill(null);
+                        state.coach = userData.coach || null;
+                        state.isConfirmed = userData.isConfirmed || false;
+                        state.scores = userData.scores || {};
+                        state.screen = userData.teamName ? 'lineup' : 'createTeam';
+                    }
+                }
+                
+                // Carregar jogadores do cache
+                const cachedPlayers = localStorage.getItem('fantasyPlayers2026');
+                if (cachedPlayers) {
+                    const parsed = JSON.parse(cachedPlayers);
+                    state.players = parsed.players || [];
+                    state.teams = parsed.teams || [];
+                }
+            } catch (e) {
+                console.error('Erro ao carregar:', e);
+            }
+        }
+
+        function saveState() {
+            try {
+                if (state.currentUser) {
+                    state.users[state.currentUser] = {
+                        ...state.users[state.currentUser],
+                        teamName: state.teamName,
+                        teamLogo: state.teamLogo,
+                        formation: state.formation,
+                        starters: state.starters,
+                        reserves: state.reserves,
+                        coach: state.coach,
+                        isConfirmed: state.isConfirmed,
+                        scores: state.scores,
+                        lastUpdate: new Date().toISOString()
+                    };
+                }
+                
+                localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
+                    users: state.users,
+                    currentUser: state.currentUser
+                }));
+            } catch (e) {
+                console.error('Erro ao salvar:', e);
+            }
+        }
+
+        function savePlayers() {
+            try {
+                localStorage.setItem('fantasyPlayers2026', JSON.stringify({
+                    players: state.players,
+                    teams: state.teams,
+                    lastSync: new Date().toISOString()
+                }));
+            } catch (e) {
+                console.error('Erro ao salvar jogadores:', e);
+            }
+        }
+
+        // ==================== API FUNCTIONS ====================
+        async function apiCall(endpoint) {
+            const response = await fetch(`${API_BASE}${endpoint}`, {
+                method: 'GET',
+                headers: {
+                    'x-apisports-key': API_KEY
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`API Error: ${response.status}`);
+            }
+            
+            return await response.json();
+        }
+
+        function addLog(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            state.syncLogs.unshift({ time, message, type });
+            if (state.syncLogs.length > 50) state.syncLogs.pop();
+            render();
+        }
+
+        async function syncAllData() {
+            state.isLoading = true;
+            state.syncLogs = [];
+            state.scrollY = window.scrollY;
+            state.modal = 'sync';
+            document.body.classList.add('modal-open');
+            document.body.style.top = `-${state.scrollY}px`;
+            render();
+
+            try {
+                // 1. Buscar times da Série A
+                addLog('🔍 Buscando times do Brasileirão 2026...', 'info');
+                
+                let teamsData;
+                let usedSeason = SEASON;
+                
+                try {
+                    teamsData = await apiCall(`/teams?league=${LEAGUE_ID}&season=${SEASON}`);
+                    
+                    if (!teamsData.response || teamsData.response.length === 0) {
+                        addLog('⚠️ Temporada 2026 sem dados, usando 2025...', 'warning');
+                        teamsData = await apiCall(`/teams?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}`);
+                        usedSeason = SEASON_FALLBACK;
+                    }
+                } catch (e) {
+                    addLog('⚠️ Erro na API, usando temporada 2025...', 'warning');
+                    teamsData = await apiCall(`/teams?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}`);
+                    usedSeason = SEASON_FALLBACK;
+                }
+
+                if (!teamsData.response || teamsData.response.length === 0) {
+                    addLog('❌ Nenhum time encontrado!', 'error');
+                    state.isLoading = false;
+                    render();
+                    return;
+                }
+
+                state.teams = teamsData.response.map(t => ({
+                    id: t.team.id,
+                    name: t.team.name,
+                    logo: t.team.logo
+                }));
+
+                addLog(`✅ ${state.teams.length} times encontrados! (temporada ${usedSeason})`, 'success');
+
+                // 2. Buscar jogadores de cada time
+                const allPlayers = [];
+                
+                for (let i = 0; i < state.teams.length; i++) {
+                    const team = state.teams[i];
+                    addLog(`⚽ [${i + 1}/${state.teams.length}] Carregando ${team.name}...`, 'info');
+                    
+                    try {
+                        // Primeiro tentar buscar o squad atual
+                        let squadData = await apiCall(`/players/squads?team=${team.id}`);
+                        
+                        if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
+                            squadData.response[0].players.forEach(p => {
+                                allPlayers.push({
+                                    id: p.id,
+                                    name: p.name,
+                                    photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
+                                    position: translatePosition(p.position),
+                                    team: team.name,
+                                    teamId: team.id,
+                                    teamLogo: team.logo,
+                                    number: p.number
+                                });
+                            });
+                            addLog(`   ✓ ${squadData.response[0].players.length} jogadores (squad)`, 'success');
+                        } else {
+                            // Se não encontrar squad, tentar players da temporada
+                            let playersData = await apiCall(`/players?team=${team.id}&season=${usedSeason}`);
+                            
+                            if (playersData.response && playersData.response.length > 0) {
+                                playersData.response.forEach(p => {
+                                    allPlayers.push({
+                                        id: p.player.id,
+                                        name: p.player.name,
+                                        photo: p.player.photo,
+                                        position: translatePosition(p.statistics[0]?.games?.position),
+                                        team: team.name,
+                                        teamId: team.id,
+                                        teamLogo: team.logo,
+                                        age: p.player.age,
+                                        nationality: p.player.nationality
+                                    });
+                                });
+                                addLog(`   ✓ ${playersData.response.length} jogadores (season)`, 'success');
+                            } else {
+                                addLog(`   ⚠️ Nenhum jogador encontrado`, 'warning');
+                            }
+                        }
+                        
+                        // Delay para não exceder rate limit (API permite ~10 requests/min no plano free)
+                        await new Promise(r => setTimeout(r, 400));
+                        
+                    } catch (e) {
+                        addLog(`   ❌ Erro: ${e.message}`, 'error');
+                    }
+                }
+
+                state.players = allPlayers;
+                savePlayers();
+
+                addLog(`🎉 Sincronização completa!`, 'success');
+                addLog(`📊 Total: ${allPlayers.length} jogadores de ${state.teams.length} times`, 'success');
+                
+            } catch (e) {
+                addLog(`❌ Erro geral: ${e.message}`, 'error');
+            }
+
+            state.isLoading = false;
+            render();
+        }
+
+        function translatePosition(pos) {
+            const map = {
+                'Goalkeeper': 'GOL',
+                'Defender': 'ZAG',
+                'Midfielder': 'MEI',
+                'Attacker': 'ATA',
+                'G': 'GOL',
+                'D': 'ZAG',
+                'M': 'MEI',
+                'F': 'ATA'
+            };
+            return map[pos] || 'MEI';
+        }
+
+        // ==================== PONTUAÇÃO ====================
+        
+        // Buscar fixtures da rodada
+        async function getFixturesForRound(round) {
+            try {
+                const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${round}`);
+                if (!res.response || res.response.length === 0) {
+                    // Tentar temporada anterior
+                    const res2 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}&round=Regular Season - ${round}`);
+                    return res2.response || [];
+                }
+                return res.response || [];
+            } catch (e) {
+                console.error('Erro ao buscar fixtures:', e);
+                return [];
+            }
+        }
+
+        // Buscar estatísticas dos jogadores em uma partida
+        async function getPlayerStats(fixtureId) {
+            try {
+                const res = await apiCall(`/fixtures/players?fixture=${fixtureId}`);
+                return res.response || [];
+            } catch (e) {
+                console.error('Erro ao buscar stats:', e);
+                return [];
+            }
+        }
+
+        // Calcular pontuação de um jogador
+        function calculatePlayerScore(stats) {
+            let score = 0;
+            
+            if (!stats || !stats.statistics || !stats.statistics[0]) return 0;
+            
+            const s = stats.statistics[0];
+            
+            // Jogou
+            if (s.games?.minutes > 0) score += 1;
+            
+            // Gols
+            const goals = s.goals?.total || 0;
+            const position = stats.player?.position;
+            if (goals > 0) {
+                if (position === 'G' || position === 'D') score += goals * 10;
+                else if (position === 'M') score += goals * 9;
+                else score += goals * 8;
+            }
+            
+            // Assistências
+            score += (s.goals?.assists || 0) * 5;
+            
+            // Defesas (goleiro)
+            const saves = s.goals?.saves || 0;
+            if (saves >= 6) score += 6;
+            else if (saves >= 3) score += 3;
+            
+            // Pênalti defendido
+            score += (s.penalty?.saved || 0) * 7;
+            
+            // Cartões
+            score -= (s.cards?.yellow || 0) * 2;
+            score -= (s.cards?.red || 0) * 5;
+            
+            // Gol contra
+            score -= (s.goals?.own || 0) * 5;
+            
+            // Pênalti perdido
+            score -= (s.penalty?.missed || 0) * 4;
+            
+            return score;
+        }
+
+        // Calcular pontuação do técnico
+        function calculateCoachScore(fixture, teamId) {
+            let score = 0;
+            
+            const isHome = fixture.teams?.home?.id === teamId;
+            const homeGoals = fixture.goals?.home || 0;
+            const awayGoals = fixture.goals?.away || 0;
+            const teamGoals = isHome ? homeGoals : awayGoals;
+            const opponentGoals = isHome ? awayGoals : homeGoals;
+            
+            // Vitória
+            if ((isHome && homeGoals > awayGoals) || (!isHome && awayGoals > homeGoals)) {
+                score += 8;
+            }
+            // Empate
+            else if (homeGoals === awayGoals) {
+                score += 4;
+            }
+            
+            // Clean sheet
+            if (opponentGoals === 0) score += 3;
+            
+            // Gols marcados
+            score += teamGoals;
+            
+            // Bônus 3+ gols
+            if (teamGoals >= 3) score += 3;
+            
+            return score;
+        }
+
+        // Sincronizar pontuação da rodada (silencioso)
+        async function syncRoundScores() {
+            if (state.isUpdatingScores) return;
+            if (!state.isConfirmed) return;
+            
+            const round = state.selectedRound;
+            state.isUpdatingScores = true;
+            render();
+
+            try {
+                console.log(`🔍 Buscando jogos da Rodada ${round}...`);
+                
+                const fixtures = await getFixturesForRound(round);
+                
+                if (fixtures.length === 0) {
+                    console.log('Nenhum jogo encontrado para esta rodada');
+                    state.isUpdatingScores = false;
+                    render();
+                    return;
+                }
+
+                // Verificar se há jogos finalizados
+                const finishedGames = fixtures.filter(f => f.fixture?.status?.short === 'FT');
+                console.log(`${finishedGames.length} jogos finalizados`);
+
+                if (finishedGames.length === 0) {
+                    state.isUpdatingScores = false;
+                    render();
+                    return;
+                }
+
+                // Inicializar pontuação da rodada
+                if (!state.scores[round]) {
+                    state.scores[round] = { players: {}, coach: 0 };
+                }
+
+                // Buscar estatísticas de cada jogo
+                for (let i = 0; i < finishedGames.length; i++) {
+                    const fixture = finishedGames[i];
+                    console.log(`⚽ ${fixture.teams.home.name} x ${fixture.teams.away.name}`);
+                    
+                    const playerStats = await getPlayerStats(fixture.fixture.id);
+                    
+                    // Processar cada time
+                    playerStats.forEach(team => {
+                        team.players?.forEach(playerData => {
+                            const playerId = playerData.player?.id;
+                            
+                            // Verificar se o jogador está escalado
+                            const isStarter = state.starters.some(p => p?.id === playerId);
+                            const isReserve = state.reserves.some(p => p?.id === playerId);
+                            
+                            if (isStarter || isReserve) {
+                                const score = calculatePlayerScore(playerData);
+                                state.scores[round].players[playerId] = score;
+                                console.log(`   ✓ ${playerData.player.name}: ${score} pts`);
+                            }
+                        });
+                    });
+
+                    // Calcular pontuação do técnico
+                    if (state.coach) {
+                        const coachTeamId = state.coach.teamId;
+                        if (fixture.teams.home.id === coachTeamId || fixture.teams.away.id === coachTeamId) {
+                            const coachScore = calculateCoachScore(fixture, coachTeamId);
+                            state.scores[round].coach = coachScore;
+                            console.log(`   👔 ${state.coach.name}: ${coachScore} pts`);
+                        }
+                    }
+
+                    await new Promise(r => setTimeout(r, 400));
+                }
+
+                saveState();
+                console.log(`✅ Pontuação da Rodada ${round}: ${getRoundScore(round)} pontos`);
+
+            } catch (e) {
+                console.error('Erro ao atualizar pontuação:', e);
+            }
+
+            state.isUpdatingScores = false;
+            render();
+        }
+
+        function getTotalScore() {
+            let total = 0;
+            Object.values(state.scores).forEach(round => {
+                Object.values(round.players || {}).forEach(s => total += s);
+                total += round.coach || 0;
+            });
+            return total;
+        }
+
+        function getRoundScore(round) {
+            const r = state.scores[round];
+            if (!r) return 0;
+            let total = 0;
+            Object.values(r.players || {}).forEach(s => total += s);
+            total += r.coach || 0;
+            return total;
+        }
+
+        // ==================== RENDER ====================
+        function render() {
+            const root = document.getElementById('root');
+            
+            switch(state.screen) {
+                case 'auth':
+                    root.innerHTML = renderAuth();
+                    break;
+                case 'createTeam':
+                    root.innerHTML = renderCreateTeam();
+                    break;
+                case 'lineup':
+                    root.innerHTML = renderLineup();
+                    break;
+                case 'ranking':
+                    root.innerHTML = renderRanking();
+                    break;
+            }
+            
+            attachEventListeners();
+        }
+
+        function renderAuth() {
+            return `
+                <div class="min-h-screen flex items-center justify-center p-4">
+                    <div class="bg-gray-800/90 backdrop-blur rounded-2xl p-8 w-full max-w-md shadow-2xl border border-green-500/30">
+                        <div class="text-center mb-8">
+                            <div class="text-6xl mb-4">⚽</div>
+                            <h1 class="text-3xl font-bold text-white mb-2">Fantasy Brasileirão</h1>
+                            <p class="text-green-400 text-xl font-semibold">Série A 2026</p>
+                        </div>
+                        
+                        <div class="flex mb-6 bg-gray-700 rounded-lg p-1">
+                            <button onclick="setAuthMode('login')" class="flex-1 py-2 rounded-lg transition ${state.authMode === 'login' ? 'bg-green-600 text-white' : 'text-gray-400'}">
+                                Entrar
+                            </button>
+                            <button onclick="setAuthMode('register')" class="flex-1 py-2 rounded-lg transition ${state.authMode === 'register' ? 'bg-green-600 text-white' : 'text-gray-400'}">
+                                Cadastrar
+                            </button>
+                        </div>
+                        
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-gray-300 mb-2">👤 Nickname</label>
+                                <input type="text" id="nickname" placeholder="Seu apelido" 
+                                    class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-gray-300 mb-2">🔒 Senha</label>
+                                <input type="password" id="password" placeholder="Sua senha" 
+                                    class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none">
+                            </div>
+                            
+                            ${state.authMode === 'register' ? `
+                                <div>
+                                    <label class="block text-gray-300 mb-2">🎟️ Código de Acesso</label>
+                                    <input type="text" id="accessCode" placeholder="Código para entrar" 
+                                        class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none">
+                                </div>
+                            ` : ''}
+                            
+                            <button onclick="handleAuth()" 
+                                class="w-full py-4 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold rounded-lg text-lg transition transform hover:scale-[1.02]">
+                                ${state.authMode === 'login' ? '🚀 Entrar' : '✨ Criar Conta'}
+                            </button>
+                        </div>
+                        
+                        <p id="authError" class="text-red-400 text-center mt-4 hidden"></p>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCreateTeam() {
+            return `
+                <div class="min-h-screen flex items-center justify-center p-4">
+                    <div class="bg-gray-800/90 backdrop-blur rounded-2xl p-8 w-full max-w-md shadow-2xl border border-green-500/30">
+                        <h2 class="text-2xl font-bold text-white text-center mb-6">🏆 Criar seu Time</h2>
+                        
+                        <div class="space-y-6">
+                            <div>
+                                <label class="block text-gray-300 mb-2">Nome do Time</label>
+                                <input type="text" id="teamName" placeholder="Ex: Os Craques FC" 
+                                    class="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-green-500 focus:outline-none">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-gray-300 mb-2">Escudo do Time</label>
+                                <div id="logoUpload" class="border-2 border-dashed border-gray-600 rounded-lg p-8 text-center cursor-pointer hover:border-green-500 transition">
+                                    ${state.teamLogo ? 
+                                        `<img src="${state.teamLogo}" class="w-24 h-24 mx-auto rounded-lg object-cover">` :
+                                        `<div class="text-gray-400">
+                                            <div class="text-4xl mb-2">📷</div>
+                                            <p>Clique para fazer upload</p>
+                                        </div>`
+                                    }
+                                </div>
+                                <input type="file" id="logoInput" accept="image/*" class="hidden">
+                            </div>
+                            
+                            <button onclick="createTeam()" 
+                                class="w-full py-4 bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-400 text-white font-bold rounded-lg text-lg transition">
+                                ⚽ Criar Time
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderLineup() {
+            const positions433 = [
+                { top: '8%', left: '50%' },   // GOL
+                { top: '28%', left: '15%' },  // LD
+                { top: '28%', left: '38%' },  // ZAG
+                { top: '28%', left: '62%' },  // ZAG
+                { top: '28%', left: '85%' },  // LE
+                { top: '52%', left: '25%' },  // VOL
+                { top: '52%', left: '50%' },  // MEI
+                { top: '52%', left: '75%' },  // VOL
+                { top: '76%', left: '20%' },  // PE
+                { top: '76%', left: '50%' },  // ATA
+                { top: '76%', left: '80%' },  // PD
+            ];
+
+            return `
+                <div class="min-h-screen p-4">
+                    <!-- Header -->
+                    <div class="max-w-6xl mx-auto mb-4">
+                        <div class="bg-gray-800/90 rounded-xl p-4 flex flex-wrap items-center justify-between gap-4">
+                            <div class="flex items-center gap-4">
+                                ${state.teamLogo ? 
+                                    `<img src="${state.teamLogo}" class="w-12 h-12 rounded-lg object-cover">` :
+                                    `<div class="w-12 h-12 bg-green-600 rounded-lg flex items-center justify-center text-2xl">⚽</div>`
+                                }
+                                <div>
+                                    <h1 class="text-xl font-bold text-white">${state.teamName || 'Meu Time'}</h1>
+                                    <p class="text-green-400">@${state.currentUser}</p>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-4">
+                                <div class="text-right">
+                                    <p class="text-gray-400 text-sm">Total</p>
+                                    <p class="text-2xl font-bold text-green-400">${getTotalScore()} pts</p>
+                                </div>
+                                <button onclick="goToRanking()" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg">
+                                    🏆 Ranking
+                                </button>
+                                <button onclick="logout()" class="px-4 py-2 bg-red-600/50 hover:bg-red-600 text-white rounded-lg">
+                                    Sair
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <!-- Campo -->
+                        <div class="lg:col-span-2">
+                            <div class="campo-bg rounded-2xl p-4 relative" style="min-height: 520px;">
+                                <!-- Área do gol superior -->
+                                <div class="absolute top-0 left-1/2 transform -translate-x-1/2 w-32 h-12 border-2 border-white/30 border-t-0 rounded-b-lg"></div>
+                                
+                                <!-- Jogadores -->
+                                ${positions433.map((pos, i) => `
+                                    <div class="player-slot absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer"
+                                        style="top: ${pos.top}; left: ${pos.left};"
+                                        onclick="openPlayerModal(${i}, 'starter')">
+                                        ${state.starters[i] ? `
+                                            <div class="relative text-center">
+                                                <img src="${state.starters[i].photo}" 
+                                                    class="w-20 h-20 rounded-full border-4 border-white shadow-lg object-cover mx-auto"
+                                                    onerror="this.src='https://via.placeholder.com/80/1a472a/ffffff?text=${state.starters[i].name.charAt(0)}'">
+                                                ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? `
+                                                    <div class="absolute -top-2 -right-2 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold
+                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-green-500' : 'bg-red-500'} text-white">
+                                                        ${state.scores[state.selectedRound].players[state.starters[i].id]}
+                                                    </div>
+                                                ` : ''}
+                                                <p class="text-white text-sm font-semibold mt-1 bg-black/60 rounded px-2 py-1 inline-block">
+                                                    ${state.starters[i].name.split(' ').pop()}
+                                                </p>
+                                            </div>
+                                        ` : `
+                                            <div class="text-center">
+                                                <div class="w-20 h-20 mx-auto rounded-full border-4 border-dashed border-white/50 flex items-center justify-center bg-black/30 hover:bg-black/50 transition">
+                                                    <span class="text-3xl text-white/70">+</span>
+                                                </div>
+                                                <p class="text-white/70 text-xs mt-1 bg-black/40 rounded px-2 py-0.5 inline-block">${['GOL','LD','ZAG','ZAG','LE','VOL','MEI','VOL','PE','ATA','PD'][i]}</p>
+                                            </div>
+                                        `}
+                                    </div>
+                                `).join('')}
+                                
+                                <!-- Área do gol inferior -->
+                                <div class="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-32 h-12 border-2 border-white/30 border-b-0 rounded-t-lg"></div>
+                            </div>
+                        </div>
+
+                        <!-- Painel Lateral -->
+                        <div class="space-y-4">
+                            <!-- Técnico -->
+                            <div class="bg-gray-800/90 rounded-xl p-4">
+                                <h3 class="text-lg font-bold text-white mb-3">👔 Técnico</h3>
+                                <div onclick="openCoachModal()" class="cursor-pointer">
+                                    ${state.coach ? `
+                                        <div class="flex items-center gap-4 bg-gray-700/50 rounded-lg p-3">
+                                            <div class="w-20 h-20 rounded-full bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center text-2xl font-bold text-white flex-shrink-0">
+                                                ${state.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
+                                            </div>
+                                            <div class="flex-1 min-w-0">
+                                                <p class="text-white font-semibold">${state.coach.name}</p>
+                                                <p class="text-gray-400 text-sm">${state.coach.team}</p>
+                                                <p class="text-xl">${state.coach.country}</p>
+                                                ${state.scores[state.selectedRound]?.coach !== undefined ? `
+                                                    <p class="text-green-400 font-bold">+${state.scores[state.selectedRound].coach} pts</p>
+                                                ` : ''}
+                                            </div>
+                                        </div>
+                                    ` : `
+                                        <div class="flex items-center justify-center h-20 border-2 border-dashed border-gray-600 rounded-lg hover:border-green-500 transition">
+                                            <span class="text-gray-400">+ Selecionar Técnico</span>
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+
+                            <!-- Reservas -->
+                            <div class="bg-gray-800/90 rounded-xl p-4">
+                                <h3 class="text-lg font-bold text-white mb-3">🪑 Reservas (${state.reserves.filter(r => r).length}/7)</h3>
+                                <div class="grid grid-cols-3 gap-3">
+                                    ${state.reserves.map((r, i) => `
+                                        <div onclick="openPlayerModal(${i}, 'reserve')" class="cursor-pointer">
+                                            ${r ? `
+                                                <div class="relative text-center">
+                                                    <img src="${r.photo}" 
+                                                        class="w-16 h-16 mx-auto rounded-full border-2 border-green-500 object-cover"
+                                                        onerror="this.src='https://via.placeholder.com/64/1a472a/ffffff?text=${r.name.charAt(0)}'">
+                                                    <p class="text-white text-xs mt-1 truncate">${r.name.split(' ').pop()}</p>
+                                                </div>
+                                            ` : `
+                                                <div class="w-16 h-16 mx-auto rounded-full border-2 border-dashed border-gray-600 flex items-center justify-center hover:border-green-500 transition">
+                                                    <span class="text-2xl text-gray-500">+</span>
+                                                </div>
+                                            `}
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <!-- Pontuação -->
+                            ${state.isConfirmed ? `
+                                <div class="bg-gray-800/90 rounded-xl p-4">
+                                    <h3 class="text-lg font-bold text-white mb-3">📊 Pontuação</h3>
+                                    <div class="flex items-center gap-2 mb-3">
+                                        <select id="roundSelect" onchange="changeRound(this.value)" class="flex-1 px-3 py-2 bg-gray-700 text-white rounded-lg">
+                                            ${Array.from({length: 38}, (_, i) => `
+                                                <option value="${i+1}" ${state.selectedRound === i+1 ? 'selected' : ''}>Rodada ${i+1}</option>
+                                            `).join('')}
+                                        </select>
+                                    </div>
+                                    <div class="text-center py-3 bg-gray-700/50 rounded-lg mb-3">
+                                        <p class="text-gray-400">Rodada ${state.selectedRound}</p>
+                                        <p class="text-3xl font-bold text-green-400">${getRoundScore(state.selectedRound)} pts</p>
+                                    </div>
+                                    <button onclick="syncScores()" class="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm ${state.isUpdatingScores ? 'opacity-50' : ''}">
+                                        ${state.isUpdatingScores ? '⏳ Atualizando...' : '🔄 Atualizar Pontuação'}
+                                    </button>
+                                    <p class="text-gray-500 text-xs mt-2 text-center">Atualiza automaticamente a cada 5 min</p>
+                                </div>
+                            ` : ''}
+
+                            <!-- Confirmar -->
+                            ${!state.isConfirmed && canConfirm() ? `
+                                <button onclick="confirmLineup()" class="w-full py-4 bg-gradient-to-r from-yellow-600 to-yellow-500 hover:from-yellow-500 hover:to-yellow-400 text-white font-bold rounded-xl text-lg">
+                                    🔒 CONFIRMAR ESCALAÇÃO
+                                </button>
+                            ` : ''}
+
+                            ${state.isConfirmed ? `
+                                <div class="bg-green-600/20 border border-green-500 rounded-xl p-4 text-center">
+                                    <p class="text-green-400 font-bold">✅ Escalação Confirmada!</p>
+                                    <p class="text-gray-400 text-sm">Não pode mais ser alterada</p>
+                                </div>
+                            ` : ''}
+
+                            <!-- Status de sincronização -->
+                            ${state.players.length > 0 ? `
+                                <div class="bg-gray-800/90 rounded-xl p-3 text-center">
+                                    <p class="text-green-400 text-sm">✅ ${state.players.length} jogadores carregados</p>
+                                </div>
+                            ` : state.isLoading ? `
+                                <div class="bg-gray-800/90 rounded-xl p-3 text-center">
+                                    <p class="text-yellow-400 text-sm">⏳ Carregando jogadores...</p>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal Jogadores -->
+                ${state.modal === 'player' ? renderPlayerModal() : ''}
+                
+                <!-- Modal Técnico -->
+                ${state.modal === 'coach' ? renderCoachModal() : ''}
+
+                <!-- Modal Sync -->
+                ${state.modal === 'sync' ? renderSyncModal() : ''}
+            `;
+        }
+
+        function renderPlayerModal() {
+            const positionForSlot = state.slotType === 'starter' ? getPositionForSlot(state.slotIndex) : null;
+            const usedIds = [...state.starters, ...state.reserves].filter(p => p).map(p => p.id);
+            
+            let filtered = state.players.filter(p => !usedIds.includes(p.id));
+            
+            // Filtro por time
+            if (state.filterTeam) {
+                filtered = filtered.filter(p => p.team === state.filterTeam);
+            }
+            
+            // Filtro por posição
+            if (state.filterPosition) {
+                filtered = filtered.filter(p => p.position === state.filterPosition);
+            }
+            
+            // Busca por nome
+            if (state.searchName) {
+                const search = state.searchName.toLowerCase();
+                filtered = filtered.filter(p => p.name.toLowerCase().includes(search));
+            }
+
+            const uniqueTeams = [...new Set(state.players.map(p => p.team))].sort();
+
+            return `
+                <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
+                    <div class="bg-gray-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
+                        <div class="p-4 border-b border-gray-700">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-xl font-bold text-white">
+                                    Selecionar Jogador ${positionForSlot ? `(${positionForSlot})` : ''}
+                                </h3>
+                                <button onclick="closeModalDirect()" 
+                                    class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                            </div>
+                            
+                            <!-- Filtros -->
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <input type="text" placeholder="🔍 Buscar jogador..." 
+                                    value="${state.searchName}"
+                                    onkeyup="state.searchName=this.value;render()"
+                                    class="px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600 focus:border-green-500 focus:outline-none">
+                                
+                                <select onchange="state.filterTeam=this.value;render()" 
+                                    class="px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600">
+                                    <option value="">Todos os times</option>
+                                    ${uniqueTeams.map(t => `
+                                        <option value="${t}" ${state.filterTeam === t ? 'selected' : ''}>${t}</option>
+                                    `).join('')}
+                                </select>
+                                
+                                <select onchange="state.filterPosition=this.value;render()" 
+                                    class="px-3 py-2 bg-gray-700 text-white rounded-lg border border-gray-600">
+                                    <option value="" ${state.filterPosition === '' ? 'selected' : ''}>Todas posições</option>
+                                    <option value="GOL" ${state.filterPosition === 'GOL' ? 'selected' : ''}>Goleiro</option>
+                                    <option value="ZAG" ${state.filterPosition === 'ZAG' ? 'selected' : ''}>Defensor</option>
+                                    <option value="MEI" ${state.filterPosition === 'MEI' ? 'selected' : ''}>Meio-campo</option>
+                                    <option value="ATA" ${state.filterPosition === 'ATA' ? 'selected' : ''}>Atacante</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="p-4 overflow-y-auto" style="max-height: calc(90vh - 180px);">
+                            ${state.players.length === 0 ? `
+                                <div class="text-center py-12">
+                                    <p class="text-gray-400 text-lg mb-4">Nenhum jogador carregado</p>
+                                    <button onclick="state.modal=null;syncAllData()" 
+                                        class="px-6 py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold">
+                                        🔄 Sincronizar Jogadores
+                                    </button>
+                                </div>
+                            ` : filtered.length === 0 ? `
+                                <p class="text-center text-gray-400 py-8">Nenhum jogador encontrado com os filtros atuais</p>
+                            ` : `
+                                <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                    ${filtered.slice(0, 99).map(p => `
+                                        <div onclick="selectPlayer(${p.id})" 
+                                            class="bg-gray-700/50 hover:bg-gray-700 rounded-lg p-3 cursor-pointer transition">
+                                            <div class="flex items-center gap-3">
+                                                <img src="${p.photo}" class="w-14 h-14 rounded-full object-cover flex-shrink-0" 
+                                                    onerror="this.src='https://via.placeholder.com/56/1a472a/ffffff?text=${p.name.charAt(0)}'">
+                                                <div class="flex-1 min-w-0">
+                                                    <p class="text-white font-medium truncate">${p.name}</p>
+                                                    <p class="text-gray-400 text-sm truncate">${p.team}</p>
+                                                    <span class="text-xs px-2 py-0.5 bg-green-600/50 text-green-300 rounded">${p.position}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ${filtered.length > 99 ? `
+                                    <p class="text-center text-gray-500 mt-4">Mostrando 99 de ${filtered.length} jogadores. Use os filtros para refinar.</p>
+                                ` : ''}
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderCoachModal() {
+            return `
+                <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
+                    <div class="bg-gray-800 rounded-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden" onclick="event.stopPropagation()">
+                        <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                            <h3 class="text-xl font-bold text-white">👔 Selecionar Técnico</h3>
+                            <button onclick="closeModalDirect()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                        </div>
+                        <div class="p-4 overflow-y-auto max-h-[60vh]">
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                ${state.coaches.map(c => `
+                                    <div onclick="selectCoach(${c.id})" 
+                                        class="bg-gray-700/50 hover:bg-gray-700 rounded-lg p-4 cursor-pointer transition flex items-center gap-4 ${state.coach?.id === c.id ? 'ring-2 ring-green-500' : ''}">
+                                        <div class="w-16 h-16 rounded-full bg-gradient-to-br from-green-600 to-green-800 flex items-center justify-center text-xl font-bold text-white flex-shrink-0">
+                                            ${c.name.split(' ').map(n => n[0]).join('').slice(0,2)}
+                                        </div>
+                                        <div class="flex-1 min-w-0">
+                                            <p class="text-white font-medium">${c.name}</p>
+                                            <p class="text-gray-400 text-sm">${c.team}</p>
+                                            <p class="text-lg">${c.country}</p>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSyncModal() {
+            return `
+                <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+                    <div class="bg-gray-800 rounded-2xl w-full max-w-lg overflow-hidden">
+                        <div class="p-4 border-b border-gray-700 flex justify-between items-center">
+                            <h3 class="text-xl font-bold text-white">🔄 Sincronizando API-Football</h3>
+                            ${!state.isLoading ? `
+                                <button onclick="closeModalDirect()" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+                            ` : ''}
+                        </div>
+                        <div class="p-4">
+                            <div class="sync-log bg-gray-900 rounded-lg p-4 font-mono text-sm">
+                                ${state.syncLogs.map(log => `
+                                    <div class="mb-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-green-400' : log.type === 'warning' ? 'text-yellow-400' : 'text-gray-300'}">
+                                        <span class="text-gray-500">[${log.time}]</span> ${log.message}
+                                    </div>
+                                `).join('')}
+                                ${state.syncLogs.length === 0 ? '<div class="text-gray-500">Iniciando...</div>' : ''}
+                            </div>
+                            
+                            ${state.isLoading ? `
+                                <div class="mt-4 flex items-center justify-center gap-3">
+                                    <div class="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <span class="text-green-400">Processando...</span>
+                                </div>
+                            ` : `
+                                <div class="mt-4 text-center">
+                                    <p class="text-green-400 font-semibold mb-3">✅ Sincronização finalizada!</p>
+                                    <p class="text-gray-400">${state.players.length} jogadores de ${state.teams.length} times</p>
+                                    <button onclick="closeModalDirect()" 
+                                        class="mt-4 px-6 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg">
+                                        Fechar
+                                    </button>
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderRanking() {
+            const rankings = Object.entries(state.users)
+                .filter(([_, u]) => u.isConfirmed)
+                .map(([nick, u]) => ({
+                    nick,
+                    team: u.teamName,
+                    logo: u.teamLogo,
+                    score: calculateUserScore(u)
+                }))
+                .sort((a, b) => b.score - a.score);
+
+            return `
+                <div class="min-h-screen p-4">
+                    <div class="max-w-2xl mx-auto">
+                        <div class="bg-gray-800/90 rounded-xl p-6">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-2xl font-bold text-white">🏆 Ranking</h2>
+                                <button onclick="state.screen='lineup';render()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg">
+                                    ← Voltar
+                                </button>
+                            </div>
+                            
+                            ${rankings.length === 0 ? `
+                                <p class="text-center text-gray-400 py-8">Nenhum time confirmado ainda</p>
+                            ` : `
+                                <div class="space-y-3">
+                                    ${rankings.map((r, i) => `
+                                        <div class="flex items-center gap-4 bg-gray-700/50 rounded-lg p-4 ${r.nick === state.currentUser ? 'ring-2 ring-green-500' : ''}">
+                                            <div class="text-2xl font-bold w-10 ${i === 0 ? 'text-yellow-400' : i === 1 ? 'text-gray-300' : i === 2 ? 'text-orange-400' : 'text-gray-500'}">
+                                                ${i + 1}º
+                                            </div>
+                                            ${r.logo ? 
+                                                `<img src="${r.logo}" class="w-12 h-12 rounded-lg object-cover">` :
+                                                `<div class="w-12 h-12 bg-green-600 rounded-lg flex items-center justify-center text-xl">⚽</div>`
+                                            }
+                                            <div class="flex-1">
+                                                <p class="text-white font-semibold">${r.team}</p>
+                                                <p class="text-gray-400 text-sm">@${r.nick}</p>
+                                            </div>
+                                            <div class="text-right">
+                                                <p class="text-2xl font-bold text-green-400">${r.score}</p>
+                                                <p class="text-gray-400 text-sm">pontos</p>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ==================== HELPERS ====================
+        function getPositionForSlot(index) {
+            const positions = ['GOL', 'ZAG', 'ZAG', 'ZAG', 'ZAG', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA', 'ATA'];
+            return positions[index];
+        }
+
+        function canConfirm() {
+            return state.starters.every(p => p) && 
+                   state.reserves.every(p => p) && 
+                   state.coach;
+        }
+
+        function calculateUserScore(user) {
+            let total = 0;
+            Object.values(user.scores || {}).forEach(round => {
+                Object.values(round.players || {}).forEach(s => total += s);
+                total += round.coach || 0;
+            });
+            return total;
+        }
+
+        // ==================== EVENT HANDLERS ====================
+        function attachEventListeners() {
+            const logoUpload = document.getElementById('logoUpload');
+            const logoInput = document.getElementById('logoInput');
+            
+            if (logoUpload && logoInput) {
+                logoUpload.onclick = () => logoInput.click();
+                logoInput.onchange = (e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                            state.teamLogo = ev.target.result;
+                            render();
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+            }
+        }
+
+        window.setAuthMode = function(mode) {
+            state.authMode = mode;
+            render();
+        };
+
+        window.handleAuth = function() {
+            const nickname = document.getElementById('nickname').value.trim();
+            const password = document.getElementById('password').value;
+            const errorEl = document.getElementById('authError');
+            
+            if (nickname.length < 3) {
+                errorEl.textContent = '❌ Nickname deve ter pelo menos 3 caracteres';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            
+            if (password.length < 4) {
+                errorEl.textContent = '❌ Senha deve ter pelo menos 4 caracteres';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            
+            if (state.authMode === 'register') {
+                const accessCode = document.getElementById('accessCode').value;
+                if (accessCode !== 'season26') {
+                    errorEl.textContent = '❌ Código de acesso inválido';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                
+                if (state.users[nickname]) {
+                    errorEl.textContent = '❌ Nickname já existe';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                
+                state.users[nickname] = { password, teamName: '', scores: {} };
+                state.currentUser = nickname;
+                state.screen = 'createTeam';
+                saveState();
+                render();
+            } else {
+                if (!state.users[nickname]) {
+                    errorEl.textContent = '❌ Usuário não encontrado';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                
+                if (state.users[nickname].password !== password) {
+                    errorEl.textContent = '❌ Senha incorreta';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                
+                state.currentUser = nickname;
+                const userData = state.users[nickname];
+                state.teamName = userData.teamName || '';
+                state.teamLogo = userData.teamLogo || null;
+                state.formation = userData.formation || '4-3-3';
+                state.starters = userData.starters || Array(11).fill(null);
+                state.reserves = userData.reserves || Array(7).fill(null);
+                state.coach = userData.coach || null;
+                state.isConfirmed = userData.isConfirmed || false;
+                state.scores = userData.scores || {};
+                state.screen = userData.teamName ? 'lineup' : 'createTeam';
+                saveState();
+                render();
+            }
+        };
+
+        window.createTeam = function() {
+            const teamName = document.getElementById('teamName').value.trim();
+            if (!teamName) {
+                alert('Digite o nome do time!');
+                return;
+            }
+            state.teamName = teamName;
+            state.screen = 'lineup';
+            saveState();
+            render();
+        };
+
+        window.openPlayerModal = function(index, type) {
+            if (state.isConfirmed) return;
+            state.scrollY = window.scrollY;
+            state.modal = 'player';
+            state.slotIndex = index;
+            state.slotType = type;
+            state.filterTeam = '';
+            state.searchName = '';
+            // Inicializa com a posição sugerida para o slot (apenas para titulares)
+            state.filterPosition = type === 'starter' ? getPositionForSlot(index) : '';
+            document.body.classList.add('modal-open');
+            document.body.style.top = `-${state.scrollY}px`;
+            render();
+        };
+
+        window.openCoachModal = function() {
+            if (state.isConfirmed) return;
+            state.scrollY = window.scrollY;
+            state.modal = 'coach';
+            document.body.classList.add('modal-open');
+            document.body.style.top = `-${state.scrollY}px`;
+            render();
+        };
+
+        window.closeModal = function(e) {
+            if (e.target === e.currentTarget) {
+                document.body.classList.remove('modal-open');
+                document.body.style.top = '';
+                window.scrollTo(0, state.scrollY || 0);
+                state.modal = null;
+                state.filterTeam = '';
+                state.filterPosition = '';
+                state.searchName = '';
+                render();
+            }
+        };
+
+        window.selectPlayer = function(playerId) {
+            const player = state.players.find(p => p.id === playerId);
+            if (!player) return;
+            
+            if (state.slotType === 'starter') {
+                state.starters[state.slotIndex] = player;
+            } else {
+                state.reserves[state.slotIndex] = player;
+            }
+            
+            document.body.classList.remove('modal-open');
+            document.body.style.top = '';
+            window.scrollTo(0, state.scrollY || 0);
+            state.modal = null;
+            state.filterTeam = '';
+            state.filterPosition = '';
+            state.searchName = '';
+            saveState();
+            render();
+        };
+
+        window.selectCoach = function(coachId) {
+            state.coach = state.coaches.find(c => c.id === coachId);
+            document.body.classList.remove('modal-open');
+            document.body.style.top = '';
+            window.scrollTo(0, state.scrollY || 0);
+            state.modal = null;
+            saveState();
+            render();
+        };
+
+        window.closeModalDirect = function() {
+            document.body.classList.remove('modal-open');
+            document.body.style.top = '';
+            window.scrollTo(0, state.scrollY || 0);
+            state.modal = null;
+            state.filterTeam = '';
+            state.filterPosition = '';
+            state.searchName = '';
+            render();
+        };
+
+        window.confirmLineup = function() {
+            if (!canConfirm()) return;
+            if (confirm('Confirmar escalação? Não poderá mais alterar!')) {
+                state.isConfirmed = true;
+                saveState();
+                render();
+            }
+        };
+
+        window.changeRound = function(round) {
+            state.selectedRound = parseInt(round);
+            render();
+        };
+
+        window.syncScores = syncRoundScores;
+
+        window.goToRanking = function() {
+            state.screen = 'ranking';
+            render();
+        };
+
+        window.logout = function() {
+            saveState();
+            state.currentUser = null;
+            state.teamName = '';
+            state.teamLogo = null;
+            state.starters = Array(11).fill(null);
+            state.reserves = Array(7).fill(null);
+            state.coach = null;
+            state.isConfirmed = false;
+            state.scores = {};
+            state.screen = 'auth';
+            render();
+        };
+
+        window.syncAllData = syncAllData;
+
+        // ==================== INIT ====================
+        loadState();
+        if (!state.currentUser) {
+            state.screen = 'auth';
+        }
+        render();
+
+        // Sincronizar jogadores automaticamente se não tiver
+        if (state.players.length === 0) {
+            setTimeout(() => {
+                syncAllData();
+            }, 1000);
+        }
+
+        // Atualizar pontuação automaticamente a cada 5 minutos se confirmado
+        setInterval(() => {
+            if (state.isConfirmed && !state.isUpdatingScores) {
+                syncRoundScores();
+            }
+        }, 5 * 60 * 1000); // 5 minutos
+
+        // Primeira atualização de pontuação ao carregar
+        setTimeout(() => {
+            if (state.isConfirmed) {
+                syncRoundScores();
+            }
+        }, 3000);
+    </script>
+</body>
+</html>
