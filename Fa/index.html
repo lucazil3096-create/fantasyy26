@@ -1829,19 +1829,14 @@
                                 <label class="block text-zinc-400 text-sm mb-2">Nickname</label>
                                 <input type="text" id="nickname" placeholder="Seu apelido" 
                                     class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm"
-                                    value="${state.tempNickname || ''}"
-                                    oninput="state.tempNickname=this.value"
-                                    onkeypress="if(event.key==='Enter')document.getElementById('password').focus()"
-                                    autofocus>
+                                    onkeypress="if(event.key==='Enter')document.getElementById('password').focus()">
                             </div>
                             
                             <div>
                                 <label class="block text-zinc-400 text-sm mb-2">Senha</label>
                                 <input type="password" id="password" placeholder="Sua senha" 
                                     class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm"
-                                    value="${state.tempPassword || ''}"
-                                    oninput="state.tempPassword=this.value"
-                                    onkeypress="handlePasswordEnter(event)">
+                                    onkeypress="if(event.key==='Enter'){${state.authMode === 'register' ? "document.getElementById('accessCode').focus()" : 'handleAuth()'}}">
                             </div>
                             
                             ${state.authMode === 'register' ? `
@@ -1849,8 +1844,6 @@
                                     <label class="block text-zinc-400 text-sm mb-2">Código de Acesso</label>
                                     <input type="text" id="accessCode" placeholder="Código para entrar" 
                                         class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm"
-                                        value="${state.tempAccessCode || ''}"
-                                        oninput="state.tempAccessCode=this.value"
                                         onkeypress="if(event.key==='Enter')handleAuth()">
                                 </div>
                             ` : ''}
@@ -1871,9 +1864,7 @@
                                 <div class="mt-4 p-4 bg-zinc-800/50 rounded-lg">
                                     <p class="text-zinc-400 text-xs mb-3">Digite o código de acesso para resetar sua senha:</p>
                                     <input type="text" id="recoverCode" placeholder="Código de acesso" 
-                                        class="w-full px-4 py-2 input-dark rounded-lg text-white text-sm mb-3"
-                                        value="${state.tempAccessCode || ''}"
-                                        oninput="state.tempAccessCode=this.value">
+                                        class="w-full px-4 py-2 input-dark rounded-lg text-white text-sm mb-3">
                                     <button onclick="recoverPassword()" 
                                         class="w-full py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-semibold rounded-lg text-sm transition">
                                         Resetar Senha
@@ -2369,7 +2360,7 @@
                 ${state.modal === 'privateChat' ? renderPrivateChatModal() : ''}
                 
                 <!-- Modal Lista de Mensagens -->
-                ${state.modal === 'messages' ? renderMessagesListModal() : ''}
+                ${state.modal === 'messagesList' ? renderMessagesListModal() : ''}
             `;
         }
 
@@ -4922,20 +4913,8 @@
         }
 
         window.setAuthMode = function(mode) {
-            // Salvar valores atuais antes de trocar
-            const nicknameEl = document.getElementById('nickname');
-            const passwordEl = document.getElementById('password');
-            if (nicknameEl) state.tempNickname = nicknameEl.value;
-            if (passwordEl) state.tempPassword = passwordEl.value;
-            
             state.authMode = mode;
             render();
-            
-            // Focar no campo de nickname após render
-            setTimeout(() => {
-                const newNicknameEl = document.getElementById('nickname');
-                if (newNicknameEl) newNicknameEl.focus();
-            }, 50);
         };
         
         // Recuperar/Resetar senha
@@ -4985,19 +4964,7 @@
             
             // Voltar para login
             state.authMode = 'login';
-            state.tempAccessCode = '';
             render();
-        };
-        
-        window.handlePasswordEnter = function(event) {
-            if (event.key === 'Enter') {
-                if (state.authMode === 'register') {
-                    const accessCodeEl = document.getElementById('accessCode');
-                    if (accessCodeEl) accessCodeEl.focus();
-                } else {
-                    handleAuth();
-                }
-            }
         };
 
         window.handleAuth = function() {
@@ -5127,6 +5094,9 @@
                 // Escutar chat do draft
                 listenToDraftChat();
                 listenToDraftStatus();
+                
+                // Escutar mensagens privadas
+                listenToPrivateMessages();
             }
         };
 
@@ -5253,7 +5223,15 @@
         
         // Abrir modal de mensagens (lista de conversas)
         window.openMessagesModal = function() {
-            state.modal = 'messages';
+            console.log('📬 Abrindo lista de mensagens');
+            
+            // Iniciar listener se não estiver ativo
+            if (!state.privateMessagesListenerActive) {
+                listenToPrivateMessages();
+                state.privateMessagesListenerActive = true;
+            }
+            
+            state.modal = 'messagesList';
             render();
         };
         
@@ -5266,14 +5244,28 @@
         
         // Abrir chat privado
         window.openPrivateChat = function(nick) {
+            if (!nick) return;
+            
+            console.log('💬 Abrindo chat com:', nick);
             state.selectedChatUser = nick;
             state.modal = 'privateChat';
+            
+            // Iniciar listener se não estiver ativo
+            if (!state.privateMessagesListenerActive) {
+                listenToPrivateMessages();
+                state.privateMessagesListenerActive = true;
+            }
+            
             render();
             
             // Scroll para o final
             setTimeout(() => {
                 const el = document.getElementById('privateChatMessages');
                 if (el) el.scrollTop = el.scrollHeight;
+                
+                // Focar no input
+                const input = document.getElementById('privateMsgInput');
+                if (input) input.focus();
             }, 100);
         };
         
@@ -5283,7 +5275,7 @@
             if (!input) return;
             
             const text = input.value.trim();
-            if (!text || !state.selectedChatUser) return;
+            if (!text || !state.selectedChatUser || !state.currentUser) return;
             
             const chatKey = [state.currentUser, state.selectedChatUser].sort().join('_');
             
@@ -5296,32 +5288,49 @@
                 read: false
             };
             
+            console.log('📨 Enviando mensagem privada:', message);
+            
             // Salvar no Firebase
             if (db) {
-                db.ref('privateMessages').push(message);
+                db.ref('privateMessages').push(message).then(() => {
+                    console.log('✅ Mensagem enviada com sucesso!');
+                }).catch(err => {
+                    console.error('❌ Erro ao enviar mensagem:', err);
+                    alert('Erro ao enviar mensagem. Tente novamente.');
+                });
             }
             
             input.value = '';
+            input.focus();
         };
         
         // Escutar mensagens privadas
         function listenToPrivateMessages() {
-            if (!db || !state.currentUser) return;
+            if (!db) {
+                console.log('⚠️ Firebase não conectado para mensagens privadas');
+                return;
+            }
             
-            // Escutar mensagens onde o usuário é remetente ou destinatário
+            console.log('👂 Escutando mensagens privadas...');
+            
+            // Escutar todas as mensagens
             db.ref('privateMessages').orderByChild('timestamp').limitToLast(500).on('value', (snapshot) => {
                 const messages = snapshot.val();
-                if (messages) {
+                console.log('📬 Mensagens recebidas:', messages ? Object.keys(messages).length : 0);
+                
+                if (messages && state.currentUser) {
                     // Filtrar apenas mensagens do usuário atual
                     state.privateMessages = Object.values(messages)
-                        .filter(m => m.from === state.currentUser || m.to === state.currentUser)
-                        .sort((a, b) => a.timestamp - b.timestamp);
+                        .filter(m => m && (m.from === state.currentUser || m.to === state.currentUser))
+                        .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+                    
+                    console.log('📩 Mensagens do usuário:', state.privateMessages.length);
                 } else {
                     state.privateMessages = [];
                 }
                 
-                // Re-render se estiver no chat privado
-                if (state.modal === 'privateChat') {
+                // Re-render se estiver no chat privado ou lista de mensagens
+                if (state.modal === 'privateChat' || state.modal === 'messagesList') {
                     render();
                     setTimeout(() => {
                         const el = document.getElementById('privateChatMessages');
