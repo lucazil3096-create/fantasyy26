@@ -16,6 +16,160 @@
         .card:hover { border-color: rgba(255,255,255,0.1); }
         .btn-primary { background: #16a34a; }
         .btn-primary:hover { background: #22c55e; }
+        
+        /* ==================== ANIMAÇÃO DE GOL ==================== */
+        .goal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.9);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.3s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        .goal-net {
+            position: relative;
+            width: 280px;
+            height: 180px;
+            border: 4px solid white;
+            border-top: none;
+            background: 
+                repeating-linear-gradient(90deg, transparent, transparent 18px, rgba(255,255,255,0.3) 18px, rgba(255,255,255,0.3) 20px),
+                repeating-linear-gradient(0deg, transparent, transparent 18px, rgba(255,255,255,0.3) 18px, rgba(255,255,255,0.3) 20px);
+            border-radius: 0 0 10px 10px;
+            overflow: visible;
+        }
+        
+        .goal-ball {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            background: radial-gradient(circle at 30% 30%, #fff 0%, #ccc 50%, #999 100%);
+            border-radius: 50%;
+            box-shadow: 
+                inset -5px -5px 15px rgba(0,0,0,0.3),
+                5px 5px 20px rgba(0,0,0,0.5);
+            animation: ballEnter 0.8s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
+            top: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+        
+        .goal-ball::before {
+            content: '';
+            position: absolute;
+            inset: 5px;
+            background: 
+                radial-gradient(circle at 70% 70%, transparent 0%, transparent 30%, rgba(0,0,0,0.1) 30%),
+                repeating-conic-gradient(from 0deg, #111 0deg 36deg, #fff 36deg 72deg);
+            border-radius: 50%;
+            opacity: 0.3;
+        }
+        
+        @keyframes ballEnter {
+            0% {
+                top: -100px;
+                transform: translateX(-50%) rotate(0deg) scale(0.5);
+            }
+            50% {
+                top: 60px;
+                transform: translateX(-50%) rotate(360deg) scale(1.1);
+            }
+            70% {
+                top: 50px;
+                transform: translateX(-50%) rotate(500deg) scale(1);
+            }
+            100% {
+                top: 70px;
+                transform: translateX(-50%) rotate(720deg) scale(1);
+            }
+        }
+        
+        .goal-text {
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 80px;
+            color: #22c55e;
+            text-shadow: 0 0 30px rgba(34, 197, 94, 0.8), 0 0 60px rgba(34, 197, 94, 0.4);
+            animation: goalPulse 0.5s ease-out;
+            letter-spacing: 0.1em;
+            margin-top: 30px;
+        }
+        
+        @keyframes goalPulse {
+            0% { transform: scale(0); opacity: 0; }
+            50% { transform: scale(1.3); }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        
+        .goal-player {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-top: 20px;
+            padding: 15px 25px;
+            background: rgba(34, 197, 94, 0.2);
+            border: 2px solid rgba(34, 197, 94, 0.5);
+            border-radius: 50px;
+            animation: slideUp 0.5s ease-out 0.3s both;
+        }
+        
+        @keyframes slideUp {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .goal-player img {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid #22c55e;
+        }
+        
+        .goal-player-name {
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        
+        .goal-player-team {
+            color: rgba(255,255,255,0.6);
+            font-size: 14px;
+        }
+        
+        .goal-points {
+            color: #22c55e;
+            font-size: 24px;
+            font-weight: bold;
+            margin-left: 10px;
+        }
+        
+        .goal-close {
+            margin-top: 30px;
+            padding: 12px 30px;
+            background: transparent;
+            border: 2px solid rgba(255,255,255,0.3);
+            color: white;
+            border-radius: 30px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            animation: slideUp 0.5s ease-out 0.5s both;
+        }
+        
+        .goal-close:hover {
+            background: rgba(255,255,255,0.1);
+            border-color: rgba(255,255,255,0.5);
+        }
+        /* ==================== FIM ANIMAÇÃO GOL ==================== */
+        
         .campo-bg {
             background: 
                 repeating-linear-gradient(
@@ -309,6 +463,8 @@
             // Pontuação ao vivo
             liveScoresUpdating: false,
             hasLiveGames: false,
+            // Animação de gol
+            goalQueue: [], // Fila de gols para animar
             // Chat
             chatMessages: [],
             chatInput: '',
@@ -1534,6 +1690,118 @@
             }
         }
 
+        // ==================== ANIMAÇÃO DE GOL ====================
+        
+        // Mostrar animação de gol
+        function showGoalAnimation(player, goals, team, photo) {
+            // Criar overlay
+            const overlay = document.createElement('div');
+            overlay.className = 'goal-overlay';
+            overlay.id = 'goalOverlay';
+            
+            overlay.innerHTML = `
+                <div class="goal-net">
+                    <div class="goal-ball"></div>
+                </div>
+                <div class="goal-text">GOOOL!</div>
+                <div class="goal-player">
+                    <img src="${photo || 'https://via.placeholder.com/50/1a1a1a/ffffff?text=' + player.charAt(0)}" 
+                         onerror="this.src='https://via.placeholder.com/50/1a1a1a/ffffff?text=${player.charAt(0)}'">
+                    <div>
+                        <div class="goal-player-name">${player}</div>
+                        <div class="goal-player-team">${team || ''}</div>
+                    </div>
+                    <div class="goal-points">+${goals > 1 ? goals * 8 : 8} pts</div>
+                </div>
+                <button class="goal-close" onclick="closeGoalAnimation()">Continuar</button>
+            `;
+            
+            document.body.appendChild(overlay);
+            
+            // Som de gol (opcional - comentado por padrão)
+            // playGoalSound();
+            
+            // Auto fechar após 4 segundos
+            setTimeout(() => {
+                closeGoalAnimation();
+            }, 4000);
+        }
+        
+        // Fechar animação de gol
+        window.closeGoalAnimation = function() {
+            const overlay = document.getElementById('goalOverlay');
+            if (overlay) {
+                overlay.style.opacity = '0';
+                overlay.style.transition = 'opacity 0.3s';
+                setTimeout(() => {
+                    overlay.remove();
+                    // Se tiver mais gols na fila, mostrar o próximo
+                    if (state.goalQueue.length > 0) {
+                        const nextGoal = state.goalQueue.shift();
+                        setTimeout(() => {
+                            showGoalAnimation(nextGoal.name, nextGoal.goals, nextGoal.team, nextGoal.photo);
+                        }, 300);
+                    }
+                }, 300);
+            }
+        };
+        
+        // Carregar gols já vistos do localStorage
+        function getSeenGoals() {
+            try {
+                const saved = localStorage.getItem('fantasy_seen_goals');
+                return saved ? JSON.parse(saved) : {};
+            } catch (e) {
+                return {};
+            }
+        }
+        
+        // Salvar gols vistos no localStorage
+        function saveSeenGoals(seenGoals) {
+            try {
+                localStorage.setItem('fantasy_seen_goals', JSON.stringify(seenGoals));
+            } catch (e) {
+                console.error('Erro ao salvar gols vistos:', e);
+            }
+        }
+        
+        // Verificar novos gols e adicionar na fila
+        function checkNewGoals(playerId, playerName, playerPhoto, playerTeam, currentGoals) {
+            const round = state.selectedRound;
+            const seenGoals = getSeenGoals();
+            
+            // Chave única: rodada + jogador
+            const goalKey = `${round}_${playerId}`;
+            const seenGoalsForPlayer = seenGoals[goalKey] || 0;
+            
+            // Só mostra animação se tem mais gols do que já foi visto
+            if (currentGoals > seenGoalsForPlayer) {
+                const newGoals = currentGoals - seenGoalsForPlayer;
+                console.log(`⚽ NOVO GOL! ${playerName} fez ${newGoals} gol(s) na rodada ${round}!`);
+                
+                // Adicionar na fila de gols
+                state.goalQueue.push({
+                    id: playerId,
+                    name: playerName,
+                    photo: playerPhoto,
+                    team: playerTeam,
+                    goals: newGoals
+                });
+                
+                // Marcar como visto
+                seenGoals[goalKey] = currentGoals;
+                saveSeenGoals(seenGoals);
+            }
+        }
+        
+        // Processar fila de gols (mostrar animações)
+        function processGoalQueue() {
+            if (state.goalQueue.length > 0 && !document.getElementById('goalOverlay')) {
+                const goal = state.goalQueue.shift();
+                showGoalAnimation(goal.name, goal.goals, goal.team, goal.photo);
+            }
+        }
+
         // Calcular pontuação de um jogador
         function calculatePlayerScore(stats, fixture = null) {
             let score = 0;
@@ -1733,10 +2001,9 @@
             return score;
         }
 
-        // Sincronizar pontuação da rodada (silencioso) - INCLUI JOGOS AO VIVO!
+        // Sincronizar pontuação da rodada para TODOS os usuários confirmados
         async function syncRoundScores() {
             if (state.isUpdatingScores) return;
-            if (!state.isConfirmed) return;
             
             const round = state.selectedRound;
             state.isUpdatingScores = true;
@@ -1756,30 +2023,17 @@
                     return;
                 }
 
-                // Status de jogos que queremos processar:
-                // FT = Finalizado, 1H = Primeiro tempo, HT = Intervalo, 2H = Segundo tempo
+                // Status de jogos que queremos processar
                 const liveStatuses = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'];
                 const finishedStatuses = ['FT', 'AET', 'PEN'];
                 
-                // Jogos ao vivo
-                const liveGames = fixtures.filter(f => {
-                    const status = f.fixture?.status?.short;
-                    return liveStatuses.includes(status);
-                });
-                
-                // Jogos finalizados
-                const finishedGames = fixtures.filter(f => {
-                    const status = f.fixture?.status?.short;
-                    return finishedStatuses.includes(status);
-                });
-                
-                // Todos os jogos que vamos processar
+                const liveGames = fixtures.filter(f => liveStatuses.includes(f.fixture?.status?.short));
+                const finishedGames = fixtures.filter(f => finishedStatuses.includes(f.fixture?.status?.short));
                 const gamesToProcess = [...liveGames, ...finishedGames];
                 
                 console.log(`🔴 ${liveGames.length} jogos AO VIVO`);
                 console.log(`✅ ${finishedGames.length} jogos finalizados`);
                 
-                // Marcar se tem jogos ao vivo
                 state.hasLiveGames = liveGames.length > 0;
 
                 if (gamesToProcess.length === 0) {
@@ -1789,21 +2043,13 @@
                     return;
                 }
 
-                // Inicializar pontuação da rodada
-                if (!state.scores[round]) {
-                    state.scores[round] = { players: {}, coach: 0, live: false };
-                }
+                // Coletar todas as stats dos jogadores de todos os jogos
+                const allPlayerStats = {};
                 
-                // Marcar se a pontuação é ao vivo (ainda tem jogos rolando)
-                state.scores[round].live = liveGames.length > 0;
-
-                // Buscar estatísticas de cada jogo
                 for (let i = 0; i < gamesToProcess.length; i++) {
                     const fixture = gamesToProcess[i];
                     
-                    // Verificar se fixture tem todos os dados necessários
                     if (!fixture || !fixture.teams || !fixture.teams.home || !fixture.teams.away) {
-                        console.log('⚠️ Fixture inválido, pulando...');
                         continue;
                     }
                     
@@ -1811,46 +2057,107 @@
                     
                     const playerStats = await getPlayerStats(fixture.fixture.id);
                     
-                    // Processar cada time
+                    // Guardar stats de cada jogador
                     playerStats.forEach(team => {
                         team.players?.forEach(playerData => {
                             const playerId = playerData.player?.id;
-                            
-                            // Verificar se o jogador está escalado
-                            const isStarter = state.starters.some(p => p?.id === playerId);
-                            const isReserve = state.reserves.some(p => p?.id === playerId);
-                            
-                            if (isStarter || isReserve) {
-                                let score = calculatePlayerScore(playerData);
-                                
-                                // Reservas ganham apenas 50% da pontuação
-                                if (isReserve) {
-                                    score = Math.round(score * 0.5);
-                                    console.log(`   ✓ ${playerData.player.name}: ${score} pts (reserva 50%)`);
-                                } else {
-                                    console.log(`   ✓ ${playerData.player.name}: ${score} pts`);
-                                }
-                                
-                                state.scores[round].players[playerId] = score;
+                            if (playerId) {
+                                allPlayerStats[playerId] = {
+                                    data: playerData,
+                                    fixture: fixture
+                                };
                             }
                         });
                     });
 
-                    // Calcular pontuação do técnico
-                    if (state.coach && fixture.teams && fixture.teams.home && fixture.teams.away) {
-                        const coachTeamId = state.coach.teamId;
-                        if (fixture.teams.home.id === coachTeamId || fixture.teams.away.id === coachTeamId) {
-                            const coachScore = calculateCoachScore(fixture, coachTeamId);
-                            state.scores[round].coach = coachScore;
-                            console.log(`   👔 ${state.coach.name}: ${coachScore} pts`);
-                        }
-                    }
-
-                    await new Promise(r => setTimeout(r, 400));
+                    await new Promise(r => setTimeout(r, 300));
                 }
-
+                
+                // Agora calcular pontuação para TODOS os usuários confirmados
+                const confirmedUsers = Object.entries(state.users)
+                    .filter(([nick, u]) => u.isConfirmed && nick !== 'admin');
+                
+                console.log(`👥 Calculando pontos para ${confirmedUsers.length} usuários...`);
+                
+                for (const [nick, user] of confirmedUsers) {
+                    // Inicializar scores do usuário se não existir
+                    if (!user.scores) user.scores = {};
+                    if (!user.scores[round]) {
+                        user.scores[round] = { players: {}, coach: 0, live: false };
+                    }
+                    
+                    user.scores[round].live = liveGames.length > 0;
+                    
+                    // Calcular pontos dos jogadores escalados
+                    const userStarters = ensureArray(user.starters, 11);
+                    const userReserves = ensureArray(user.reserves, 7);
+                    const isCurrentUser = nick === state.currentUser;
+                    
+                    userStarters.forEach(player => {
+                        if (player && player.id && allPlayerStats[player.id]) {
+                            const playerData = allPlayerStats[player.id].data;
+                            const score = calculatePlayerScore(playerData);
+                            user.scores[round].players[player.id] = score;
+                            
+                            // Verificar novos gols apenas para o usuário atual
+                            if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
+                                const goals = playerData.statistics[0].goals.total;
+                                const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
+                                    ? allPlayerStats[player.id].fixture?.teams?.home?.name 
+                                    : allPlayerStats[player.id].fixture?.teams?.away?.name;
+                                checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals);
+                            }
+                        }
+                    });
+                    
+                    userReserves.forEach(player => {
+                        if (player && player.id && allPlayerStats[player.id]) {
+                            const playerData = allPlayerStats[player.id].data;
+                            // Reserva = 50% dos pontos
+                            const score = Math.round(calculatePlayerScore(playerData) * 0.5);
+                            user.scores[round].players[player.id] = score;
+                            
+                            // Verificar novos gols apenas para o usuário atual
+                            if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
+                                const goals = playerData.statistics[0].goals.total;
+                                const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
+                                    ? allPlayerStats[player.id].fixture?.teams?.home?.name 
+                                    : allPlayerStats[player.id].fixture?.teams?.away?.name;
+                                checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals);
+                            }
+                        }
+                    });
+                    
+                    // Calcular pontuação do técnico
+                    if (user.coach) {
+                        const coachTeamId = user.coach.teamId;
+                        gamesToProcess.forEach(fixture => {
+                            if (fixture.teams?.home?.id === coachTeamId || fixture.teams?.away?.id === coachTeamId) {
+                                user.scores[round].coach = calculateCoachScore(fixture, coachTeamId);
+                            }
+                        });
+                    }
+                    
+                    // Calcular total do usuário
+                    let userTotal = 0;
+                    Object.values(user.scores[round].players || {}).forEach(s => userTotal += s);
+                    userTotal += user.scores[round].coach || 0;
+                    
+                    console.log(`   👤 ${nick}: ${userTotal} pts`);
+                    
+                    // Salvar no Firebase
+                    if (db) {
+                        db.ref('users/' + nick + '/scores').set(user.scores);
+                    }
+                }
+                
+                // Atualizar o state.scores do usuário atual
+                if (state.currentUser && state.users[state.currentUser]) {
+                    state.scores = state.users[state.currentUser].scores || {};
+                }
+                
                 saveState();
-                console.log(`✅ Pontuação da Rodada ${round}: ${getRoundScore(round)} pontos`);
+                console.log(`✅ Pontuação da Rodada ${round} calculada para todos!`);
 
             } catch (e) {
                 console.error('Erro ao atualizar pontuação:', e);
@@ -1859,6 +2166,11 @@
             state.isUpdatingScores = false;
             state.liveScoresUpdating = false;
             render();
+            
+            // Processar fila de animações de gol
+            setTimeout(() => {
+                processGoalQueue();
+            }, 500);
         }
 
         function getTotalScore() {
@@ -2252,7 +2564,7 @@
 
                             <!-- Reservas -->
                             <div class="card rounded-xl p-4">
-                                <h3 class="text-zinc-400 text-sm font-medium mb-3">RESERVAS <span class="text-zinc-600">${ensureArray(state.reserves, 7).filter(r => r).length}/7</span></h3>
+                                <h3 class="text-zinc-400 text-sm font-medium mb-3">RESERVAS <span class="text-zinc-600">${ensureArray(state.reserves, 7).filter(r => r).length}/7</span> <span class="text-orange-400 text-xs">(50% pts)</span></h3>
                                 ${(() => {
                                     const reservePositions = [
                                         { pos: 'GOL', label: 'Goleiro' },
@@ -2270,10 +2582,15 @@
                                                 <span class="text-zinc-600 text-xs w-12">GOL</span>
                                                 <div onclick="openPlayerModal(0, 'reserve')" class="cursor-pointer flex-1">
                                                     ${state.reserves[0] ? `
-                                                        <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
+                                                        <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2 relative">
                                                             <img src="${state.reserves[0].photo}" class="w-8 h-8 rounded-md object-cover"
                                                                 onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${state.reserves[0].name.charAt(0)}'">
                                                             <span class="text-white text-sm truncate">${state.reserves[0].name.split(' ').pop()}</span>
+                                                            ${state.scores[state.selectedRound]?.players?.[state.reserves[0].id] !== undefined ? `
+                                                                <span class="ml-auto px-1.5 py-0.5 rounded text-xs font-bold bg-orange-500/20 text-orange-400">
+                                                                    ${state.scores[state.selectedRound].players[state.reserves[0].id]} <span class="text-orange-300/60 text-[10px]">50%</span>
+                                                                </span>
+                                                            ` : ''}
                                                         </div>
                                                     ` : `
                                                         <div class="h-10 rounded-lg border border-dashed border-zinc-700 flex items-center justify-center hover:border-zinc-500 transition">
@@ -2292,7 +2609,12 @@
                                                                 <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
                                                                     <img src="${state.reserves[i].photo}" class="w-8 h-8 rounded-md object-cover"
                                                                         onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${state.reserves[i].name.charAt(0)}'">
-                                                                    <span class="text-white text-xs truncate">${state.reserves[i].name.split(' ').pop()}</span>
+                                                                    <span class="text-white text-xs truncate flex-1">${state.reserves[i].name.split(' ').pop()}</span>
+                                                                    ${state.scores[state.selectedRound]?.players?.[state.reserves[i].id] !== undefined ? `
+                                                                        <span class="px-1 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400">
+                                                                            ${state.scores[state.selectedRound].players[state.reserves[i].id]}
+                                                                        </span>
+                                                                    ` : ''}
                                                                 </div>
                                                             ` : `
                                                                 <div class="h-10 rounded-lg border border-dashed border-zinc-700 flex items-center justify-center hover:border-zinc-500 transition">
@@ -2313,7 +2635,12 @@
                                                                 <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
                                                                     <img src="${state.reserves[i].photo}" class="w-8 h-8 rounded-md object-cover"
                                                                         onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${state.reserves[i].name.charAt(0)}'">
-                                                                    <span class="text-white text-xs truncate">${state.reserves[i].name.split(' ').pop()}</span>
+                                                                    <span class="text-white text-xs truncate flex-1">${state.reserves[i].name.split(' ').pop()}</span>
+                                                                    ${state.scores[state.selectedRound]?.players?.[state.reserves[i].id] !== undefined ? `
+                                                                        <span class="px-1 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400">
+                                                                            ${state.scores[state.selectedRound].players[state.reserves[i].id]}
+                                                                        </span>
+                                                                    ` : ''}
                                                                 </div>
                                                             ` : `
                                                                 <div class="h-10 rounded-lg border border-dashed border-zinc-700 flex items-center justify-center hover:border-zinc-500 transition">
@@ -2334,7 +2661,12 @@
                                                                 <div class="flex items-center gap-2 bg-zinc-800/50 rounded-lg p-2">
                                                                     <img src="${state.reserves[i].photo}" class="w-8 h-8 rounded-md object-cover"
                                                                         onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${state.reserves[i].name.charAt(0)}'">
-                                                                    <span class="text-white text-xs truncate">${state.reserves[i].name.split(' ').pop()}</span>
+                                                                    <span class="text-white text-xs truncate flex-1">${state.reserves[i].name.split(' ').pop()}</span>
+                                                                    ${state.scores[state.selectedRound]?.players?.[state.reserves[i].id] !== undefined ? `
+                                                                        <span class="px-1 py-0.5 rounded text-[10px] font-bold bg-orange-500/20 text-orange-400">
+                                                                            ${state.scores[state.selectedRound].players[state.reserves[i].id]}
+                                                                        </span>
+                                                                    ` : ''}
                                                                 </div>
                                                             ` : `
                                                                 <div class="h-10 rounded-lg border border-dashed border-zinc-700 flex items-center justify-center hover:border-zinc-500 transition">
@@ -3930,10 +4262,11 @@
                                         <h2 class="font-display text-2xl text-white tracking-wider">RANKING</h2>
                                         <p class="text-white/40 text-sm">${rankings.length} times confirmados</p>
                                     </div>
-                                    <button onclick="window.listenToUsers();alert('Ranking atualizado!')" 
-                                        class="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition" 
-                                        title="Atualizar ranking">
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                    <button onclick="updateAllScores()" 
+                                        class="flex items-center gap-2 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition" 
+                                        title="Atualizar pontuações">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                                        <span class="text-xs">Atualizar</span>
                                     </button>
                                 </div>
 
@@ -6122,6 +6455,30 @@
         window.fetchLiveFixtures = fetchLiveFixtures;
         window.detectCurrentRound = detectCurrentRound;
         window.listenToUsers = listenToUsers;
+        
+        // Atualizar pontuações de TODOS os usuários
+        window.updateAllScores = async function() {
+            if (state.isUpdatingScores) {
+                alert('⏳ Já está atualizando, aguarde...');
+                return;
+            }
+            
+            alert('🔄 Atualizando pontuações de todos os times...\n\nIsso pode levar alguns segundos.');
+            
+            // Primeiro buscar dados atualizados de todos os usuários
+            listenToUsers();
+            
+            // Aguardar um pouco para os dados carregarem
+            await new Promise(r => setTimeout(r, 1000));
+            
+            // Calcular pontuações para todos
+            await syncRoundScores();
+            
+            // Atualizar dados novamente
+            listenToUsers();
+            
+            alert('✅ Pontuações atualizadas para todos os times!');
+        };
 
         window.goToRanking = function() {
             state.screen = 'ranking';
