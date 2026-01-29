@@ -2792,7 +2792,7 @@
                                         </button>
                                         <button onclick="openMarketModal()" class="px-6 py-3 text-lg font-semibold text-zinc-500 hover:text-white transition flex items-center gap-2">
                                             Mercado
-                                            ${!isMarketOpen() ? '<span class="w-3 h-3 bg-red-500 rounded-full"></span>' : '<span class="w-3 h-3 bg-green-500 rounded-full"></span>'}
+                                            ${isMarketOpen() ? '<span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>' : ''}
                                         </button>
                                         <button onclick="openTeamsModal()" class="px-6 py-3 text-lg font-semibold text-zinc-500 hover:text-white transition">
                                             Times
@@ -2853,7 +2853,7 @@
                             <button onclick="openMarketModal()" class="flex flex-col items-center py-2 px-2 text-zinc-500 relative">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                                 <span class="text-xs mt-1">Mercado</span>
-                                ${!isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>' : '<span class="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full"></span>'}
+                                ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>' : ''}
                             </button>
                             <button onclick="openTeamsModal()" class="flex flex-col items-center py-2 px-2 text-zinc-500">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
@@ -5698,12 +5698,13 @@
                                     <!-- Filtros -->
                                     <div class="space-y-2 mb-3">
                                         <input type="text" placeholder="Buscar jogador..." 
-                                            oninput="state.draftSearch=this.value;render()"
+                                            id="draftSearchInput"
+                                            oninput="updateDraftSearchAdmin(this.value)"
                                             value="${state.draftSearch || ''}"
                                             class="w-full px-3 py-2 input-dark rounded-lg text-white text-sm">
                                         
                                         <div class="flex gap-2">
-                                            <select onchange="state.draftFilterPos=this.value;render()" 
+                                            <select onchange="state.draftFilterPos=this.value;renderDraftPlayerList()" 
                                                 class="flex-1 px-2 py-1.5 input-dark rounded-lg text-white text-xs">
                                                 <option value="">Posição</option>
                                                 <option value="GOL" ${state.draftFilterPos === 'GOL' ? 'selected' : ''}>Goleiro</option>
@@ -5711,7 +5712,7 @@
                                                 <option value="MEI" ${state.draftFilterPos === 'MEI' ? 'selected' : ''}>Meia</option>
                                                 <option value="ATA" ${state.draftFilterPos === 'ATA' ? 'selected' : ''}>Atacante</option>
                                             </select>
-                                            <select onchange="state.draftFilterTeam=this.value;render()" 
+                                            <select onchange="state.draftFilterTeam=this.value;renderDraftPlayerList()" 
                                                 class="flex-1 px-2 py-1.5 input-dark rounded-lg text-white text-xs">
                                                 <option value="">Time</option>
                                                 ${teams.map(t => `<option value="${t}" ${state.draftFilterTeam === t ? 'selected' : ''}>${t}</option>`).join('')}
@@ -6583,20 +6584,18 @@
                 return;
             }
             
-            // Verificar se o mercado está fechado e o usuário não tem time (não participou do draft)
-            const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
-            if (!isMarketOpen() && !hasTeam) {
-                alert('⚠️ O Draft já foi realizado!\n\nVocê não participou do draft, então não pode escalar jogadores.\n\nAguarde a abertura do mercado de transferências (dias 1 e 2 de Março) para montar seu time.');
-                return;
-            }
-            
-            // Se mercado fechado e já tem time, não pode adicionar novos jogadores
-            if (!isMarketOpen() && hasTeam) {
-                const currentPlayer = type === 'starter' ? state.starters[index] : state.reserves[index];
-                if (!currentPlayer) {
-                    alert('⚠️ Mercado fechado!\n\nVocê só pode editar jogadores existentes.\nAguarde o mercado abrir para adicionar novos jogadores.');
-                    return;
+            // Verificar se o mercado está fechado
+            if (!isMarketOpen()) {
+                const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
+                
+                if (!hasTeam) {
+                    // Não participou do draft
+                    alert('⚠️ O Draft já foi realizado!\n\nVocê não participou do draft, então não pode escalar jogadores.\n\nAguarde a abertura do mercado de transferências (dias 1 e 2 de Março) para montar seu time.');
+                } else {
+                    // Já tem time - mercado fechado = não pode editar
+                    alert('⚠️ Mercado fechado!\n\nVocê não pode alterar a escalação durante a rodada.\nUse "Fazer Substituição" para trocar titular por reserva da mesma posição.');
                 }
+                return;
             }
             
             state.scrollY = window.scrollY;
@@ -6619,16 +6618,9 @@
                 return;
             }
             
-            // Verificar se o mercado está fechado e o usuário não tem time (não participou do draft)
-            const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
-            if (!isMarketOpen() && !hasTeam) {
-                alert('⚠️ O Draft já foi realizado!\n\nVocê não participou do draft, então não pode escalar jogadores.\n\nAguarde a abertura do mercado de transferências (dias 1 e 2 de Março) para montar seu time.');
-                return;
-            }
-            
-            // Se mercado fechado e não tem técnico
-            if (!isMarketOpen() && !state.coach) {
-                alert('⚠️ Mercado fechado!\n\nVocê não pode adicionar técnico agora.\nAguarde o mercado abrir.');
+            // Verificar se o mercado está fechado
+            if (!isMarketOpen()) {
+                alert('⚠️ Mercado fechado!\n\nVocê não pode alterar o técnico durante a rodada.');
                 return;
             }
             
@@ -6974,6 +6966,16 @@
 
         window.openMarketModal = function() {
             state.scrollY = window.scrollY;
+            
+            // Se mercado está fechado, mostrar modal de fechado
+            if (!isMarketOpen()) {
+                state.modal = 'marketClosed';
+                document.body.classList.add('modal-open');
+                document.body.style.top = `-${state.scrollY}px`;
+                render();
+                return;
+            }
+            
             state.modal = 'market';
             state.marketTab = 'buy';
             state.marketFilter = 'all';
@@ -7819,6 +7821,39 @@
         };
         
         // ==================== CHAT DO DRAFT ====================
+        
+        // Debounce para busca do draft
+        let draftSearchTimeout = null;
+        
+        // Atualizar busca do draft admin sem perder foco
+        window.updateDraftSearchAdmin = function(value) {
+            state.draftSearch = value;
+            
+            // Cancelar timeout anterior
+            if (draftSearchTimeout) clearTimeout(draftSearchTimeout);
+            
+            // Aguardar 300ms antes de re-render
+            draftSearchTimeout = setTimeout(() => {
+                const input = document.getElementById('draftSearchInput');
+                const cursorPos = input ? input.selectionStart : 0;
+                
+                render();
+                
+                // Restaurar foco e posição do cursor
+                setTimeout(() => {
+                    const newInput = document.getElementById('draftSearchInput');
+                    if (newInput) {
+                        newInput.focus();
+                        newInput.setSelectionRange(cursorPos, cursorPos);
+                    }
+                }, 10);
+            }, 300);
+        };
+        
+        // Renderizar apenas a lista de jogadores do draft (para selects)
+        window.renderDraftPlayerList = function() {
+            render();
+        };
         
         // Enviar mensagem no chat do draft
         window.sendDraftMessage = function() {
