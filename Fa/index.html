@@ -9993,136 +9993,185 @@
                 return;
             }
             
-            const fromUser = state.users[trade.from];
-            const toUser = state.users[trade.to];
+            console.log('=== REVERTENDO TROCA ===');
+            console.log('Trade ID:', tradeId);
+            console.log('From (@' + trade.from + ') enviou:', trade.myPlayer?.name, 'ID:', trade.myPlayer?.id);
+            console.log('To (@' + trade.to + ') enviou:', trade.theirPlayer?.name, 'ID:', trade.theirPlayer?.id);
             
-            if (!fromUser || !toUser) {
-                alert('Usuários não encontrados!');
+            // Buscar usuários diretamente do Firebase para ter dados atualizados
+            if (!db) {
+                alert('Firebase não conectado!');
                 return;
             }
             
-            // Garantir arrays
-            fromUser.starters = ensureArray(fromUser.starters, 11);
-            fromUser.reserves = ensureArray(fromUser.reserves, 7);
-            toUser.starters = ensureArray(toUser.starters, 11);
-            toUser.reserves = ensureArray(toUser.reserves, 7);
-            
-            // Na troca original:
-            // - fromUser deu myPlayer e recebeu theirPlayer
-            // - toUser deu theirPlayer e recebeu myPlayer
-            
-            // Para reverter:
-            // - Em fromUser: encontrar theirPlayer, substituir por myPlayer
-            // - Em toUser: encontrar myPlayer, substituir por theirPlayer
-            
-            const myPlayerId = trade.myPlayer?.id;
-            const theirPlayerId = trade.theirPlayer?.id;
-            
-            if (!myPlayerId || !theirPlayerId) {
-                alert('Dados dos jogadores não encontrados na troca!');
-                return;
-            }
-            
-            // Buscar jogadores completos
-            const myPlayerFull = state.players.find(p => p.id === myPlayerId) || trade.myPlayer;
-            const theirPlayerFull = state.players.find(p => p.id === theirPlayerId) || trade.theirPlayer;
-            
-            let fromFixed = false;
-            let toFixed = false;
-            
-            // Em fromUser: encontrar theirPlayer e substituir por myPlayer
-            for (let i = 0; i < 11; i++) {
-                if (fromUser.starters[i]?.id === theirPlayerId) {
-                    fromUser.starters[i] = { ...myPlayerFull };
-                    fromFixed = true;
-                    break;
+            Promise.all([
+                db.ref('users/' + trade.from).once('value'),
+                db.ref('users/' + trade.to).once('value')
+            ]).then(([fromSnap, toSnap]) => {
+                const fromUser = fromSnap.val();
+                const toUser = toSnap.val();
+                
+                if (!fromUser || !toUser) {
+                    alert('Usuários não encontrados no Firebase!');
+                    return;
                 }
-            }
-            if (!fromFixed) {
-                for (let i = 0; i < 7; i++) {
-                    if (fromUser.reserves[i]?.id === theirPlayerId) {
-                        fromUser.reserves[i] = { ...myPlayerFull };
+                
+                // Converter para arrays
+                let fromStarters = Array.isArray(fromUser.starters) ? [...fromUser.starters] : Array(11).fill(null);
+                let fromReserves = Array.isArray(fromUser.reserves) ? [...fromUser.reserves] : Array(7).fill(null);
+                let toStarters = Array.isArray(toUser.starters) ? [...toUser.starters] : Array(11).fill(null);
+                let toReserves = Array.isArray(toUser.reserves) ? [...toUser.reserves] : Array(7).fill(null);
+                
+                // Preencher arrays se necessário
+                while (fromStarters.length < 11) fromStarters.push(null);
+                while (fromReserves.length < 7) fromReserves.push(null);
+                while (toStarters.length < 11) toStarters.push(null);
+                while (toReserves.length < 7) toReserves.push(null);
+                
+                const myPlayerId = parseInt(trade.myPlayer?.id) || trade.myPlayer?.id;
+                const theirPlayerId = parseInt(trade.theirPlayer?.id) || trade.theirPlayer?.id;
+                
+                console.log('Buscando myPlayer ID:', myPlayerId, 'no time de @' + trade.to);
+                console.log('Buscando theirPlayer ID:', theirPlayerId, 'no time de @' + trade.from);
+                
+                // Listar todos os jogadores de cada time para debug
+                console.log('Time @' + trade.from + ' starters:', fromStarters.map(p => p ? p.name + '(' + p.id + ')' : 'vazio'));
+                console.log('Time @' + trade.from + ' reserves:', fromReserves.map(p => p ? p.name + '(' + p.id + ')' : 'vazio'));
+                console.log('Time @' + trade.to + ' starters:', toStarters.map(p => p ? p.name + '(' + p.id + ')' : 'vazio'));
+                console.log('Time @' + trade.to + ' reserves:', toReserves.map(p => p ? p.name + '(' + p.id + ')' : 'vazio'));
+                
+                // Jogadores completos
+                const myPlayerFull = state.players.find(p => p.id == myPlayerId) || trade.myPlayer;
+                const theirPlayerFull = state.players.find(p => p.id == theirPlayerId) || trade.theirPlayer;
+                
+                let fromFixed = false;
+                let toFixed = false;
+                
+                // ===== REVERTER EM @from: theirPlayer -> myPlayer =====
+                // Atualmente @from tem theirPlayer (que ele recebeu na troca)
+                // Precisamos trocar por myPlayer (que era dele antes)
+                
+                for (let i = 0; i < 11; i++) {
+                    const playerId = parseInt(fromStarters[i]?.id) || fromStarters[i]?.id;
+                    if (playerId == theirPlayerId) {
+                        console.log(`ENCONTRADO! theirPlayer em @${trade.from} starters[${i}]`);
+                        fromStarters[i] = { ...myPlayerFull };
                         fromFixed = true;
                         break;
                     }
                 }
-            }
-            
-            // Em toUser: encontrar myPlayer e substituir por theirPlayer
-            for (let i = 0; i < 11; i++) {
-                if (toUser.starters[i]?.id === myPlayerId) {
-                    toUser.starters[i] = { ...theirPlayerFull };
-                    toFixed = true;
-                    break;
+                if (!fromFixed) {
+                    for (let i = 0; i < 7; i++) {
+                        const playerId = parseInt(fromReserves[i]?.id) || fromReserves[i]?.id;
+                        if (playerId == theirPlayerId) {
+                            console.log(`ENCONTRADO! theirPlayer em @${trade.from} reserves[${i}]`);
+                            fromReserves[i] = { ...myPlayerFull };
+                            fromFixed = true;
+                            break;
+                        }
+                    }
                 }
-            }
-            if (!toFixed) {
-                for (let i = 0; i < 7; i++) {
-                    if (toUser.reserves[i]?.id === myPlayerId) {
-                        toUser.reserves[i] = { ...theirPlayerFull };
+                
+                // ===== REVERTER EM @to: myPlayer -> theirPlayer =====
+                // Atualmente @to tem myPlayer (que ele recebeu na troca)
+                // Precisamos trocar por theirPlayer (que era dele antes)
+                
+                for (let i = 0; i < 11; i++) {
+                    const playerId = parseInt(toStarters[i]?.id) || toStarters[i]?.id;
+                    if (playerId == myPlayerId) {
+                        console.log(`ENCONTRADO! myPlayer em @${trade.to} starters[${i}]`);
+                        toStarters[i] = { ...theirPlayerFull };
                         toFixed = true;
                         break;
                     }
                 }
-            }
-            
-            // Reverter pontos se houver
-            if (trade.pointsOffered > 0) {
-                // fromUser tinha dado pontos, devolver
-                if (!fromUser.scores) fromUser.scores = {};
-                if (!fromUser.scores.market) fromUser.scores.market = { players: {}, coach: 0, purchases: [] };
-                if (!fromUser.scores.market.purchases) fromUser.scores.market.purchases = [];
-                fromUser.scores.market.purchases.push({
-                    type: 'refund',
-                    playerId: 0,
-                    playerName: 'Reversão de troca (pontos devolvidos)',
-                    price: trade.pointsOffered,
-                    date: new Date().toISOString(),
-                    addedBy: 'admin'
-                });
+                if (!toFixed) {
+                    for (let i = 0; i < 7; i++) {
+                        const playerId = parseInt(toReserves[i]?.id) || toReserves[i]?.id;
+                        if (playerId == myPlayerId) {
+                            console.log(`ENCONTRADO! myPlayer em @${trade.to} reserves[${i}]`);
+                            toReserves[i] = { ...theirPlayerFull };
+                            toFixed = true;
+                            break;
+                        }
+                    }
+                }
                 
-                // toUser tinha recebido pontos, remover
-                if (!toUser.scores) toUser.scores = {};
-                if (!toUser.scores.market) toUser.scores.market = { players: {}, coach: 0, purchases: [] };
-                if (!toUser.scores.market.purchases) toUser.scores.market.purchases = [];
-                toUser.scores.market.purchases.push({
-                    type: 'deduction',
-                    playerId: 0,
-                    playerName: 'Reversão de troca (pontos removidos)',
-                    price: -trade.pointsOffered,
-                    date: new Date().toISOString(),
-                    addedBy: 'admin'
+                console.log('fromFixed:', fromFixed, 'toFixed:', toFixed);
+                
+                if (!fromFixed && !toFixed) {
+                    alert('ERRO: Não foi possível encontrar os jogadores nos times!\n\nVerifique o console para mais detalhes.');
+                    return;
+                }
+                
+                // Preparar atualizações
+                const updates = {};
+                updates['users/' + trade.from + '/starters'] = fromStarters;
+                updates['users/' + trade.from + '/reserves'] = fromReserves;
+                updates['users/' + trade.to + '/starters'] = toStarters;
+                updates['users/' + trade.to + '/reserves'] = toReserves;
+                updates['tradeOffers/' + tradeId + '/status'] = 'reverted';
+                updates['tradeOffers/' + tradeId + '/revertedBy'] = 'admin';
+                updates['tradeOffers/' + tradeId + '/revertedAt'] = Date.now();
+                
+                // Reverter pontos se houver
+                if (trade.pointsOffered > 0) {
+                    let fromPurchases = fromUser.scores?.market?.purchases || [];
+                    let toPurchases = toUser.scores?.market?.purchases || [];
+                    
+                    fromPurchases = Array.isArray(fromPurchases) ? [...fromPurchases] : [];
+                    toPurchases = Array.isArray(toPurchases) ? [...toPurchases] : [];
+                    
+                    fromPurchases.push({
+                        type: 'refund',
+                        playerId: 0,
+                        playerName: 'Reversão troca - pontos devolvidos',
+                        price: trade.pointsOffered,
+                        date: new Date().toISOString()
+                    });
+                    
+                    toPurchases.push({
+                        type: 'deduction',
+                        playerId: 0,
+                        playerName: 'Reversão troca - pontos removidos',
+                        price: -trade.pointsOffered,
+                        date: new Date().toISOString()
+                    });
+                    
+                    updates['users/' + trade.from + '/scores/market/purchases'] = fromPurchases;
+                    updates['users/' + trade.to + '/scores/market/purchases'] = toPurchases;
+                }
+                
+                console.log('Salvando updates:', updates);
+                
+                // Salvar no Firebase
+                db.ref().update(updates).then(() => {
+                    console.log('=== TROCA REVERTIDA COM SUCESSO ===');
+                    
+                    let msg = 'TROCA REVERTIDA!\n\n';
+                    msg += `${myPlayerFull.name} voltou para @${trade.from}\n`;
+                    msg += `${theirPlayerFull.name} voltou para @${trade.to}`;
+                    if (trade.pointsOffered > 0) {
+                        msg += `\n\n${trade.pointsOffered} pts devolvidos para @${trade.from}`;
+                    }
+                    
+                    alert(msg);
+                    
+                    // Atualizar state local
+                    state.users[trade.from].starters = fromStarters;
+                    state.users[trade.from].reserves = fromReserves;
+                    state.users[trade.to].starters = toStarters;
+                    state.users[trade.to].reserves = toReserves;
+                    
+                    render();
+                }).catch(err => {
+                    console.error('Erro ao salvar:', err);
+                    alert('Erro ao salvar: ' + err.message);
                 });
-            }
-            
-            // Salvar no Firebase
-            if (db) {
-                db.ref('users/' + trade.from).update({
-                    starters: fromUser.starters,
-                    reserves: fromUser.reserves,
-                    scores: fromUser.scores
-                });
-                db.ref('users/' + trade.to).update({
-                    starters: toUser.starters,
-                    reserves: toUser.reserves,
-                    scores: toUser.scores
-                });
-                db.ref('tradeOffers/' + tradeId).update({ 
-                    status: 'reverted',
-                    revertedBy: 'admin',
-                    revertedAt: Date.now()
-                });
-            }
-            
-            if (fromFixed && toFixed) {
-                alert('Troca REVERTIDA com sucesso!\n\n' + 
-                    `${trade.myPlayer.name} voltou para @${trade.from}\n` +
-                    `${trade.theirPlayer.name} voltou para @${trade.to}`);
-            } else {
-                alert('Troca marcada como revertida, mas alguns jogadores podem não ter sido encontrados nos times. Verifique manualmente.');
-            }
-            
-            render();
+            }).catch(err => {
+                console.error('Erro ao buscar usuários:', err);
+                alert('Erro ao buscar usuários: ' + err.message);
+            });
         };
         
         // Remover usuário da liga
