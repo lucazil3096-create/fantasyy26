@@ -2879,11 +2879,17 @@
                             <div class="card rounded-xl p-4 relative" style="min-height: 520px;">
                                 <!-- Seletor de Formação -->
                                 <div class="absolute top-2 right-2 z-10">
-                                    <select onchange="changeFormation(this.value)" 
-                                        class="px-3 py-1.5 bg-black/70 border border-white/20 rounded-lg text-white text-sm font-medium cursor-pointer hover:bg-black/90 transition">
-                                        <option value="4-3-3" ${state.formation === '4-3-3' ? 'selected' : ''}>4-3-3</option>
-                                        <option value="4-4-2" ${state.formation === '4-4-2' ? 'selected' : ''}>4-4-2</option>
-                                    </select>
+                                    ${!isMarketOpen() || state.isConfirmed ? `
+                                        <span class="px-3 py-1.5 bg-black/70 border border-white/20 rounded-lg text-white text-sm font-medium">
+                                            ${state.formation}
+                                        </span>
+                                    ` : `
+                                        <select onchange="changeFormation(this.value)" 
+                                            class="px-3 py-1.5 bg-black/70 border border-white/20 rounded-lg text-white text-sm font-medium cursor-pointer hover:bg-black/90 transition">
+                                            <option value="4-3-3" ${state.formation === '4-3-3' ? 'selected' : ''}>4-3-3</option>
+                                            <option value="4-4-2" ${state.formation === '4-4-2' ? 'selected' : ''}>4-4-2</option>
+                                        </select>
+                                    `}
                                 </div>
                                 <div class="campo-bg rounded-xl relative" style="min-height: 620px;">
                                 
@@ -7325,58 +7331,128 @@
         };
         
         window.changeFormation = function(formation) {
-            const oldFormation = state.formation;
-            state.formation = formation;
-            
-            // Pegar posições da nova formação
-            const newPositions = [];
-            for (let i = 0; i < 11; i++) {
-                if (formation === '4-4-2') {
-                    newPositions.push(['GOL', 'DEF', 'DEF', 'DEF', 'DEF', 'MEI', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA'][i]);
-                } else {
-                    newPositions.push(['GOL', 'DEF', 'DEF', 'DEF', 'DEF', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA', 'ATA'][i]);
-                }
+            // Bloquear troca de formação se escalação já confirmada ou mercado fechado
+            if (state.isConfirmed || !isMarketOpen()) {
+                return;
             }
             
-            // Separar jogadores atuais por posição
+            const oldFormation = state.formation;
+            if (oldFormation === formation) return;
+            
+            // Definir quantos jogadores de cada posição cada formação precisa nos titulares
+            // 4-3-3: 1 GOL, 4 DEF, 3 MEI, 3 ATA
+            // 4-4-2: 1 GOL, 4 DEF, 4 MEI, 2 ATA
+            
+            const needed433 = { GOL: 1, DEF: 4, MEI: 3, ATA: 3 };
+            const needed442 = { GOL: 1, DEF: 4, MEI: 4, ATA: 2 };
+            
+            const oldNeeded = oldFormation === '4-3-3' ? needed433 : needed442;
+            const newNeeded = formation === '4-3-3' ? needed433 : needed442;
+            
+            // Contar jogadores atuais por posição (titulares)
             const safeStarters = ensureArray(state.starters, 11);
             const safeReserves = ensureArray(state.reserves, 7);
-            const allPlayers = [...safeStarters.filter(p => p), ...safeReserves.filter(p => p)];
-            const playersByPos = {
-                'GOL': allPlayers.filter(p => normalizePosition(p.position) === 'GOL'),
-                'DEF': allPlayers.filter(p => normalizePosition(p.position) === 'DEF'),
-                'MEI': allPlayers.filter(p => normalizePosition(p.position) === 'MEI'),
-                'ATA': allPlayers.filter(p => normalizePosition(p.position) === 'ATA')
-            };
             
-            // Montar novo time titular baseado nas posições da formação
-            const newStarters = Array(11).fill(null);
-            const usedPlayerIds = new Set();
+            // Separar por posição
+            const startersByPos = { GOL: [], DEF: [], MEI: [], ATA: [] };
+            const reservesByPos = { GOL: [], DEF: [], MEI: [], ATA: [] };
             
-            newPositions.forEach((pos, i) => {
-                // Procurar jogador disponível para esta posição
-                const available = playersByPos[pos].find(p => !usedPlayerIds.has(p.id));
-                if (available) {
-                    newStarters[i] = available;
-                    usedPlayerIds.add(available.id);
+            safeStarters.forEach((p, i) => {
+                if (p) {
+                    const pos = normalizePosition(p.position);
+                    startersByPos[pos].push({ player: p, index: i });
                 }
             });
             
-            // Jogadores restantes vão pro banco
-            const newReserves = Array(7).fill(null);
-            const reservePositions = ['GOL', 'DEF', 'DEF', 'MEI', 'MEI', 'ATA', 'ATA'];
-            
-            reservePositions.forEach((pos, i) => {
-                const available = playersByPos[pos].find(p => !usedPlayerIds.has(p.id));
-                if (available) {
-                    newReserves[i] = available;
-                    usedPlayerIds.add(available.id);
+            safeReserves.forEach((p, i) => {
+                if (p) {
+                    const pos = normalizePosition(p.position);
+                    reservesByPos[pos].push({ player: p, index: i });
                 }
             });
+            
+            // Calcular diferença
+            const diff = {};
+            ['GOL', 'DEF', 'MEI', 'ATA'].forEach(pos => {
+                diff[pos] = newNeeded[pos] - oldNeeded[pos];
+            });
+            
+            // Se 4-3-3 -> 4-4-2: precisa -1 ATA e +1 MEI
+            // Se 4-4-2 -> 4-3-3: precisa +1 ATA e -1 MEI
+            
+            let newStarters = [...safeStarters];
+            let newReserves = [...safeReserves];
+            
+            // Para cada posição que precisa MENOS jogadores, mover excedente para reserva
+            ['GOL', 'DEF', 'MEI', 'ATA'].forEach(pos => {
+                if (diff[pos] < 0) {
+                    // Precisa remover |diff[pos]| jogadores desta posição
+                    const toRemove = Math.abs(diff[pos]);
+                    const currentInPos = startersByPos[pos];
+                    
+                    for (let i = 0; i < toRemove && currentInPos.length > newNeeded[pos]; i++) {
+                        // Pegar o último jogador desta posição
+                        const removed = currentInPos.pop();
+                        if (removed) {
+                            // Encontrar slot vazio na reserva para esta posição
+                            const reserveSlots = pos === 'GOL' ? [0] : pos === 'DEF' ? [1, 2] : pos === 'MEI' ? [3, 4] : [5, 6];
+                            const emptySlot = reserveSlots.find(s => !newReserves[s]);
+                            
+                            if (emptySlot !== undefined) {
+                                newReserves[emptySlot] = removed.player;
+                            }
+                            newStarters[removed.index] = null;
+                        }
+                    }
+                }
+            });
+            
+            // Para cada posição que precisa MAIS jogadores, trazer da reserva
+            ['GOL', 'DEF', 'MEI', 'ATA'].forEach(pos => {
+                if (diff[pos] > 0) {
+                    // Precisa adicionar diff[pos] jogadores desta posição
+                    const toAdd = diff[pos];
+                    
+                    for (let i = 0; i < toAdd; i++) {
+                        // Procurar na reserva
+                        const reserveSlots = pos === 'GOL' ? [0] : pos === 'DEF' ? [1, 2] : pos === 'MEI' ? [3, 4] : [5, 6];
+                        const filledSlot = reserveSlots.find(s => newReserves[s]);
+                        
+                        if (filledSlot !== undefined && newReserves[filledSlot]) {
+                            const player = newReserves[filledSlot];
+                            newReserves[filledSlot] = null;
+                            
+                            // Encontrar slot vazio nos titulares
+                            const emptyStarterSlot = newStarters.findIndex(p => !p);
+                            if (emptyStarterSlot !== -1) {
+                                newStarters[emptyStarterSlot] = player;
+                            }
+                        }
+                    }
+                }
+            });
+            
+            // Verificar se a troca é possível (tem jogadores suficientes)
+            const meisNeeded = newNeeded['MEI'];
+            const atasNeeded = newNeeded['ATA'];
+            const totalMeis = startersByPos['MEI'].length + reservesByPos['MEI'].length;
+            const totalAtas = startersByPos['ATA'].length + reservesByPos['ATA'].length;
+            
+            if (totalMeis < meisNeeded) {
+                alert(`⚠️ Você não tem meias suficientes!\n\nPrecisa de ${meisNeeded} meias para o ${formation}, mas você só tem ${totalMeis}.`);
+                render();
+                return;
+            }
+            
+            if (totalAtas < atasNeeded) {
+                alert(`⚠️ Você não tem atacantes suficientes!\n\nPrecisa de ${atasNeeded} atacantes para o ${formation}, mas você só tem ${totalAtas}.`);
+                render();
+                return;
+            }
             
             state.starters = newStarters;
             state.reserves = newReserves;
-            
+            state.formation = formation;
             saveState();
             render();
             
