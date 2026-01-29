@@ -1899,8 +1899,6 @@
                         price: points,
                         date: new Date().toISOString()
                     });
-                        date: new Date().toISOString()
-                    });
                     
                     console.log('fromPurchases depois:', fromPurchases);
                     console.log('toPurchases depois:', toPurchases);
@@ -7607,11 +7605,14 @@
                         <div class="meia-lua-baixo"></div>
                         <div class="ponto-central"></div>
                         
-                        ${fieldPositions.map((pos, i) => `
+                        ${fieldPositions.map((pos, i) => {
+                            const hasPlayer = starters[i];
+                            const clickAction = hasPlayer ? '' : `openDraftPlayerModal('starter', ${i}, '${slotLabels[i]}')`;
+                            return `
                             <div class="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer"
                                 style="top: ${pos.top}; left: ${pos.left};"
-                                onclick="${starters[i] ? `event.stopPropagation()` : `openDraftPlayerModal('starter', ${i}, '${slotLabels[i]}')`}">
-                                ${starters[i] ? `
+                                onclick="${clickAction}">
+                                ${hasPlayer ? `
                                     <div class="text-center relative group">
                                         <img src="${starters[i].photo}" 
                                             class="w-11 h-11 rounded-full border-2 border-white/80 object-cover mx-auto"
@@ -7631,16 +7632,19 @@
                                     </div>
                                 `}
                             </div>
-                        `).join('')}
+                        `}).join('')}
                     </div>
                     
                     <!-- Reservas -->
                     <div class="bg-zinc-800/50 rounded-lg p-3">
                         <p class="text-zinc-400 text-xs mb-2">RESERVAS (${reserves.filter(r => r).length}/7)</p>
                         <div class="flex flex-wrap gap-2">
-                            ${reserves.map((p, i) => `
-                                <div class="cursor-pointer relative group" onclick="${p ? `event.stopPropagation()` : `openDraftPlayerModal('reserve', ${i}, '${reserveLabels[i]}')`}">
-                                    ${p ? `
+                            ${reserves.map((p, i) => {
+                                const hasPlayer = p;
+                                const clickAction = hasPlayer ? '' : `openDraftPlayerModal('reserve', ${i}, '${reserveLabels[i]}')`;
+                                return `
+                                <div class="cursor-pointer relative group" onclick="${clickAction}">
+                                    ${hasPlayer ? `
                                         <div class="flex items-center gap-2 bg-zinc-700 rounded-lg p-2">
                                             <img src="${p.photo}" class="w-8 h-8 rounded-full object-cover">
                                             <div>
@@ -7656,7 +7660,7 @@
                                         </div>
                                     `}
                                 </div>
-                            `).join('')}
+                            `}).join('')}
                         </div>
                     </div>
                     
