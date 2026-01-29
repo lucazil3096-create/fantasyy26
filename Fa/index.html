@@ -1531,19 +1531,32 @@
             if (!db) return;
             db.ref('tradeOffers').on('value', (snapshot) => {
                 const offers = snapshot.val();
+                console.log('TradeOffers carregadas do Firebase:', offers);
                 if (offers) {
-                    // Filtrar ofertas expiradas e converter para array
                     const now = Date.now();
+                    const marketOpen = isMarketOpen();
+                    
                     state.tradeOffers = Object.entries(offers)
                         .map(([id, o]) => ({ ...o, id }))
                         .filter(o => {
-                            // Remover ofertas expiradas
-                            if (o.expiresAt && o.expiresAt < now && o.status === 'pending') {
-                                db.ref('tradeOffers/' + o.id).update({ status: 'expired' });
-                                return false;
+                            // Se oferta está pendente
+                            if (o.status === 'pending') {
+                                // Se mercado fechou, expira a oferta
+                                if (!marketOpen) {
+                                    console.log('Oferta expirada - mercado fechou:', o.id);
+                                    db.ref('tradeOffers/' + o.id).update({ status: 'expired' });
+                                    return false;
+                                }
+                                // Se data de expiração passou
+                                if (o.expiresAt && o.expiresAt < now) {
+                                    console.log('Oferta expirada - data passou:', o.id);
+                                    db.ref('tradeOffers/' + o.id).update({ status: 'expired' });
+                                    return false;
+                                }
                             }
                             return true;
                         });
+                    console.log('TradeOffers válidas:', state.tradeOffers.filter(o => o.status === 'pending'));
                 } else {
                     state.tradeOffers = [];
                 }
@@ -1594,9 +1607,19 @@
                 return false;
             }
             
-            // Calcular data de expiração (dia 2 às 23:59:59 do mês atual)
+            // Calcular data de expiração
             const now = new Date();
-            const expiresAt = new Date(now.getFullYear(), now.getMonth(), 2, 23, 59, 59).getTime();
+            const day = now.getDate();
+            let expiresAt;
+            
+            if (day === 1 || day === 2) {
+                // Se estamos nos dias 1 ou 2, expira no dia 2 às 23:59:59
+                expiresAt = new Date(now.getFullYear(), now.getMonth(), 2, 23, 59, 59).getTime();
+            } else {
+                // Fora dos dias 1 e 2, expira no dia 2 do PRÓXIMO mês
+                // Ou se mercado está aberto para teste, expira em 30 dias
+                expiresAt = Date.now() + (30 * 24 * 60 * 60 * 1000);
+            }
             
             const offerId = 'trade_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
             const offer = {
@@ -1627,7 +1650,10 @@
                 month: getCurrentMonth()
             };
             
-            db.ref('tradeOffers/' + offerId).set(offer);
+            console.log('Criando oferta de troca:', offer);
+            db.ref('tradeOffers/' + offerId).set(offer)
+                .then(() => console.log('Oferta salva com sucesso no Firebase'))
+                .catch(err => console.error('Erro ao salvar oferta:', err));
             alert('Oferta enviada!\n\nAguarde a resposta de ' + targetUser);
             return true;
         }
@@ -1790,7 +1816,8 @@
         
         // Verifica se o MERCADO DE TRANSFERÊNCIAS está aberto (dias 1 e 2 de cada mês, a partir de março)
         function isMarketOpen() {
-            // TEMPORÁRIO: Liberado para teste
+            // MODO TESTE: Sempre aberto
+            // Quando for pra produção, descomentar o código abaixo e remover o return true
             return true;
             
             /*
@@ -4143,7 +4170,7 @@
                                     </div>
                                 ` : `
                                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                                        ${filteredPlayers.slice(0, 80).map(p => `
+                                        ${filteredPlayers.slice(0, 500).map(p => `
                                             <div class="bg-zinc-800/40 rounded-xl p-4 flex items-center gap-4 border border-zinc-700/50 hover:border-zinc-600 transition">
                                                 <img src="${p.photo}" class="w-14 h-14 rounded-full object-cover"
                                                     onerror="this.src='https://via.placeholder.com/56/1a1a1a/ffffff?text=${p.name.charAt(0)}'">
@@ -4163,8 +4190,8 @@
                                             </div>
                                         `).join('')}
                                     </div>
-                                    ${filteredPlayers.length > 80 ? `
-                                        <p class="text-zinc-600 text-center text-sm mt-4">Mostrando 80 de ${filteredPlayers.length}. Use os filtros.</p>
+                                    ${filteredPlayers.length > 500 ? `
+                                        <p class="text-zinc-600 text-center text-sm mt-4">Mostrando 500 de ${filteredPlayers.length}. Use os filtros.</p>
                                     ` : ''}
                                 `}
                             </div>
