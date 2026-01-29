@@ -1509,7 +1509,7 @@
         }
         
         // Criar oferta de troca
-        function createTradeOffer(myPlayerId, targetUser, theirPlayerId, pointsOffered) {
+        function createTradeOffer(myPlayerId, targetUser, theirPlayerId, pointsOffered, message) {
             if (!db || !state.currentUser) return false;
             
             // Validações
@@ -1572,6 +1572,7 @@
                     team: theirPlayer.team
                 },
                 pointsOffered: pointsOffered,
+                message: message || '',
                 status: 'pending',
                 createdAt: Date.now(),
                 expiresAt: expiresAt,
@@ -3373,8 +3374,9 @@
                             <div class="card rounded-xl p-4 relative" style="min-height: 520px;">
                                 <!-- Seletor de Formação -->
                                 <div class="absolute top-2 right-2 z-10">
-                                    ${!isMarketOpen() || state.isConfirmed ? `
-                                        <span class="px-3 py-1.5 bg-black/70 border border-white/20 rounded-lg text-white text-sm font-medium">
+                                    ${!canEditTeam() || state.isConfirmed ? `
+                                        <span class="px-3 py-1.5 bg-black/70 border border-white/20 rounded-lg text-white text-sm font-medium flex items-center gap-2">
+                                            ${!canEditTeam() && !state.isConfirmed ? '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>' : ''}
                                             ${state.formation}
                                         </span>
                                     ` : `
@@ -3735,10 +3737,17 @@
                                         <div class="card rounded-xl p-4">
                                             <h3 class="text-zinc-400 text-sm font-medium mb-3">🔄 SUBSTITUIÇÕES</h3>
                                             <p class="text-zinc-500 text-xs mb-3">Troque titulares por reservas da mesma posição</p>
-                                            <button onclick="openSubstitutionModal()" class="w-full py-2.5 bg-green-500 hover:bg-green-400 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-                                                Fazer Substituição
-                                            </button>
+                                            ${canEditTeam() ? `
+                                                <button onclick="openSubstitutionModal()" class="w-full py-2.5 bg-green-500 hover:bg-green-400 text-white rounded-lg text-sm font-medium transition flex items-center justify-center gap-2">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                                                    Fazer Substituição
+                                                </button>
+                                            ` : `
+                                                <button disabled class="w-full py-2.5 bg-zinc-700 text-zinc-500 rounded-lg text-sm font-medium cursor-not-allowed flex items-center justify-center gap-2">
+                                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                                                    Travado - Rodada em andamento
+                                                </button>
+                                            `}
                                         </div>
                                     `;
                                 }
@@ -3982,6 +3991,13 @@
         function renderMarketModal() {
             const userTotal = getTotalScore();
             const marketPlayers = getMarketPlayers();
+            const currentMarketTab = state.marketModalTab || 'comprar';
+            
+            // Ofertas de troca para mostrar na aba
+            const myTradeOffers = (state.tradeOffers || []).filter(o => o.to === state.currentUser && o.status === 'pending');
+            const sentTradeOffers = (state.tradeOffers || []).filter(o => o.from === state.currentUser && o.status === 'pending');
+            const tradesThisMonth = getMonthlyTradeCount(state.currentUser);
+            const canTrade = canMakeTrade(state.currentUser);
             
             // Filtrar jogadores do mercado
             let filteredPlayers = marketPlayers;
@@ -4001,77 +4017,99 @@
                 .sort((a, b) => b.price - a.price);
             
             return `
-                <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-                    <div class="card rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
-                        <div class="p-4 border-b border-zinc-800">
-                            <div class="flex justify-between items-center mb-4">
+                <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
+                    <div class="bg-zinc-900 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-zinc-800" onclick="event.stopPropagation()">
+                        
+                        <!-- Header com Abas -->
+                        <div class="p-4 border-b border-zinc-800/50">
+                            <div class="flex justify-between items-start mb-4">
                                 <div>
-                                    <h3 class="font-display text-2xl text-white">MERCADO</h3>
-                                    <p class="text-zinc-500 text-sm">${filteredPlayers.length} jogadores disponíveis</p>
+                                    <h3 class="text-xl font-semibold text-white">Transferências</h3>
+                                    <p class="text-zinc-500 text-sm mt-1">${isMarketOpen() ? '● Mercado aberto' : '○ Mercado fechado'}</p>
                                 </div>
                                 <div class="flex items-center gap-4">
                                     <div class="text-right">
                                         <p class="text-zinc-500 text-xs">Seus pontos</p>
-                                        <p class="text-xl font-bold text-green-400">${userTotal} pts</p>
+                                        <p class="text-lg font-bold text-green-400">${userTotal} pts</p>
                                     </div>
-                                    <button onclick="closeModalDirect()" class="text-zinc-500 hover:text-white p-2">
-                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                    <button onclick="closeModalDirect()" class="p-2 text-zinc-500 hover:text-white transition">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                     </button>
                                 </div>
                             </div>
                             
-                            <!-- Filtros -->
-                            <div class="flex flex-wrap gap-2 mb-4">
-                                <input type="text" placeholder="Buscar jogador ou time..." 
-                                    id="marketSearchInput"
-                                    value="${state.marketSearch || ''}"
-                                    oninput="updateMarketSearch(this.value)"
-                                    class="flex-1 min-w-[200px] px-3 py-2 input-dark rounded-lg text-white text-sm">
-                                <div class="flex gap-1">
-                                    <button onclick="state.marketFilter='all';render()" 
-                                        class="px-3 py-2 rounded-lg text-sm ${!state.marketFilter || state.marketFilter === 'all' ? 'bg-green-500 text-white' : 'bg-zinc-800 text-zinc-400'}">
-                                        Todos
-                                    </button>
-                                    <button onclick="state.marketFilter='GOL';render()" 
-                                        class="px-3 py-2 rounded-lg text-sm ${state.marketFilter === 'GOL' ? 'bg-green-500 text-white' : 'bg-zinc-800 text-zinc-400'}">
-                                        GOL
-                                    </button>
-                                    <button onclick="state.marketFilter='DEF';render()" 
-                                        class="px-3 py-2 rounded-lg text-sm ${state.marketFilter === 'DEF' ? 'bg-green-500 text-white' : 'bg-zinc-800 text-zinc-400'}">
-                                        DEF
-                                    </button>
-                                    <button onclick="state.marketFilter='MEI';render()" 
-                                        class="px-3 py-2 rounded-lg text-sm ${state.marketFilter === 'MEI' ? 'bg-green-500 text-white' : 'bg-zinc-800 text-zinc-400'}">
-                                        MEI
-                                    </button>
-                                    <button onclick="state.marketFilter='ATA';render()" 
-                                        class="px-3 py-2 rounded-lg text-sm ${state.marketFilter === 'ATA' ? 'bg-green-500 text-white' : 'bg-zinc-800 text-zinc-400'}">
-                                        ATA
-                                    </button>
-                                </div>
+                            <!-- Tabs principais -->
+                            <div class="flex gap-1 bg-zinc-800/50 p-1 rounded-lg">
+                                <button onclick="state.marketModalTab='comprar';render()" 
+                                    class="flex-1 py-2.5 px-4 text-sm font-medium rounded-md transition ${currentMarketTab === 'comprar' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}">
+                                    Comprar
+                                </button>
+                                <button onclick="state.marketModalTab='trocas';render()" 
+                                    class="flex-1 py-2.5 px-4 text-sm font-medium rounded-md transition flex items-center justify-center gap-2 ${currentMarketTab === 'trocas' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}">
+                                    Trocas e Permutas
+                                    ${myTradeOffers.length > 0 ? `<span class="px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded-full text-xs">${myTradeOffers.length}</span>` : ''}
+                                </button>
                             </div>
                         </div>
                         
-                        <div id="marketListContainer" class="p-4 overflow-y-auto" style="max-height: calc(90vh - 250px);">
-                            <!-- Lista de jogadores para comprar -->
-                            ${filteredPlayers.length === 0 ? `
-                                <p class="text-zinc-500 text-center py-8">Nenhum jogador disponível</p>
-                            ` : `
-                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                    ${filteredPlayers.slice(0, 60).map(p => `
-                                        <div class="bg-zinc-800/50 rounded-lg p-3 flex items-center gap-3">
-                                            <img src="${p.photo}" class="w-12 h-12 rounded-lg object-cover"
-                                                onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${p.name.charAt(0)}'">>
+                        <!-- Conteúdo baseado na aba -->
+                        ${currentMarketTab === 'comprar' ? `
+                            <!-- ABA COMPRAR -->
+                            <div class="p-4 border-b border-zinc-800/50">
+                                <!-- Filtros -->
+                                <div class="flex flex-wrap gap-2">
+                                    <input type="text" placeholder="Buscar jogador ou time..." 
+                                        id="marketSearchInput"
+                                        value="${state.marketSearch || ''}"
+                                        oninput="updateMarketSearch(this.value)"
+                                        class="flex-1 min-w-[200px] px-3 py-2 bg-zinc-800 rounded-lg text-white text-sm border border-zinc-700 focus:border-green-500 outline-none">
+                                    <div class="flex gap-1">
+                                        <button onclick="state.marketFilter='all';render()" 
+                                            class="px-3 py-2 rounded-lg text-xs font-medium transition ${!state.marketFilter || state.marketFilter === 'all' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                            Todos
+                                        </button>
+                                        <button onclick="state.marketFilter='GOL';render()" 
+                                            class="px-3 py-2 rounded-lg text-xs font-medium transition ${state.marketFilter === 'GOL' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                            GOL
+                                        </button>
+                                        <button onclick="state.marketFilter='DEF';render()" 
+                                            class="px-3 py-2 rounded-lg text-xs font-medium transition ${state.marketFilter === 'DEF' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                            DEF
+                                        </button>
+                                        <button onclick="state.marketFilter='MEI';render()" 
+                                            class="px-3 py-2 rounded-lg text-xs font-medium transition ${state.marketFilter === 'MEI' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                            MEI
+                                        </button>
+                                        <button onclick="state.marketFilter='ATA';render()" 
+                                            class="px-3 py-2 rounded-lg text-xs font-medium transition ${state.marketFilter === 'ATA' ? 'bg-green-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                            ATA
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div id="marketListContainer" class="p-4 overflow-y-auto" style="max-height: calc(90vh - 300px);">
+                                ${filteredPlayers.length === 0 ? `
+                                    <div class="text-center py-12">
+                                        <div class="text-4xl mb-3">🔍</div>
+                                        <p class="text-zinc-500">Nenhum jogador encontrado</p>
+                                    </div>
+                                ` : `
+                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                        ${filteredPlayers.slice(0, 60).map(p => `
+                                            <div class="bg-zinc-800/30 rounded-xl p-3 flex items-center gap-3 border border-zinc-800/50 hover:border-zinc-700 transition">
+                                                <img src="${p.photo}" class="w-12 h-12 rounded-full object-cover"
+                                                    onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${p.name.charAt(0)}'">
                                                 <div class="flex-1 min-w-0">
                                                     <p class="text-white text-sm font-medium truncate">${p.name}</p>
                                                     <p class="text-zinc-500 text-xs truncate">${p.team}</p>
-                                                    <span class="text-xs px-1.5 py-0.5 bg-zinc-700 text-zinc-400 rounded">${p.position}</span>
+                                                    <span class="text-[10px] px-1.5 py-0.5 bg-zinc-700 text-zinc-400 rounded">${p.position}</span>
                                                 </div>
                                                 <div class="text-right">
-                                                    <p class="text-green-400 font-bold">${p.price}</p>
-                                                    <p class="text-zinc-600 text-xs">pts</p>
+                                                    <p class="text-green-400 font-bold text-sm">${p.price}</p>
+                                                    <p class="text-zinc-600 text-[10px]">pts</p>
                                                     <button onclick="openBuyModal(${p.id})" 
-                                                        class="mt-1 px-2 py-1 bg-green-500 hover:bg-green-400 text-white text-xs rounded">
+                                                        class="mt-1 px-2.5 py-1 bg-green-600 hover:bg-green-500 text-white text-xs rounded-lg font-medium transition">
                                                         Comprar
                                                     </button>
                                                 </div>
@@ -4082,17 +4120,45 @@
                                         <p class="text-zinc-600 text-center text-sm mt-4">Mostrando 60 de ${filteredPlayers.length}. Use os filtros.</p>
                                     ` : ''}
                                 `}
-                        </div>
-                        
-                        <!-- Legenda de preços -->
-                        <div class="p-4 border-t border-zinc-800 bg-zinc-900/50">
-                            <p class="text-zinc-500 text-xs mb-2">Preço = 100 + (média de pts × multiplicador)</p>
-                            <div class="flex flex-wrap gap-2 text-xs">
-                                <span class="px-2 py-1 bg-yellow-500/20 rounded text-yellow-400">Craque (+12 avg) = 700+</span>
-                                <span class="px-2 py-1 bg-green-500/20 rounded text-green-400">Bom (+5 avg) = 250+</span>
-                                <span class="px-2 py-1 bg-zinc-700 rounded text-zinc-400">Sem dados = 100</span>
                             </div>
-                        </div>
+                        ` : `
+                            <!-- ABA TROCAS E PERMUTAS -->
+                            <div class="p-4 border-b border-zinc-800/50">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-xs text-zinc-500">Trocas este mês: ${tradesThisMonth}/2</span>
+                                    </div>
+                                    ${isMarketOpen() && canTrade ? `
+                                        <button onclick="state.tradeSubTab='nova';render()" 
+                                            class="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg font-medium transition">
+                                            + Nova Troca
+                                        </button>
+                                    ` : ''}
+                                </div>
+                                
+                                <!-- Sub-tabs -->
+                                <div class="flex gap-1 mt-3 bg-zinc-800/30 p-1 rounded-lg">
+                                    <button onclick="state.tradeSubTab='recebidas';render()" 
+                                        class="flex-1 py-2 px-3 text-xs font-medium rounded-md transition ${(!state.tradeSubTab || state.tradeSubTab === 'recebidas') ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}">
+                                        Recebidas ${myTradeOffers.length > 0 ? '<span class="ml-1 text-green-400">(' + myTradeOffers.length + ')</span>' : ''}
+                                    </button>
+                                    <button onclick="state.tradeSubTab='enviadas';render()" 
+                                        class="flex-1 py-2 px-3 text-xs font-medium rounded-md transition ${state.tradeSubTab === 'enviadas' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}">
+                                        Enviadas ${sentTradeOffers.length > 0 ? '<span class="ml-1 text-blue-400">(' + sentTradeOffers.length + ')</span>' : ''}
+                                    </button>
+                                    <button onclick="state.tradeSubTab='nova';render()" 
+                                        class="flex-1 py-2 px-3 text-xs font-medium rounded-md transition ${state.tradeSubTab === 'nova' ? 'bg-green-600 text-white' : 'text-zinc-400 hover:text-white'}">
+                                        Nova Troca
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div class="p-4 overflow-y-auto" style="max-height: calc(90vh - 280px);">
+                                ${(!state.tradeSubTab || state.tradeSubTab === 'recebidas') ? renderTradeRecebidas(myTradeOffers) : ''}
+                                ${state.tradeSubTab === 'enviadas' ? renderTradeEnviadas(sentTradeOffers) : ''}
+                                ${state.tradeSubTab === 'nova' ? renderTradeNova(canTrade) : ''}
+                            </div>
+                        `}
                     </div>
                 </div>
             `;
@@ -4913,279 +4979,318 @@
             // Ofertas de troca que eu enviei
             const sentTradeOffers = (state.tradeOffers || []).filter(o => o.from === state.currentUser && o.status === 'pending');
             
-            // Ofertas antigas (compatibilidade)
-            const myOffers = (state.offers || []).filter(o => o.to === state.currentUser && o.status === 'pending');
-            const sentOffers = (state.offers || []).filter(o => o.from === state.currentUser && o.status === 'pending');
-            
             const tradesThisMonth = getMonthlyTradeCount(state.currentUser);
             const canTrade = canMakeTrade(state.currentUser);
             
+            // Tab atual (recebidas, enviadas, nova)
+            const currentTab = state.tradeTab || 'recebidas';
+            
             return `
-                <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-                    <div class="card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden" onclick="event.stopPropagation()">
-                        <div class="p-4 border-b border-zinc-800 flex justify-between items-center">
-                            <div>
-                                <h3 class="font-display text-xl text-white">OFERTAS DE TROCA</h3>
-                                <p class="text-xs text-zinc-500 mt-1">
-                                    ${isMarketOpen() ? '🟢 Mercado aberto' : '🔴 Mercado fechado'} 
-                                    • Trocas: ${tradesThisMonth}/2 este mês
-                                </p>
+                <div class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
+                    <div class="bg-zinc-900 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl border border-zinc-800" onclick="event.stopPropagation()">
+                        
+                        <!-- Header -->
+                        <div class="p-5 border-b border-zinc-800/50">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h3 class="text-lg font-semibold text-white">Trocas e Permutas</h3>
+                                    <div class="flex items-center gap-3 mt-2">
+                                        <span class="text-xs ${isMarketOpen() ? 'text-green-400' : 'text-zinc-500'}">
+                                            ${isMarketOpen() ? '● Mercado aberto' : '○ Mercado fechado'}
+                                        </span>
+                                        <span class="text-xs text-zinc-600">•</span>
+                                        <span class="text-xs text-zinc-500">${tradesThisMonth}/2 trocas</span>
+                                    </div>
+                                </div>
+                                <button onclick="closeModalDirect()" class="p-1 text-zinc-500 hover:text-white transition">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
                             </div>
-                            <button onclick="closeModalDirect()" class="text-zinc-500 hover:text-white">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                            </button>
+                            
+                            <!-- Tabs -->
+                            <div class="flex gap-1 mt-4 bg-zinc-800/50 p-1 rounded-lg">
+                                <button onclick="state.tradeTab='recebidas';render()" 
+                                    class="flex-1 py-2 px-3 text-xs font-medium rounded-md transition ${currentTab === 'recebidas' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}">
+                                    Recebidas ${myTradeOffers.length > 0 ? '<span class="ml-1 px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded-full text-[10px]">' + myTradeOffers.length + '</span>' : ''}
+                                </button>
+                                <button onclick="state.tradeTab='enviadas';render()" 
+                                    class="flex-1 py-2 px-3 text-xs font-medium rounded-md transition ${currentTab === 'enviadas' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-white'}">
+                                    Enviadas ${sentTradeOffers.length > 0 ? '<span class="ml-1 px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded-full text-[10px]">' + sentTradeOffers.length + '</span>' : ''}
+                                </button>
+                                <button onclick="state.tradeTab='nova';render()" 
+                                    class="flex-1 py-2 px-3 text-xs font-medium rounded-md transition ${currentTab === 'nova' ? 'bg-green-600 text-white' : 'text-zinc-400 hover:text-white'}">
+                                    + Nova
+                                </button>
+                            </div>
                         </div>
                         
-                        <div class="p-4 overflow-y-auto max-h-[65vh]">
-                            <!-- Botão Nova Oferta -->
-                            ${isMarketOpen() && canTrade ? `
-                                <button onclick="openNewTradeModal()" class="w-full py-3 mb-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition">
-                                    <span class="text-lg">🔄</span> Propor Nova Troca
-                                </button>
-                            ` : !isMarketOpen() ? `
-                                <div class="bg-zinc-800/50 rounded-xl p-4 mb-4 text-center">
-                                    <p class="text-zinc-400 text-sm">⏳ Mercado abre dias 1 e 2</p>
-                                    ${getTimeUntilMarketOpens() ? `
-                                        <p class="text-zinc-500 text-xs mt-1">Faltam ${getTimeUntilMarketOpens().days}d ${getTimeUntilMarketOpens().hours}h</p>
-                                    ` : ''}
-                                </div>
-                            ` : `
-                                <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4 text-center">
-                                    <p class="text-amber-400 text-sm">⚠️ Você já fez 2 trocas este mês</p>
-                                </div>
-                            `}
-                            
-                            <!-- Ofertas Recebidas -->
-                            <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider flex items-center gap-2">
-                                📥 Recebidas
-                                ${myTradeOffers.length > 0 ? `<span class="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">${myTradeOffers.length}</span>` : ''}
-                            </h4>
-                            
-                            ${myTradeOffers.length === 0 ? `
-                                <p class="text-zinc-600 text-sm text-center py-4 bg-zinc-800/30 rounded-lg mb-4">Nenhuma oferta recebida</p>
-                            ` : `
-                                <div class="space-y-3 mb-6">
-                                    ${myTradeOffers.map(o => `
-                                        <div class="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50">
-                                            <div class="flex items-center justify-between mb-3">
-                                                <p class="text-white font-medium">${o.fromTeamName || o.from}</p>
-                                                <span class="text-xs text-zinc-500">@${o.from}</span>
-                                            </div>
-                                            
-                                            <div class="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-3">
-                                                <!-- Jogador oferecido -->
-                                                <div class="bg-green-500/10 rounded-lg p-2 text-center">
-                                                    <img src="${o.myPlayer.photo}" class="w-12 h-12 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/48'">
-                                                    <p class="text-green-400 text-xs font-medium truncate">${o.myPlayer.name.split(' ').pop()}</p>
-                                                    <p class="text-green-400/60 text-[10px]">${o.myPlayer.position}</p>
-                                                </div>
-                                                
-                                                <div class="text-center">
-                                                    <span class="text-2xl">🔄</span>
-                                                    ${o.pointsOffered > 0 ? `
-                                                        <p class="text-yellow-400 text-xs font-bold">+${o.pointsOffered} pts</p>
-                                                    ` : ''}
-                                                </div>
-                                                
-                                                <!-- Jogador pedido (meu) -->
-                                                <div class="bg-amber-500/10 rounded-lg p-2 text-center">
-                                                    <img src="${o.theirPlayer.photo}" class="w-12 h-12 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/48'">
-                                                    <p class="text-amber-400 text-xs font-medium truncate">${o.theirPlayer.name.split(' ').pop()}</p>
-                                                    <p class="text-amber-400/60 text-[10px]">${o.theirPlayer.position}</p>
-                                                </div>
-                                            </div>
-                                            
-                                            <p class="text-zinc-500 text-[10px] text-center mb-3">
-                                                Expira em ${new Date(o.expiresAt).toLocaleDateString('pt-BR')} às 23:59
-                                            </p>
-                                            
-                                            <div class="flex gap-2">
-                                                <button onclick="acceptTradeOffer('${o.id}')" class="flex-1 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition">
-                                                    ✅ Aceitar
-                                                </button>
-                                                <button onclick="rejectTradeOffer('${o.id}')" class="flex-1 py-2.5 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm font-medium transition">
-                                                    ❌ Recusar
-                                                </button>
-                                            </div>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            `}
-                            
-                            <!-- Ofertas Enviadas -->
-                            <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider flex items-center gap-2">
-                                📤 Enviadas
-                                ${sentTradeOffers.length > 0 ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">${sentTradeOffers.length}</span>` : ''}
-                            </h4>
-                            
-                            ${sentTradeOffers.length === 0 ? `
-                                <p class="text-zinc-600 text-sm text-center py-4 bg-zinc-800/30 rounded-lg">Nenhuma oferta enviada</p>
-                            ` : `
-                                <div class="space-y-3">
-                                    ${sentTradeOffers.map(o => `
-                                        <div class="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50">
-                                            <div class="flex items-center justify-between mb-3">
-                                                <p class="text-white font-medium">Para: ${o.to}</p>
-                                                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">Aguardando</span>
-                                            </div>
-                                            
-                                            <div class="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-3">
-                                                <!-- Meu jogador -->
-                                                <div class="bg-zinc-700/50 rounded-lg p-2 text-center">
-                                                    <img src="${o.myPlayer.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
-                                                    <p class="text-white text-xs truncate">${o.myPlayer.name.split(' ').pop()}</p>
-                                                </div>
-                                                
-                                                <div class="text-center">
-                                                    <span class="text-xl">🔄</span>
-                                                    ${o.pointsOffered > 0 ? `
-                                                        <p class="text-yellow-400 text-[10px]">+${o.pointsOffered}</p>
-                                                    ` : ''}
-                                                </div>
-                                                
-                                                <!-- Jogador pedido -->
-                                                <div class="bg-zinc-700/50 rounded-lg p-2 text-center">
-                                                    <img src="${o.theirPlayer.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
-                                                    <p class="text-white text-xs truncate">${o.theirPlayer.name.split(' ').pop()}</p>
-                                                </div>
-                                            </div>
-                                            
-                                            <button onclick="cancelTradeOffer('${o.id}')" class="w-full py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs font-medium transition">
-                                                Cancelar Oferta
-                                            </button>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            `}
+                        <!-- Content -->
+                        <div class="p-4 overflow-y-auto max-h-[60vh]">
+                            ${currentTab === 'recebidas' ? renderTradeRecebidas(myTradeOffers) : ''}
+                            ${currentTab === 'enviadas' ? renderTradeEnviadas(sentTradeOffers) : ''}
+                            ${currentTab === 'nova' ? renderTradeNova(canTrade) : ''}
                         </div>
                     </div>
                 </div>
             `;
         }
         
-        // Modal para criar nova oferta de troca
-        function renderNewTradeModal() {
+        // Tab Recebidas
+        function renderTradeRecebidas(offers) {
+            if (offers.length === 0) {
+                return `
+                    <div class="text-center py-12">
+                        <div class="text-4xl mb-3">📭</div>
+                        <p class="text-zinc-500 text-sm">Nenhuma oferta recebida</p>
+                    </div>
+                `;
+            }
+            
+            return offers.map(o => `
+                <div class="bg-zinc-800/30 rounded-xl p-4 mb-3 border border-zinc-800/50">
+                    <div class="flex items-center gap-3 mb-4">
+                        <div class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs font-medium text-white">
+                            ${(o.from || 'U')[0].toUpperCase()}
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-white text-sm font-medium">${o.fromTeamName || o.from}</p>
+                            <p class="text-zinc-500 text-xs">@${o.from}</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Troca Visual -->
+                    <div class="flex items-center justify-between bg-zinc-900/50 rounded-lg p-3 mb-3">
+                        <div class="text-center flex-1">
+                            <img src="${o.myPlayer.photo}" class="w-14 h-14 rounded-full mx-auto object-cover border-2 border-green-500/50" onerror="this.src='https://via.placeholder.com/56'">
+                            <p class="text-white text-xs font-medium mt-2">${o.myPlayer.name.split(' ').pop()}</p>
+                            <p class="text-green-400 text-[10px]">Você recebe</p>
+                        </div>
+                        
+                        <div class="px-4">
+                            <div class="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center">
+                                <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                            </div>
+                            ${o.pointsOffered > 0 ? `<p class="text-yellow-400 text-xs font-bold text-center mt-1">+${o.pointsOffered}</p>` : ''}
+                        </div>
+                        
+                        <div class="text-center flex-1">
+                            <img src="${o.theirPlayer.photo}" class="w-14 h-14 rounded-full mx-auto object-cover border-2 border-red-500/50" onerror="this.src='https://via.placeholder.com/56'">
+                            <p class="text-white text-xs font-medium mt-2">${o.theirPlayer.name.split(' ').pop()}</p>
+                            <p class="text-red-400 text-[10px]">Você envia</p>
+                        </div>
+                    </div>
+                    
+                    ${o.message ? `
+                        <div class="bg-zinc-900/50 rounded-lg p-3 mb-3">
+                            <p class="text-zinc-400 text-xs">"${o.message}"</p>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="flex gap-2">
+                        <button onclick="acceptTradeOffer('${o.id}')" class="flex-1 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition">
+                            Aceitar
+                        </button>
+                        <button onclick="rejectTradeOffer('${o.id}')" class="flex-1 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-medium transition">
+                            Recusar
+                        </button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        // Tab Enviadas
+        function renderTradeEnviadas(offers) {
+            if (offers.length === 0) {
+                return `
+                    <div class="text-center py-12">
+                        <div class="text-4xl mb-3">📤</div>
+                        <p class="text-zinc-500 text-sm">Nenhuma oferta enviada</p>
+                    </div>
+                `;
+            }
+            
+            return offers.map(o => `
+                <div class="bg-zinc-800/30 rounded-xl p-4 mb-3 border border-zinc-800/50">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs font-medium text-white">
+                                ${(o.to || 'U')[0].toUpperCase()}
+                            </div>
+                            <div>
+                                <p class="text-white text-sm font-medium">Para: ${o.to}</p>
+                                <p class="text-zinc-500 text-xs">Aguardando resposta</p>
+                            </div>
+                        </div>
+                        <span class="px-2 py-1 bg-yellow-500/10 text-yellow-400 text-xs rounded-full">Pendente</span>
+                    </div>
+                    
+                    <!-- Troca Visual -->
+                    <div class="flex items-center justify-between bg-zinc-900/50 rounded-lg p-3 mb-3">
+                        <div class="text-center flex-1">
+                            <img src="${o.myPlayer.photo}" class="w-12 h-12 rounded-full mx-auto object-cover border-2 border-red-500/50" onerror="this.src='https://via.placeholder.com/48'">
+                            <p class="text-white text-xs font-medium mt-1">${o.myPlayer.name.split(' ').pop()}</p>
+                            <p class="text-red-400 text-[10px]">Você envia</p>
+                        </div>
+                        
+                        <div class="px-3">
+                            <svg class="w-5 h-5 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                            ${o.pointsOffered > 0 ? `<p class="text-yellow-400 text-[10px] font-bold text-center">+${o.pointsOffered}</p>` : ''}
+                        </div>
+                        
+                        <div class="text-center flex-1">
+                            <img src="${o.theirPlayer.photo}" class="w-12 h-12 rounded-full mx-auto object-cover border-2 border-green-500/50" onerror="this.src='https://via.placeholder.com/48'">
+                            <p class="text-white text-xs font-medium mt-1">${o.theirPlayer.name.split(' ').pop()}</p>
+                            <p class="text-green-400 text-[10px]">Você recebe</p>
+                        </div>
+                    </div>
+                    
+                    ${o.message ? `
+                        <div class="bg-zinc-900/50 rounded-lg p-2 mb-3">
+                            <p class="text-zinc-500 text-xs">"${o.message}"</p>
+                        </div>
+                    ` : ''}
+                    
+                    <button onclick="cancelTradeOffer('${o.id}')" class="w-full py-2 text-red-400 hover:bg-red-500/10 rounded-lg text-xs font-medium transition">
+                        Cancelar oferta
+                    </button>
+                </div>
+            `).join('');
+        }
+        
+        // Tab Nova Troca
+        function renderTradeNova(canTrade) {
+            if (!isMarketOpen()) {
+                return `
+                    <div class="text-center py-12">
+                        <div class="text-4xl mb-3">🔒</div>
+                        <p class="text-zinc-400 text-sm mb-2">Mercado fechado</p>
+                        <p class="text-zinc-600 text-xs">Abre nos dias 1 e 2 de cada mês</p>
+                    </div>
+                `;
+            }
+            
+            if (!canTrade) {
+                return `
+                    <div class="text-center py-12">
+                        <div class="text-4xl mb-3">⚠️</div>
+                        <p class="text-amber-400 text-sm mb-2">Limite atingido</p>
+                        <p class="text-zinc-600 text-xs">Você já fez 2 trocas este mês</p>
+                    </div>
+                `;
+            }
+            
             const otherUsers = Object.entries(state.users)
                 .filter(([nick, u]) => nick !== state.currentUser && nick !== 'admin' && u.isConfirmed)
                 .map(([nick, u]) => ({ nick, ...u }));
             
-            // Meus jogadores disponíveis para troca
-            const myPlayers = [...state.starters.filter(p => p), ...state.reserves.filter(p => p)];
+            const myPlayers = [...(state.starters || []).filter(p => p), ...(state.reserves || []).filter(p => p)];
             
-            // Jogadores do usuário selecionado
             const targetUser = state.offerTargetUser ? state.users[state.offerTargetUser] : null;
             const targetPlayers = targetUser ? [
                 ...ensureArray(targetUser.starters, 11).filter(p => p),
                 ...ensureArray(targetUser.reserves, 7).filter(p => p)
             ] : [];
             
-            // Calcular máximo de pontos se jogador selecionado
             const maxPoints = state.selectedPlayerForOffer ? getMaxTradePoints(state.selectedPlayerForOffer.id) : 0;
             
             return `
-                <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-                    <div class="card rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
-                        <div class="p-4 border-b border-zinc-800 flex justify-between items-center">
-                            <h3 class="font-display text-xl text-white">🔄 PROPOR TROCA</h3>
-                            <button onclick="closeModalDirect()" class="text-zinc-500 hover:text-white">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                            </button>
-                        </div>
-                        
-                        <div class="p-4 overflow-y-auto max-h-[75vh]">
-                            <!-- Passo 1: Selecionar meu jogador -->
-                            <div class="mb-6">
-                                <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">1. Qual jogador você quer OFERECER?</h4>
-                                <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-40 overflow-y-auto">
-                                    ${myPlayers.map(p => `
-                                        <div onclick="state.selectedPlayerForOffer=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
-                                            class="cursor-pointer p-2 rounded-lg text-center transition ${state.selectedPlayerForOffer?.id === p.id ? 'bg-green-600 ring-2 ring-green-400' : 'bg-zinc-800 hover:bg-zinc-700'}">
-                                            <img src="${p.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
-                                            <p class="text-white text-[10px] truncate">${p.name.split(' ').pop()}</p>
-                                            <p class="text-zinc-400 text-[9px]">${p.position}</p>
-                                        </div>
-                                    `).join('')}
+                <div class="space-y-5">
+                    <!-- Passo 1: Seu jogador -->
+                    <div>
+                        <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Seu jogador</label>
+                        <div class="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto">
+                            ${myPlayers.map(p => `
+                                <div onclick="state.selectedPlayerForOffer=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
+                                    class="cursor-pointer p-1.5 rounded-lg text-center transition ${state.selectedPlayerForOffer?.id === p.id ? 'bg-green-600/20 ring-2 ring-green-500' : 'bg-zinc-800/50 hover:bg-zinc-800'}">
+                                    <img src="${p.photo}" class="w-10 h-10 rounded-full mx-auto object-cover" onerror="this.src='https://via.placeholder.com/40'">
+                                    <p class="text-white text-[9px] mt-1 truncate">${p.name.split(' ').pop()}</p>
                                 </div>
-                                ${state.selectedPlayerForOffer ? `
-                                    <p class="text-green-400 text-xs mt-2">✓ Selecionado: ${state.selectedPlayerForOffer.name}</p>
-                                ` : ''}
-                            </div>
-                            
-                            <!-- Passo 2: Selecionar usuário -->
-                            <div class="mb-6">
-                                <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">2. Com quem você quer trocar?</h4>
-                                <div class="flex flex-wrap gap-2">
-                                    ${otherUsers.map(u => `
-                                        <button onclick="state.offerTargetUser='${u.nick}';render()" 
-                                            class="px-3 py-2 rounded-lg text-sm transition ${state.offerTargetUser === u.nick ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}">
-                                            ${u.teamName || u.nick}
-                                        </button>
-                                    `).join('')}
-                                </div>
-                            </div>
-                            
-                            <!-- Passo 3: Selecionar jogador do outro -->
-                            ${state.offerTargetUser && targetPlayers.length > 0 ? `
-                                <div class="mb-6">
-                                    <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">3. Qual jogador de ${state.offerTargetUser} você QUER?</h4>
-                                    <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-40 overflow-y-auto">
-                                        ${targetPlayers.map(p => `
-                                            <div onclick="state.marketPlayerToBuy=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
-                                                class="cursor-pointer p-2 rounded-lg text-center transition ${state.marketPlayerToBuy?.id === p.id ? 'bg-amber-600 ring-2 ring-amber-400' : 'bg-zinc-800 hover:bg-zinc-700'}">
-                                                <img src="${p.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
-                                                <p class="text-white text-[10px] truncate">${p.name.split(' ').pop()}</p>
-                                                <p class="text-zinc-400 text-[9px]">${p.position}</p>
-                                            </div>
-                                        `).join('')}
-                                    </div>
-                                    ${state.marketPlayerToBuy ? `
-                                        <p class="text-amber-400 text-xs mt-2">✓ Selecionado: ${state.marketPlayerToBuy.name}</p>
-                                    ` : ''}
-                                </div>
-                            ` : state.offerTargetUser ? `
-                                <p class="text-zinc-500 text-center py-4">Este usuário não tem jogadores</p>
-                            ` : ''}
-                            
-                            <!-- Passo 4: Adicionar pontos (opcional) -->
-                            ${state.selectedPlayerForOffer && state.marketPlayerToBuy ? `
-                                <div class="mb-6">
-                                    <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">4. Adicionar pontos? (opcional)</h4>
-                                    <div class="flex items-center gap-3">
-                                        <input type="number" id="tradePointsInput" min="0" max="${maxPoints}" value="0"
-                                            class="flex-1 px-4 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 focus:border-yellow-500 outline-none">
-                                        <span class="text-zinc-500 text-sm">pts</span>
-                                    </div>
-                                    <p class="text-zinc-500 text-xs mt-2">Máximo: ${maxPoints} pts (50% do valor de ${state.selectedPlayerForOffer.name.split(' ').pop()})</p>
-                                    <p class="text-zinc-600 text-xs">Seus pontos: ${getTotalScore()}</p>
-                                </div>
-                                
-                                <!-- Resumo -->
-                                <div class="bg-zinc-800/50 rounded-xl p-4 mb-4">
-                                    <h4 class="text-sm font-medium text-white mb-3">📋 Resumo da Proposta</h4>
-                                    <div class="flex items-center justify-around">
-                                        <div class="text-center">
-                                            <p class="text-zinc-500 text-xs mb-1">Você oferece</p>
-                                            <img src="${state.selectedPlayerForOffer.photo}" class="w-14 h-14 rounded-lg mx-auto object-cover" onerror="this.src='https://via.placeholder.com/56'">
-                                            <p class="text-green-400 text-sm font-medium mt-1">${state.selectedPlayerForOffer.name.split(' ').pop()}</p>
-                                        </div>
-                                        <div class="text-2xl">🔄</div>
-                                        <div class="text-center">
-                                            <p class="text-zinc-500 text-xs mb-1">Você recebe</p>
-                                            <img src="${state.marketPlayerToBuy.photo}" class="w-14 h-14 rounded-lg mx-auto object-cover" onerror="this.src='https://via.placeholder.com/56'">
-                                            <p class="text-amber-400 text-sm font-medium mt-1">${state.marketPlayerToBuy.name.split(' ').pop()}</p>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <!-- Botão Enviar -->
-                                <button onclick="submitTradeOffer()" class="w-full py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white rounded-xl font-bold text-lg transition">
-                                    📤 Enviar Proposta
-                                </button>
-                            ` : ''}
+                            `).join('')}
                         </div>
                     </div>
+                    
+                    <!-- Passo 2: Usuário -->
+                    <div>
+                        <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Trocar com</label>
+                        <div class="flex flex-wrap gap-2">
+                            ${otherUsers.map(u => `
+                                <button onclick="state.offerTargetUser='${u.nick}';state.marketPlayerToBuy=null;render()" 
+                                    class="px-3 py-1.5 rounded-full text-xs transition ${state.offerTargetUser === u.nick ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                    ${u.teamName || u.nick}
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                    
+                    <!-- Passo 3: Jogador do outro -->
+                    ${state.offerTargetUser && targetPlayers.length > 0 ? `
+                        <div>
+                            <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Jogador de ${state.offerTargetUser}</label>
+                            <div class="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto">
+                                ${targetPlayers.map(p => `
+                                    <div onclick="state.marketPlayerToBuy=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
+                                        class="cursor-pointer p-1.5 rounded-lg text-center transition ${state.marketPlayerToBuy?.id === p.id ? 'bg-amber-600/20 ring-2 ring-amber-500' : 'bg-zinc-800/50 hover:bg-zinc-800'}">
+                                        <img src="${p.photo}" class="w-10 h-10 rounded-full mx-auto object-cover" onerror="this.src='https://via.placeholder.com/40'">
+                                        <p class="text-white text-[9px] mt-1 truncate">${p.name.split(' ').pop()}</p>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <!-- Passo 4: Pontos e Mensagem -->
+                    ${state.selectedPlayerForOffer && state.marketPlayerToBuy ? `
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Pontos (máx ${maxPoints})</label>
+                                <input type="number" id="tradePointsInput" min="0" max="${maxPoints}" value="0" placeholder="0"
+                                    class="w-full px-3 py-2 bg-zinc-800 text-white rounded-lg text-sm border border-zinc-700 focus:border-green-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Seus pts</label>
+                                <div class="px-3 py-2 bg-zinc-800/50 rounded-lg text-sm text-zinc-400">${getTotalScore()}</div>
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Mensagem (opcional)</label>
+                            <textarea id="tradeMessageInput" rows="2" placeholder="Ex: Preciso de um meia, aceita essa troca?"
+                                class="w-full px-3 py-2 bg-zinc-800 text-white rounded-lg text-sm border border-zinc-700 focus:border-green-500 outline-none resize-none"></textarea>
+                        </div>
+                        
+                        <!-- Preview -->
+                        <div class="bg-zinc-800/30 rounded-xl p-4">
+                            <div class="flex items-center justify-around">
+                                <div class="text-center">
+                                    <img src="${state.selectedPlayerForOffer.photo}" class="w-12 h-12 rounded-full mx-auto object-cover border-2 border-red-500/50">
+                                    <p class="text-white text-xs mt-1">${state.selectedPlayerForOffer.name.split(' ').pop()}</p>
+                                    <p class="text-red-400 text-[10px]">Envia</p>
+                                </div>
+                                <div class="text-zinc-600">→</div>
+                                <div class="text-center">
+                                    <img src="${state.marketPlayerToBuy.photo}" class="w-12 h-12 rounded-full mx-auto object-cover border-2 border-green-500/50">
+                                    <p class="text-white text-xs mt-1">${state.marketPlayerToBuy.name.split(' ').pop()}</p>
+                                    <p class="text-green-400 text-[10px]">Recebe</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <button onclick="submitTradeOffer()" class="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-medium transition">
+                            Enviar Proposta
+                        </button>
+                    ` : `
+                        <div class="text-center py-6 text-zinc-600 text-sm">
+                            Selecione os jogadores acima
+                        </div>
+                    `}
                 </div>
             `;
+        }
+        
+        // Mantido para compatibilidade
+        function renderNewTradeModal() {
+            state.tradeTab = 'nova';
+            return renderOffersModal();
         }
 
         function renderTeamsModal() {
@@ -7401,19 +7506,23 @@
             }
             
             const pointsInput = document.getElementById('tradePointsInput');
+            const messageInput = document.getElementById('tradeMessageInput');
             const points = parseInt(pointsInput?.value) || 0;
+            const message = messageInput?.value?.trim() || '';
             
             const success = createTradeOffer(
                 state.selectedPlayerForOffer.id,
                 state.offerTargetUser,
                 state.marketPlayerToBuy.id,
-                points
+                points,
+                message
             );
             
             if (success) {
                 state.selectedPlayerForOffer = null;
                 state.offerTargetUser = null;
                 state.marketPlayerToBuy = null;
+                state.tradeTab = 'enviadas';
                 state.modal = 'offers';
                 render();
             }
@@ -7999,6 +8108,12 @@
 
         // Funções para substituições
         window.openSubstitutionModal = function() {
+            // Bloquear se rodada em andamento
+            if (!canEditTeam()) {
+                alert('⚠️ Substituições Travadas!\n\nA rodada está em andamento. Você poderá fazer substituições quando todos os jogos terminarem.');
+                return;
+            }
+            
             state.scrollY = window.scrollY;
             state.modal = 'substitution';
             state.selectedForSubstitution = null;
@@ -8013,17 +8128,29 @@
         let dragData = null;
         
         window.handleDragStart = function(event, type, index) {
+            // Bloquear se rodada em andamento
+            if (!canEditTeam()) {
+                event.preventDefault();
+                return;
+            }
             dragData = { type, index };
             event.dataTransfer.effectAllowed = 'move';
             event.target.style.opacity = '0.5';
         };
         
         window.handleDragOver = function(event) {
+            if (!canEditTeam()) return;
             event.preventDefault();
             event.dataTransfer.dropEffect = 'move';
         };
         
         window.handleDrop = function(event, targetType, targetIndex) {
+            // Bloquear se rodada em andamento
+            if (!canEditTeam()) {
+                alert('⚠️ Substituições Travadas!\n\nA rodada está em andamento.');
+                return;
+            }
+            
             event.preventDefault();
             event.target.style.opacity = '1';
             
@@ -8205,8 +8332,13 @@
         };
         
         window.changeFormation = function(formation) {
-            // Bloquear troca de formação se escalação já confirmada ou mercado fechado
-            if (state.isConfirmed || !isMarketOpen()) {
+            // Bloquear troca de formação se escalação já confirmada ou rodada em andamento
+            if (state.isConfirmed) {
+                return;
+            }
+            
+            if (!canEditTeam()) {
+                alert('⚠️ Formação Travada!\n\nA rodada está em andamento. Você poderá mudar a formação quando todos os jogos terminarem.');
                 return;
             }
             
