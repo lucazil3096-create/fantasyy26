@@ -473,6 +473,9 @@
             offerTargetUser: null,
             marketPlayerToSell: null,
             marketPlayerToBuy: null,
+            // Sistema de trocas entre usuários
+            monthlyTrades: {}, // { 'YYYY-MM': { nick: count } }
+            tradeOffers: [], // Ofertas de troca pendentes
             // Sistema de visualização de times
             viewingUser: null,
             // Sistema de substituições
@@ -1449,35 +1452,365 @@
             return state.scores['market'].purchases.reduce((sum, t) => sum + t.price, 0);
         }
 
-        // ==================== MERCADO DE TRANSFERÊNCIAS ====================
+        // ==================== SISTEMA DE TROCAS ENTRE USUÁRIOS ====================
         
-        function isMarketOpen() {
-            const today = new Date();
-            const day = today.getDate();
-            const month = today.getMonth(); // 0 = Janeiro, 2 = Março
-            // Mercado só abre dia 1 e 2 de Março
-            return month === 2 && (day === 1 || day === 2);
+        // Obter mês/ano atual no formato YYYY-MM
+        function getCurrentMonth() {
+            const now = new Date();
+            return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        }
+        
+        // Contar quantas trocas o usuário fez no mês
+        function getMonthlyTradeCount(nick) {
+            const month = getCurrentMonth();
+            if (!state.monthlyTrades[month]) return 0;
+            return state.monthlyTrades[month][nick] || 0;
+        }
+        
+        // Verificar se o usuário pode fazer mais trocas (limite 2 por mês)
+        function canMakeTrade(nick) {
+            return getMonthlyTradeCount(nick) < 2;
+        }
+        
+        // Calcular máximo de pontos permitido na troca (50% do valor do jogador)
+        function getMaxTradePoints(playerId) {
+            const price = getPlayerPrice(playerId);
+            return Math.floor(price * 0.5);
+        }
+        
+        // Escutar ofertas de troca do Firebase
+        function listenToTradeOffers() {
+            if (!db) return;
+            db.ref('tradeOffers').on('value', (snapshot) => {
+                const offers = snapshot.val();
+                if (offers) {
+                    // Filtrar ofertas expiradas e converter para array
+                    const now = Date.now();
+                    state.tradeOffers = Object.entries(offers)
+                        .map(([id, o]) => ({ ...o, id }))
+                        .filter(o => {
+                            // Remover ofertas expiradas
+                            if (o.expiresAt && o.expiresAt < now && o.status === 'pending') {
+                                db.ref('tradeOffers/' + o.id).update({ status: 'expired' });
+                                return false;
+                            }
+                            return true;
+                        });
+                } else {
+                    state.tradeOffers = [];
+                }
+                render();
+            });
+            
+            // Carregar contador de trocas mensais
+            db.ref('monthlyTrades').on('value', (snapshot) => {
+                state.monthlyTrades = snapshot.val() || {};
+            });
+        }
+        
+        // Criar oferta de troca
+        function createTradeOffer(myPlayerId, targetUser, theirPlayerId, pointsOffered) {
+            if (!db || !state.currentUser) return false;
+            
+            // Validações
+            if (!isMarketOpen()) {
+                alert('⚠️ Mercado fechado!\n\nVocê só pode fazer trocas nos dias 1 e 2 de cada mês.');
+                return false;
+            }
+            
+            if (!canMakeTrade(state.currentUser)) {
+                alert('⚠️ Limite de trocas!\n\nVocê já fez 2 trocas este mês. Aguarde o próximo mês.');
+                return false;
+            }
+            
+            // Verificar limite de pontos (50% do valor do jogador oferecido)
+            const maxPoints = getMaxTradePoints(myPlayerId);
+            if (pointsOffered > maxPoints) {
+                alert(`⚠️ Pontos demais!\n\nO máximo que você pode oferecer é ${maxPoints} pts (50% do valor do jogador).`);
+                return false;
+            }
+            
+            // Verificar se tem pontos suficientes
+            const totalScore = getTotalScore();
+            if (pointsOffered > totalScore) {
+                alert(`⚠️ Pontos insuficientes!\n\nVocê tem ${totalScore} pts e está oferecendo ${pointsOffered} pts.`);
+                return false;
+            }
+            
+            // Buscar dados dos jogadores
+            const myPlayer = state.players.find(p => p.id === myPlayerId);
+            const theirPlayer = state.players.find(p => p.id === theirPlayerId);
+            
+            if (!myPlayer || !theirPlayer) {
+                alert('❌ Erro ao encontrar jogadores.');
+                return false;
+            }
+            
+            // Calcular data de expiração (dia 2 às 23:59:59 do mês atual)
+            const now = new Date();
+            const expiresAt = new Date(now.getFullYear(), now.getMonth(), 2, 23, 59, 59).getTime();
+            
+            const offerId = 'trade_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            const offer = {
+                id: offerId,
+                type: 'trade',
+                from: state.currentUser,
+                fromTeamName: state.teamName,
+                to: targetUser,
+                myPlayer: {
+                    id: myPlayerId,
+                    name: myPlayer.name,
+                    photo: myPlayer.photo,
+                    position: myPlayer.position,
+                    team: myPlayer.team
+                },
+                theirPlayer: {
+                    id: theirPlayerId,
+                    name: theirPlayer.name,
+                    photo: theirPlayer.photo,
+                    position: theirPlayer.position,
+                    team: theirPlayer.team
+                },
+                pointsOffered: pointsOffered,
+                status: 'pending',
+                createdAt: Date.now(),
+                expiresAt: expiresAt,
+                month: getCurrentMonth()
+            };
+            
+            db.ref('tradeOffers/' + offerId).set(offer);
+            alert('✅ Oferta enviada!\n\nAguarde a resposta de ' + targetUser);
+            return true;
+        }
+        
+        // Aceitar oferta de troca
+        function acceptTradeOffer(offerId) {
+            if (!db || !state.currentUser) return;
+            
+            const offer = state.tradeOffers.find(o => o.id === offerId);
+            if (!offer || offer.status !== 'pending') {
+                alert('❌ Oferta não encontrada ou já processada.');
+                return;
+            }
+            
+            if (offer.to !== state.currentUser) {
+                alert('❌ Esta oferta não é para você.');
+                return;
+            }
+            
+            // Verificar se o mercado ainda está aberto
+            if (!isMarketOpen()) {
+                alert('⚠️ Mercado fechado!\n\nA oferta expirou.');
+                db.ref('tradeOffers/' + offerId).update({ status: 'expired' });
+                return;
+            }
+            
+            // Verificar limite de trocas de quem aceita
+            if (!canMakeTrade(state.currentUser)) {
+                alert('⚠️ Você já fez 2 trocas este mês!');
+                return;
+            }
+            
+            // Verificar se ambos ainda têm os jogadores
+            const fromUser = state.users[offer.from];
+            const toUser = state.users[offer.to];
+            
+            if (!fromUser || !toUser) {
+                alert('❌ Usuário não encontrado.');
+                return;
+            }
+            
+            const fromStarters = ensureArray(fromUser.starters, 11);
+            const fromReserves = ensureArray(fromUser.reserves, 7);
+            const toStarters = ensureArray(toUser.starters, 11);
+            const toReserves = ensureArray(toUser.reserves, 7);
+            
+            // Encontrar posição do jogador de quem ofereceu
+            let fromSlot = null;
+            fromStarters.forEach((p, i) => { if (p && p.id === offer.myPlayer.id) fromSlot = { type: 'starters', index: i }; });
+            fromReserves.forEach((p, i) => { if (p && p.id === offer.myPlayer.id) fromSlot = { type: 'reserves', index: i }; });
+            
+            // Encontrar posição do jogador de quem aceita
+            let toSlot = null;
+            toStarters.forEach((p, i) => { if (p && p.id === offer.theirPlayer.id) toSlot = { type: 'starters', index: i }; });
+            toReserves.forEach((p, i) => { if (p && p.id === offer.theirPlayer.id) toSlot = { type: 'reserves', index: i }; });
+            
+            if (!fromSlot || !toSlot) {
+                alert('❌ Um dos jogadores não está mais no time!');
+                db.ref('tradeOffers/' + offerId).update({ status: 'cancelled' });
+                return;
+            }
+            
+            // Executar a troca
+            const myPlayerObj = offer.myPlayer;
+            const theirPlayerObj = offer.theirPlayer;
+            
+            // Atualizar time de quem ofereceu (from)
+            if (fromSlot.type === 'starters') {
+                fromStarters[fromSlot.index] = theirPlayerObj;
+            } else {
+                fromReserves[fromSlot.index] = theirPlayerObj;
+            }
+            
+            // Atualizar time de quem aceitou (to)
+            if (toSlot.type === 'starters') {
+                toStarters[toSlot.index] = myPlayerObj;
+            } else {
+                toReserves[toSlot.index] = myPlayerObj;
+            }
+            
+            // Transferir pontos
+            const points = offer.pointsOffered || 0;
+            
+            // Salvar no Firebase
+            const updates = {};
+            updates['users/' + offer.from + '/starters'] = fromStarters;
+            updates['users/' + offer.from + '/reserves'] = fromReserves;
+            updates['users/' + offer.to + '/starters'] = toStarters;
+            updates['users/' + offer.to + '/reserves'] = toReserves;
+            
+            // Registrar transação de pontos
+            if (points > 0) {
+                const month = getCurrentMonth();
+                updates['users/' + offer.from + '/scores/market/trades'] = firebase.database.ServerValue.increment(-points);
+                updates['users/' + offer.to + '/scores/market/trades'] = firebase.database.ServerValue.increment(points);
+            }
+            
+            // Incrementar contador de trocas
+            const month = getCurrentMonth();
+            updates['monthlyTrades/' + month + '/' + offer.from] = (state.monthlyTrades[month]?.[offer.from] || 0) + 1;
+            updates['monthlyTrades/' + month + '/' + offer.to] = (state.monthlyTrades[month]?.[offer.to] || 0) + 1;
+            
+            // Marcar oferta como aceita
+            updates['tradeOffers/' + offerId + '/status'] = 'accepted';
+            updates['tradeOffers/' + offerId + '/acceptedAt'] = Date.now();
+            
+            db.ref().update(updates).then(() => {
+                // Atualizar state local se for o usuário atual
+                if (offer.to === state.currentUser) {
+                    if (toSlot.type === 'starters') {
+                        state.starters[toSlot.index] = myPlayerObj;
+                    } else {
+                        state.reserves[toSlot.index] = myPlayerObj;
+                    }
+                }
+                
+                alert('✅ Troca realizada com sucesso!\n\nVocê recebeu: ' + myPlayerObj.name + (points > 0 ? ' + ' + points + ' pts' : ''));
+                render();
+            }).catch(err => {
+                console.error('Erro na troca:', err);
+                alert('❌ Erro ao realizar troca. Tente novamente.');
+            });
+        }
+        
+        // Recusar oferta de troca
+        function rejectTradeOffer(offerId) {
+            if (!db || !state.currentUser) return;
+            
+            const offer = state.tradeOffers.find(o => o.id === offerId);
+            if (!offer || offer.status !== 'pending') return;
+            
+            if (offer.to !== state.currentUser) return;
+            
+            db.ref('tradeOffers/' + offerId).update({ 
+                status: 'rejected',
+                rejectedAt: Date.now()
+            });
+            
+            alert('Oferta recusada.');
+        }
+        
+        // Cancelar oferta de troca (quem enviou)
+        function cancelTradeOffer(offerId) {
+            if (!db || !state.currentUser) return;
+            
+            const offer = state.tradeOffers.find(o => o.id === offerId);
+            if (!offer || offer.status !== 'pending') return;
+            
+            if (offer.from !== state.currentUser) return;
+            
+            db.ref('tradeOffers/' + offerId).update({ 
+                status: 'cancelled',
+                cancelledAt: Date.now()
+            });
+            
+            alert('Oferta cancelada.');
         }
 
+        // ==================== MERCADO DE TRANSFERÊNCIAS ====================
+        
+        // Verifica se o MERCADO DE TRANSFERÊNCIAS está aberto (dias 1 e 2 de cada mês, a partir de março)
+        function isMarketOpen() {
+            // TEMPORÁRIO: Liberado para teste
+            return true;
+            
+            /*
+            const today = new Date();
+            const day = today.getDate();
+            const month = today.getMonth(); // 0 = Janeiro, 1 = Fevereiro, 2 = Março...
+            
+            // Mercado só abre a partir de março (mês 2) nos dias 1 e 2
+            if (month >= 2 && (day === 1 || day === 2)) {
+                return true;
+            }
+            return false;
+            */
+        }
+        
+        // Verifica se pode EDITAR ESCALAÇÃO (trocar titulares/reservas, mudar formação)
+        // Liberado quando não tem jogos ao vivo ou próximos
+        function canEditTeam() {
+            // Se tem jogos ao vivo, não pode editar
+            if (state.hasLiveGames) {
+                return false;
+            }
+            
+            // Verificar se tem jogo começando em menos de 2 horas
+            if (state.liveFixtures && state.liveFixtures.length > 0) {
+                const now = Date.now();
+                const twoHours = 2 * 60 * 60 * 1000;
+                
+                for (const fixture of state.liveFixtures) {
+                    const matchTime = new Date(fixture.fixture.date).getTime();
+                    const status = fixture.fixture.status.short;
+                    
+                    // Se o jogo ainda não começou e falta menos de 2 horas
+                    if (status === 'NS' && (matchTime - now) < twoHours && (matchTime - now) > 0) {
+                        return false;
+                    }
+                    
+                    // Se o jogo está em andamento
+                    if (['1H', '2H', 'HT', 'ET', 'P', 'LIVE'].includes(status)) {
+                        return false;
+                    }
+                }
+            }
+            
+            return true; // Pode editar escalação
+        }
+
+        // Tempo até o mercado abrir
         function getTimeUntilMarketOpens() {
             const now = new Date();
             const currentDay = now.getDate();
             const currentMonth = now.getMonth();
             const currentYear = now.getFullYear();
             
+            // Se já está aberto
+            if (isMarketOpen()) return null;
+            
             let nextMarketDate;
             
-            // Próxima abertura é 1 de março
-            if (currentMonth < 2 || (currentMonth === 2 && currentDay > 2)) {
-                // Se ainda não chegou março ou já passou dia 2 de março
-                const year = currentMonth >= 2 ? currentYear + 1 : currentYear;
-                nextMarketDate = new Date(year, 2, 1, 0, 0, 0); // 1 de março
-            } else if (currentMonth === 2 && currentDay < 1) {
-                // Março mas antes do dia 1
+            // Calcular próxima abertura (dia 1 do próximo mês válido)
+            if (currentMonth < 2) {
+                // Antes de março - próxima abertura é 1 de março
                 nextMarketDate = new Date(currentYear, 2, 1, 0, 0, 0);
+            } else if (currentDay > 2) {
+                // Já passou dia 2 deste mês - próxima abertura é dia 1 do próximo mês
+                nextMarketDate = new Date(currentYear, currentMonth + 1, 1, 0, 0, 0);
             } else {
-                // Já está aberto
-                return null;
+                // Estamos antes do dia 1 (não deveria acontecer) ou entre 1 e 2 (está aberto)
+                nextMarketDate = new Date(currentYear, currentMonth, 1, 0, 0, 0);
             }
             
             const diff = nextMarketDate - now;
@@ -1489,7 +1822,10 @@
             return { days, hours, minutes, seconds, total: diff };
         }
 
+        // Tempo até o mercado fechar (dia 2 às 23:59:59)
         function getMarketCloseTime() {
+            if (!isMarketOpen()) return null;
+            
             const now = new Date();
             const currentYear = now.getFullYear();
             const currentMonth = now.getMonth();
@@ -1500,11 +1836,11 @@
             const diff = closeDate - now;
             if (diff <= 0) return null;
             
-            const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-            const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const hours = Math.floor(diff / (1000 * 60 * 60));
             const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((diff % (1000 * 60)) / 1000);
             
-            return { days, hours, minutes };
+            return { hours, minutes, seconds };
         }
 
         // Carregar ofertas do Firebase
@@ -1885,6 +2221,9 @@
                 
                 // Escutar mensagens privadas
                 try { listenToPrivateMessages(); } catch(e) { console.error('Erro listenToPrivateMessages:', e); }
+                
+                // Escutar ofertas de troca
+                try { listenToTradeOffers(); } catch(e) { console.error('Erro listenToTradeOffers:', e); }
 
             } catch (e) {
                 console.error('Erro ao carregar estado:', e);
@@ -2914,6 +3253,8 @@
             const fieldPositions = getFieldPositions();
 
             const pendingOffers = (state.offers || []).filter(o => o.to === state.currentUser && o.status === 'pending').length;
+            const pendingTrades = (state.tradeOffers || []).filter(o => o.to === state.currentUser && o.status === 'pending').length;
+            const totalPendingOffers = pendingOffers + pendingTrades;
 
             return `
                 <div class="min-h-screen">
@@ -2931,8 +3272,8 @@
                                             🎯 Draft
                                         </button>
                                         <button onclick="openMarketModal()" class="px-6 py-3 text-lg font-semibold text-zinc-500 hover:text-white transition flex items-center gap-2">
-                                            Mercado
-                                            ${isMarketOpen() ? '<span class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></span>' : ''}
+                                            Transferir
+                                            ${isMarketOpen() ? '<span class="w-3 h-3 bg-yellow-500 rounded-full animate-pulse"></span>' : ''}
                                         </button>
                                         <button onclick="openTeamsModal()" class="px-6 py-3 text-lg font-semibold text-zinc-500 hover:text-white transition">
                                             Times
@@ -2943,12 +3284,11 @@
                                     </div>
                                 </div>
                                 <div class="flex items-center gap-6">
-                                    ${pendingOffers > 0 ? `
-                                        <button onclick="openOffersModal()" class="relative p-2 text-zinc-400 hover:text-white transition">
-                                            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-                                            <span class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 text-white text-sm flex items-center justify-center rounded-full">${pendingOffers}</span>
-                                        </button>
-                                    ` : ''}
+                                    <!-- Botão Ofertas/Trocas -->
+                                    <button onclick="openOffersModal()" class="relative p-2 text-zinc-400 hover:text-white transition" title="Ofertas de Troca">
+                                        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                                        ${totalPendingOffers > 0 ? `<span class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 text-white text-sm flex items-center justify-center rounded-full">${totalPendingOffers}</span>` : ''}
+                                    </button>
                                     
                                     <!-- Botão de Mensagens -->
                                     <button onclick="openMessagesModal()" class="relative p-2 text-zinc-400 hover:text-white transition" title="Mensagens">
@@ -2992,8 +3332,9 @@
                             </button>
                             <button onclick="openMarketModal()" class="flex flex-col items-center py-2 px-2 text-zinc-500 relative">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-                                <span class="text-xs mt-1">Mercado</span>
-                                ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>' : ''}
+                                <span class="text-xs mt-1">Transferir</span>
+                                ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>' : ''}
+                            </button>
                             </button>
                             <button onclick="openTeamsModal()" class="flex flex-col items-center py-2 px-2 text-zinc-500">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
@@ -3167,6 +3508,35 @@
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                         </button>
                                     </div>
+                                </div>
+                                
+                                <!-- Status da Escalação e Mercado -->
+                                <div class="mt-3 pt-3 border-t border-zinc-800 space-y-2">
+                                    <!-- Status Escalação -->
+                                    ${canEditTeam() ? `
+                                        <div class="flex items-center gap-2 text-green-400">
+                                            <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                                            <span class="text-xs font-medium">Escalação liberada</span>
+                                        </div>
+                                    ` : `
+                                        <div class="flex items-center gap-2 text-red-400">
+                                            <span class="w-2 h-2 bg-red-500 rounded-full"></span>
+                                            <span class="text-xs font-medium">Escalação travada - rodada em andamento</span>
+                                        </div>
+                                    `}
+                                    
+                                    <!-- Status Mercado -->
+                                    ${isMarketOpen() ? `
+                                        <div class="flex items-center gap-2 text-yellow-400">
+                                            <span class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></span>
+                                            <span class="text-xs font-medium">Mercado aberto! ${getMarketCloseTime() ? `Fecha em ${getMarketCloseTime().hours}h${getMarketCloseTime().minutes}m` : ''}</span>
+                                        </div>
+                                    ` : `
+                                        <div class="flex items-center gap-2 text-zinc-500">
+                                            <span class="w-2 h-2 bg-zinc-600 rounded-full"></span>
+                                            <span class="text-xs">Mercado abre dia 1 ${getTimeUntilMarketOpens() ? `(${getTimeUntilMarketOpens().days}d ${getTimeUntilMarketOpens().hours}h)` : ''}</span>
+                                        </div>
+                                    `}
                                 </div>
                             </div>
 
@@ -3477,6 +3847,9 @@
 
                 <!-- Modal Ofertas -->
                 ${state.modal === 'offers' ? renderOffersModal() : ''}
+                
+                <!-- Modal Nova Troca -->
+                ${state.modal === 'newTrade' ? renderNewTradeModal() : ''}
 
                 <!-- Modal Fazer Oferta -->
                 ${state.modal === 'makeOffer' ? renderMakeOfferModal() : ''}
@@ -4535,37 +4908,103 @@
         }
 
         function renderOffersModal() {
-            const myOffers = state.offers.filter(o => o.to === state.currentUser && o.status === 'pending');
-            const sentOffers = state.offers.filter(o => o.from === state.currentUser && o.status === 'pending');
+            // Ofertas de troca pendentes para mim
+            const myTradeOffers = (state.tradeOffers || []).filter(o => o.to === state.currentUser && o.status === 'pending');
+            // Ofertas de troca que eu enviei
+            const sentTradeOffers = (state.tradeOffers || []).filter(o => o.from === state.currentUser && o.status === 'pending');
+            
+            // Ofertas antigas (compatibilidade)
+            const myOffers = (state.offers || []).filter(o => o.to === state.currentUser && o.status === 'pending');
+            const sentOffers = (state.offers || []).filter(o => o.from === state.currentUser && o.status === 'pending');
+            
+            const tradesThisMonth = getMonthlyTradeCount(state.currentUser);
+            const canTrade = canMakeTrade(state.currentUser);
             
             return `
                 <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-                    <div class="card rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden" onclick="event.stopPropagation()">
+                    <div class="card rounded-2xl w-full max-w-lg max-h-[85vh] overflow-hidden" onclick="event.stopPropagation()">
                         <div class="p-4 border-b border-zinc-800 flex justify-between items-center">
-                            <h3 class="font-display text-xl text-white">OFERTAS</h3>
+                            <div>
+                                <h3 class="font-display text-xl text-white">OFERTAS DE TROCA</h3>
+                                <p class="text-xs text-zinc-500 mt-1">
+                                    ${isMarketOpen() ? '🟢 Mercado aberto' : '🔴 Mercado fechado'} 
+                                    • Trocas: ${tradesThisMonth}/2 este mês
+                                </p>
+                            </div>
                             <button onclick="closeModalDirect()" class="text-zinc-500 hover:text-white">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
-                        <div class="p-4 overflow-y-auto max-h-[60vh]">
-                            <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">Recebidas</h4>
-                            ${myOffers.length === 0 ? `
-                                <p class="text-zinc-600 text-sm text-center py-4">Nenhuma oferta recebida</p>
+                        
+                        <div class="p-4 overflow-y-auto max-h-[65vh]">
+                            <!-- Botão Nova Oferta -->
+                            ${isMarketOpen() && canTrade ? `
+                                <button onclick="openNewTradeModal()" class="w-full py-3 mb-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition">
+                                    <span class="text-lg">🔄</span> Propor Nova Troca
+                                </button>
+                            ` : !isMarketOpen() ? `
+                                <div class="bg-zinc-800/50 rounded-xl p-4 mb-4 text-center">
+                                    <p class="text-zinc-400 text-sm">⏳ Mercado abre dias 1 e 2</p>
+                                    ${getTimeUntilMarketOpens() ? `
+                                        <p class="text-zinc-500 text-xs mt-1">Faltam ${getTimeUntilMarketOpens().days}d ${getTimeUntilMarketOpens().hours}h</p>
+                                    ` : ''}
+                                </div>
+                            ` : `
+                                <div class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4 text-center">
+                                    <p class="text-amber-400 text-sm">⚠️ Você já fez 2 trocas este mês</p>
+                                </div>
+                            `}
+                            
+                            <!-- Ofertas Recebidas -->
+                            <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider flex items-center gap-2">
+                                📥 Recebidas
+                                ${myTradeOffers.length > 0 ? `<span class="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs rounded-full">${myTradeOffers.length}</span>` : ''}
+                            </h4>
+                            
+                            ${myTradeOffers.length === 0 ? `
+                                <p class="text-zinc-600 text-sm text-center py-4 bg-zinc-800/30 rounded-lg mb-4">Nenhuma oferta recebida</p>
                             ` : `
                                 <div class="space-y-3 mb-6">
-                                    ${myOffers.map(o => `
-                                        <div class="bg-zinc-800/50 rounded-lg p-4">
-                                            <div class="mb-3">
-                                                <p class="text-white font-medium text-sm">${o.from} quer trocar:</p>
-                                                <p class="text-zinc-400 text-xs mt-1">Oferece: <span class="text-green-400">${o.playerOffered?.name || 'Jogador'}</span></p>
-                                                <p class="text-zinc-400 text-xs">Quer: <span class="text-amber-400">${o.playerWanted?.name || 'Jogador'}</span></p>
+                                    ${myTradeOffers.map(o => `
+                                        <div class="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <p class="text-white font-medium">${o.fromTeamName || o.from}</p>
+                                                <span class="text-xs text-zinc-500">@${o.from}</span>
                                             </div>
+                                            
+                                            <div class="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-3">
+                                                <!-- Jogador oferecido -->
+                                                <div class="bg-green-500/10 rounded-lg p-2 text-center">
+                                                    <img src="${o.myPlayer.photo}" class="w-12 h-12 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/48'">
+                                                    <p class="text-green-400 text-xs font-medium truncate">${o.myPlayer.name.split(' ').pop()}</p>
+                                                    <p class="text-green-400/60 text-[10px]">${o.myPlayer.position}</p>
+                                                </div>
+                                                
+                                                <div class="text-center">
+                                                    <span class="text-2xl">🔄</span>
+                                                    ${o.pointsOffered > 0 ? `
+                                                        <p class="text-yellow-400 text-xs font-bold">+${o.pointsOffered} pts</p>
+                                                    ` : ''}
+                                                </div>
+                                                
+                                                <!-- Jogador pedido (meu) -->
+                                                <div class="bg-amber-500/10 rounded-lg p-2 text-center">
+                                                    <img src="${o.theirPlayer.photo}" class="w-12 h-12 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/48'">
+                                                    <p class="text-amber-400 text-xs font-medium truncate">${o.theirPlayer.name.split(' ').pop()}</p>
+                                                    <p class="text-amber-400/60 text-[10px]">${o.theirPlayer.position}</p>
+                                                </div>
+                                            </div>
+                                            
+                                            <p class="text-zinc-500 text-[10px] text-center mb-3">
+                                                Expira em ${new Date(o.expiresAt).toLocaleDateString('pt-BR')} às 23:59
+                                            </p>
+                                            
                                             <div class="flex gap-2">
-                                                <button onclick="acceptOffer('${o.id}')" class="flex-1 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-medium">
-                                                    Aceitar
+                                                <button onclick="acceptTradeOffer('${o.id}')" class="flex-1 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium transition">
+                                                    ✅ Aceitar
                                                 </button>
-                                                <button onclick="rejectOffer('${o.id}')" class="flex-1 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-xs font-medium">
-                                                    Recusar
+                                                <button onclick="rejectTradeOffer('${o.id}')" class="flex-1 py-2.5 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm font-medium transition">
+                                                    ❌ Recusar
                                                 </button>
                                             </div>
                                         </div>
@@ -4573,17 +5012,47 @@
                                 </div>
                             `}
                             
-                            <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider">Enviadas</h4>
-                            ${sentOffers.length === 0 ? `
-                                <p class="text-zinc-600 text-sm text-center py-4">Nenhuma oferta enviada</p>
+                            <!-- Ofertas Enviadas -->
+                            <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase tracking-wider flex items-center gap-2">
+                                📤 Enviadas
+                                ${sentTradeOffers.length > 0 ? `<span class="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded-full">${sentTradeOffers.length}</span>` : ''}
+                            </h4>
+                            
+                            ${sentTradeOffers.length === 0 ? `
+                                <p class="text-zinc-600 text-sm text-center py-4 bg-zinc-800/30 rounded-lg">Nenhuma oferta enviada</p>
                             ` : `
                                 <div class="space-y-3">
-                                    ${sentOffers.map(o => `
-                                        <div class="bg-zinc-800/50 rounded-lg p-4">
-                                            <p class="text-white font-medium text-sm">Para: ${o.to}</p>
-                                            <p class="text-zinc-400 text-xs mt-1">Oferecendo: <span class="text-green-400">${o.playerOffered?.name || 'Jogador'}</span></p>
-                                            <p class="text-zinc-400 text-xs">Pedindo: <span class="text-amber-400">${o.playerWanted?.name || 'Jogador'}</span></p>
-                                            <span class="inline-block mt-2 px-2 py-1 bg-zinc-700 text-zinc-400 text-xs rounded">Aguardando</span>
+                                    ${sentTradeOffers.map(o => `
+                                        <div class="bg-zinc-800/50 rounded-xl p-4 border border-zinc-700/50">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <p class="text-white font-medium">Para: ${o.to}</p>
+                                                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 text-xs rounded-full">Aguardando</span>
+                                            </div>
+                                            
+                                            <div class="grid grid-cols-[1fr_auto_1fr] gap-2 items-center mb-3">
+                                                <!-- Meu jogador -->
+                                                <div class="bg-zinc-700/50 rounded-lg p-2 text-center">
+                                                    <img src="${o.myPlayer.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
+                                                    <p class="text-white text-xs truncate">${o.myPlayer.name.split(' ').pop()}</p>
+                                                </div>
+                                                
+                                                <div class="text-center">
+                                                    <span class="text-xl">🔄</span>
+                                                    ${o.pointsOffered > 0 ? `
+                                                        <p class="text-yellow-400 text-[10px]">+${o.pointsOffered}</p>
+                                                    ` : ''}
+                                                </div>
+                                                
+                                                <!-- Jogador pedido -->
+                                                <div class="bg-zinc-700/50 rounded-lg p-2 text-center">
+                                                    <img src="${o.theirPlayer.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
+                                                    <p class="text-white text-xs truncate">${o.theirPlayer.name.split(' ').pop()}</p>
+                                                </div>
+                                            </div>
+                                            
+                                            <button onclick="cancelTradeOffer('${o.id}')" class="w-full py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs font-medium transition">
+                                                Cancelar Oferta
+                                            </button>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -4593,53 +5062,125 @@
                 </div>
             `;
         }
-
-        function renderMakeOfferModal() {
+        
+        // Modal para criar nova oferta de troca
+        function renderNewTradeModal() {
             const otherUsers = Object.entries(state.users)
-                .filter(([nick, u]) => nick !== state.currentUser && u.isConfirmed)
+                .filter(([nick, u]) => nick !== state.currentUser && nick !== 'admin' && u.isConfirmed)
                 .map(([nick, u]) => ({ nick, ...u }));
+            
+            // Meus jogadores disponíveis para troca
+            const myPlayers = [...state.starters.filter(p => p), ...state.reserves.filter(p => p)];
+            
+            // Jogadores do usuário selecionado
+            const targetUser = state.offerTargetUser ? state.users[state.offerTargetUser] : null;
+            const targetPlayers = targetUser ? [
+                ...ensureArray(targetUser.starters, 11).filter(p => p),
+                ...ensureArray(targetUser.reserves, 7).filter(p => p)
+            ] : [];
+            
+            // Calcular máximo de pontos se jogador selecionado
+            const maxPoints = state.selectedPlayerForOffer ? getMaxTradePoints(state.selectedPlayerForOffer.id) : 0;
             
             return `
                 <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4" onclick="closeModal(event)">
-                    <div class="card rounded-2xl w-full max-w-md overflow-hidden" onclick="event.stopPropagation()">
+                    <div class="card rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
                         <div class="p-4 border-b border-zinc-800 flex justify-between items-center">
-                            <h3 class="font-display text-xl text-white">FAZER OFERTA</h3>
+                            <h3 class="font-display text-xl text-white">🔄 PROPOR TROCA</h3>
                             <button onclick="closeModalDirect()" class="text-zinc-500 hover:text-white">
                                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                             </button>
                         </div>
-                        <div class="p-4">
-                            <div class="bg-zinc-800/50 rounded-lg p-3 mb-4">
-                                <p class="text-zinc-500 text-xs uppercase tracking-wider mb-1">Oferecendo</p>
-                                <p class="text-white font-medium">${state.selectedPlayerForOffer?.name || 'Jogador'}</p>
+                        
+                        <div class="p-4 overflow-y-auto max-h-[75vh]">
+                            <!-- Passo 1: Selecionar meu jogador -->
+                            <div class="mb-6">
+                                <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">1. Qual jogador você quer OFERECER?</h4>
+                                <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-40 overflow-y-auto">
+                                    ${myPlayers.map(p => `
+                                        <div onclick="state.selectedPlayerForOffer=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
+                                            class="cursor-pointer p-2 rounded-lg text-center transition ${state.selectedPlayerForOffer?.id === p.id ? 'bg-green-600 ring-2 ring-green-400' : 'bg-zinc-800 hover:bg-zinc-700'}">
+                                            <img src="${p.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
+                                            <p class="text-white text-[10px] truncate">${p.name.split(' ').pop()}</p>
+                                            <p class="text-zinc-400 text-[9px]">${p.position}</p>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                                ${state.selectedPlayerForOffer ? `
+                                    <p class="text-green-400 text-xs mt-2">✓ Selecionado: ${state.selectedPlayerForOffer.name}</p>
+                                ` : ''}
                             </div>
                             
-                            <p class="text-white font-semibold mb-3">Escolha o usuário:</p>
-                            ${otherUsers.length === 0 ? `
-                                <p class="text-gray-400 text-center py-4">Nenhum outro usuário com time confirmado</p>
-                            ` : `
-                                <div class="space-y-2">
+                            <!-- Passo 2: Selecionar usuário -->
+                            <div class="mb-6">
+                                <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">2. Com quem você quer trocar?</h4>
+                                <div class="flex flex-wrap gap-2">
                                     ${otherUsers.map(u => `
                                         <button onclick="state.offerTargetUser='${u.nick}';render()" 
-                                            class="w-full text-left p-3 rounded-lg ${state.offerTargetUser === u.nick ? 'bg-green-600' : 'bg-gray-700 hover:bg-gray-600'}">
-                                            <span class="text-white font-semibold">${u.nick}</span>
-                                            <span class="text-gray-400 ml-2">(${u.teamName})</span>
+                                            class="px-3 py-2 rounded-lg text-sm transition ${state.offerTargetUser === u.nick ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}">
+                                            ${u.teamName || u.nick}
                                         </button>
                                     `).join('')}
                                 </div>
-                            `}
+                            </div>
                             
-                            ${state.offerTargetUser ? `
-                                <div class="mt-4 pt-4 border-t border-gray-700">
-                                    <p class="text-white font-semibold mb-3">Qual jogador você quer em troca?</p>
-                                    <p class="text-gray-400 text-sm mb-2">Digite o ID do jogador desejado:</p>
-                                    <input type="number" id="wantedPlayerId" placeholder="ID do jogador" 
-                                        class="w-full px-3 py-2 bg-gray-700 text-white rounded-lg mb-3">
-                                    <button onclick="sendOfferToUser('${state.offerTargetUser}', parseInt(document.getElementById('wantedPlayerId').value))" 
-                                        class="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-lg font-semibold">
-                                        📤 Enviar Oferta
-                                    </button>
+                            <!-- Passo 3: Selecionar jogador do outro -->
+                            ${state.offerTargetUser && targetPlayers.length > 0 ? `
+                                <div class="mb-6">
+                                    <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">3. Qual jogador de ${state.offerTargetUser} você QUER?</h4>
+                                    <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-40 overflow-y-auto">
+                                        ${targetPlayers.map(p => `
+                                            <div onclick="state.marketPlayerToBuy=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
+                                                class="cursor-pointer p-2 rounded-lg text-center transition ${state.marketPlayerToBuy?.id === p.id ? 'bg-amber-600 ring-2 ring-amber-400' : 'bg-zinc-800 hover:bg-zinc-700'}">
+                                                <img src="${p.photo}" class="w-10 h-10 rounded-lg mx-auto object-cover mb-1" onerror="this.src='https://via.placeholder.com/40'">
+                                                <p class="text-white text-[10px] truncate">${p.name.split(' ').pop()}</p>
+                                                <p class="text-zinc-400 text-[9px]">${p.position}</p>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                    ${state.marketPlayerToBuy ? `
+                                        <p class="text-amber-400 text-xs mt-2">✓ Selecionado: ${state.marketPlayerToBuy.name}</p>
+                                    ` : ''}
                                 </div>
+                            ` : state.offerTargetUser ? `
+                                <p class="text-zinc-500 text-center py-4">Este usuário não tem jogadores</p>
+                            ` : ''}
+                            
+                            <!-- Passo 4: Adicionar pontos (opcional) -->
+                            ${state.selectedPlayerForOffer && state.marketPlayerToBuy ? `
+                                <div class="mb-6">
+                                    <h4 class="text-sm font-medium text-zinc-400 mb-3 uppercase">4. Adicionar pontos? (opcional)</h4>
+                                    <div class="flex items-center gap-3">
+                                        <input type="number" id="tradePointsInput" min="0" max="${maxPoints}" value="0"
+                                            class="flex-1 px-4 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 focus:border-yellow-500 outline-none">
+                                        <span class="text-zinc-500 text-sm">pts</span>
+                                    </div>
+                                    <p class="text-zinc-500 text-xs mt-2">Máximo: ${maxPoints} pts (50% do valor de ${state.selectedPlayerForOffer.name.split(' ').pop()})</p>
+                                    <p class="text-zinc-600 text-xs">Seus pontos: ${getTotalScore()}</p>
+                                </div>
+                                
+                                <!-- Resumo -->
+                                <div class="bg-zinc-800/50 rounded-xl p-4 mb-4">
+                                    <h4 class="text-sm font-medium text-white mb-3">📋 Resumo da Proposta</h4>
+                                    <div class="flex items-center justify-around">
+                                        <div class="text-center">
+                                            <p class="text-zinc-500 text-xs mb-1">Você oferece</p>
+                                            <img src="${state.selectedPlayerForOffer.photo}" class="w-14 h-14 rounded-lg mx-auto object-cover" onerror="this.src='https://via.placeholder.com/56'">
+                                            <p class="text-green-400 text-sm font-medium mt-1">${state.selectedPlayerForOffer.name.split(' ').pop()}</p>
+                                        </div>
+                                        <div class="text-2xl">🔄</div>
+                                        <div class="text-center">
+                                            <p class="text-zinc-500 text-xs mb-1">Você recebe</p>
+                                            <img src="${state.marketPlayerToBuy.photo}" class="w-14 h-14 rounded-lg mx-auto object-cover" onerror="this.src='https://via.placeholder.com/56'">
+                                            <p class="text-amber-400 text-sm font-medium mt-1">${state.marketPlayerToBuy.name.split(' ').pop()}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Botão Enviar -->
+                                <button onclick="submitTradeOffer()" class="w-full py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white rounded-xl font-bold text-lg transition">
+                                    📤 Enviar Proposta
+                                </button>
                             ` : ''}
                         </div>
                     </div>
@@ -6796,17 +7337,9 @@
                 return;
             }
             
-            // Verificar se o mercado está fechado
-            if (!isMarketOpen()) {
-                const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
-                
-                if (!hasTeam) {
-                    // Não participou do draft
-                    alert('⚠️ O Draft já foi realizado!\n\nVocê não participou do draft, então não pode escalar jogadores.\n\nAguarde a abertura do mercado de transferências (dias 1 e 2 de Março) para montar seu time.');
-                } else {
-                    // Já tem time - mercado fechado = não pode editar
-                    alert('⚠️ Mercado fechado!\n\nVocê não pode alterar a escalação durante a rodada.\nUse "Fazer Substituição" para trocar titular por reserva da mesma posição.');
-                }
+            // Verificar se pode editar (entre rodadas)
+            if (!canEditTeam()) {
+                alert('⚠️ Escalação Travada!\n\nA rodada está em andamento. Você poderá trocar jogadores quando a rodada terminar.\n\nUse "Fazer Substituição" para trocar titular por reserva da mesma posição.');
                 return;
             }
             
@@ -6830,9 +7363,9 @@
                 return;
             }
             
-            // Verificar se o mercado está fechado
-            if (!isMarketOpen()) {
-                alert('⚠️ Mercado fechado!\n\nVocê não pode alterar o técnico durante a rodada.');
+            // Verificar se pode editar (entre rodadas)
+            if (!canEditTeam()) {
+                alert('⚠️ Escalação Travada!\n\nA rodada está em andamento. Você poderá trocar o técnico quando a rodada terminar.');
                 return;
             }
             
@@ -6850,6 +7383,48 @@
             document.body.style.top = `-${state.scrollY}px`;
             render();
         };
+        
+        // Abrir modal para nova troca
+        window.openNewTradeModal = function() {
+            state.selectedPlayerForOffer = null;
+            state.offerTargetUser = null;
+            state.marketPlayerToBuy = null;
+            state.modal = 'newTrade';
+            render();
+        };
+        
+        // Enviar proposta de troca
+        window.submitTradeOffer = function() {
+            if (!state.selectedPlayerForOffer || !state.offerTargetUser || !state.marketPlayerToBuy) {
+                alert('❌ Selecione todos os campos!');
+                return;
+            }
+            
+            const pointsInput = document.getElementById('tradePointsInput');
+            const points = parseInt(pointsInput?.value) || 0;
+            
+            const success = createTradeOffer(
+                state.selectedPlayerForOffer.id,
+                state.offerTargetUser,
+                state.marketPlayerToBuy.id,
+                points
+            );
+            
+            if (success) {
+                state.selectedPlayerForOffer = null;
+                state.offerTargetUser = null;
+                state.marketPlayerToBuy = null;
+                state.modal = 'offers';
+                render();
+            }
+        };
+        
+        // Expor funções de troca
+        window.acceptTradeOffer = acceptTradeOffer;
+        window.rejectTradeOffer = rejectTradeOffer;
+        window.cancelTradeOffer = cancelTradeOffer;
+        window.canMakeTrade = canMakeTrade;
+        window.getMonthlyTradeCount = getMonthlyTradeCount;
 
         // ==================== CONFIGURAÇÕES ====================
         
