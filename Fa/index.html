@@ -495,6 +495,8 @@
             viewingDraftUser: null, // Usuário sendo visualizado na aba draft
             draftSlotType: null, // Tipo de slot selecionado (starter/reserve)
             draftSlotIndex: null, // Índice do slot selecionado
+            draftPlayerModal: null, // { type, index, slotLabel } - Modal de seleção de jogador
+            draftPlayerSearch: '', // Busca no modal de jogador
             isAdmin: false, // Se é admin
             draftChatMessages: [], // Mensagens do chat do draft
             draftPicks: [], // Histórico de picks do draft
@@ -1695,10 +1697,48 @@
             };
             
             console.log('Criando oferta de troca:', offer);
-            db.ref('tradeOffers/' + offerId).set(offer)
-                .then(() => console.log('Oferta salva com sucesso no Firebase'))
-                .catch(err => console.error('Erro ao salvar oferta:', err));
-            alert('Oferta enviada!\n\nAguarde a resposta de ' + targetUser);
+            
+            // Se tem pontos oferecidos, DESCONTAR AGORA de quem oferece
+            if (pointsOffered > 0) {
+                // Buscar purchases atuais do Firebase
+                db.ref('users/' + state.currentUser + '/scores/market/purchases').once('value').then(snap => {
+                    let purchases = snap.val() || [];
+                    if (!Array.isArray(purchases)) purchases = [];
+                    
+                    // Adicionar transação de desconto
+                    purchases.push({
+                        type: 'trade_pending',
+                        playerId: 0,
+                        playerName: `Proposta de troca: ${myPlayer.name} por ${theirPlayer.name} (${pointsOffered} pts reservados)`,
+                        price: -pointsOffered,
+                        date: new Date().toISOString(),
+                        tradeId: offerId
+                    });
+                    
+                    // Salvar oferta e desconto juntos
+                    const updates = {};
+                    updates['tradeOffers/' + offerId] = offer;
+                    updates['users/' + state.currentUser + '/scores/market/purchases'] = purchases;
+                    
+                    db.ref().update(updates).then(() => {
+                        console.log('Oferta salva e pontos descontados!');
+                        
+                        // Atualizar state local
+                        if (!state.scores.market) state.scores.market = { purchases: [] };
+                        if (!state.scores.market.purchases) state.scores.market.purchases = [];
+                        state.scores.market.purchases = purchases;
+                        
+                        render();
+                    }).catch(err => console.error('Erro ao salvar oferta:', err));
+                });
+            } else {
+                // Sem pontos, só salvar a oferta
+                db.ref('tradeOffers/' + offerId).set(offer)
+                    .then(() => console.log('Oferta salva com sucesso no Firebase'))
+                    .catch(err => console.error('Erro ao salvar oferta:', err));
+            }
+            
+            alert('Oferta enviada!\n\nAguarde a resposta de ' + targetUser + (pointsOffered > 0 ? `\n\n${pointsOffered} pts foram reservados da sua pontuação.` : ''));
             return true;
         }
         
@@ -1730,176 +1770,207 @@
                 return;
             }
             
-            // Verificar se ambos ainda têm os jogadores
-            const fromUser = state.users[offer.from];
-            const toUser = state.users[offer.to];
+            console.log('=== INICIANDO ACEITE DA TROCA ===');
+            console.log('Oferta:', offer);
             
-            if (!fromUser || !toUser) {
-                alert('Usuário não encontrado.');
-                return;
-            }
-            
-            const fromStarters = ensureArray(fromUser.starters, 11);
-            const fromReserves = ensureArray(fromUser.reserves, 7);
-            const toStarters = ensureArray(toUser.starters, 11);
-            const toReserves = ensureArray(toUser.reserves, 7);
-            
-            // Encontrar posição do jogador de quem ofereceu
-            let fromSlot = null;
-            fromStarters.forEach((p, i) => { if (p && p.id === offer.myPlayer.id) fromSlot = { type: 'starters', index: i }; });
-            fromReserves.forEach((p, i) => { if (p && p.id === offer.myPlayer.id) fromSlot = { type: 'reserves', index: i }; });
-            
-            // Encontrar posição do jogador de quem aceita
-            let toSlot = null;
-            toStarters.forEach((p, i) => { if (p && p.id === offer.theirPlayer.id) toSlot = { type: 'starters', index: i }; });
-            toReserves.forEach((p, i) => { if (p && p.id === offer.theirPlayer.id) toSlot = { type: 'reserves', index: i }; });
-            
-            if (!fromSlot || !toSlot) {
-                alert('Um dos jogadores não está mais no time!');
-                db.ref('tradeOffers/' + offerId).update({ status: 'cancelled' });
-                return;
-            }
-            
-            // Executar a troca
-            const myPlayerObj = offer.myPlayer;
-            const theirPlayerObj = offer.theirPlayer;
-            
-            // Atualizar time de quem ofereceu (from)
-            if (fromSlot.type === 'starters') {
-                fromStarters[fromSlot.index] = theirPlayerObj;
-            } else {
-                fromReserves[fromSlot.index] = theirPlayerObj;
-            }
-            
-            // Atualizar time de quem aceitou (to)
-            if (toSlot.type === 'starters') {
-                toStarters[toSlot.index] = myPlayerObj;
-            } else {
-                toReserves[toSlot.index] = myPlayerObj;
-            }
-            
-            // Transferir pontos
-            const points = offer.pointsOffered || 0;
-            
-            console.log('=== TROCA ACEITA ===');
-            console.log('De:', offer.from, '→ Para:', offer.to);
-            console.log('Pontos oferecidos:', points);
-            
-            // Garantir que scores existam
-            if (!fromUser.scores) fromUser.scores = {};
-            if (!fromUser.scores.market) fromUser.scores.market = { purchases: [] };
-            if (!fromUser.scores.market.purchases) fromUser.scores.market.purchases = [];
-            
-            if (!toUser.scores) toUser.scores = {};
-            if (!toUser.scores.market) toUser.scores.market = { purchases: [] };
-            if (!toUser.scores.market.purchases) toUser.scores.market.purchases = [];
-            
-            // Preparar transações de pontos
-            let fromPurchases = Array.isArray(fromUser.scores.market.purchases) 
-                ? [...fromUser.scores.market.purchases] 
-                : [];
-            let toPurchases = Array.isArray(toUser.scores.market.purchases) 
-                ? [...toUser.scores.market.purchases] 
-                : [];
-            
-            console.log('fromPurchases antes:', fromPurchases.length);
-            console.log('toPurchases antes:', toPurchases.length);
-            
-            // Registrar transação de pontos (quem ofereceu PERDE pontos, quem aceitou GANHA)
-            if (points > 0) {
-                // Quem ofereceu (from) perde os pontos
-                fromPurchases.push({
-                    type: 'trade_out',
-                    playerId: 0,
-                    playerName: `Troca: ${myPlayerObj.name} por ${theirPlayerObj.name} (bonus enviado)`,
-                    price: -points,
-                    date: new Date().toISOString()
-                });
+            // Buscar dados atualizados do Firebase
+            Promise.all([
+                db.ref('users/' + offer.from).once('value'),
+                db.ref('users/' + offer.to).once('value')
+            ]).then(([fromSnap, toSnap]) => {
+                const fromUser = fromSnap.val();
+                const toUser = toSnap.val();
                 
-                // Quem aceitou (to) ganha os pontos
-                toPurchases.push({
-                    type: 'trade_in',
-                    playerId: 0,
-                    playerName: `Troca: ${theirPlayerObj.name} por ${myPlayerObj.name} (bonus recebido)`,
-                    price: points,
-                    date: new Date().toISOString()
-                });
-                
-                console.log('fromPurchases depois:', fromPurchases);
-                console.log('toPurchases depois:', toPurchases);
-            }
-            
-            // Salvar no Firebase
-            const updates = {};
-            updates['users/' + offer.from + '/starters'] = fromStarters;
-            updates['users/' + offer.from + '/reserves'] = fromReserves;
-            updates['users/' + offer.to + '/starters'] = toStarters;
-            updates['users/' + offer.to + '/reserves'] = toReserves;
-            
-            // SEMPRE salvar os scores/market/purchases para garantir que existam
-            updates['users/' + offer.from + '/scores/market/purchases'] = fromPurchases;
-            updates['users/' + offer.to + '/scores/market/purchases'] = toPurchases;
-            
-            console.log('Updates a enviar:', updates);
-            
-            // Incrementar contador de trocas
-            const month = getCurrentMonth();
-            updates['monthlyTrades/' + month + '/' + offer.from] = (state.monthlyTrades[month]?.[offer.from] || 0) + 1;
-            updates['monthlyTrades/' + month + '/' + offer.to] = (state.monthlyTrades[month]?.[offer.to] || 0) + 1;
-            
-            // Marcar oferta como aceita
-            updates['tradeOffers/' + offerId + '/status'] = 'accepted';
-            updates['tradeOffers/' + offerId + '/acceptedAt'] = Date.now();
-            
-            db.ref().update(updates).then(() => {
-                // Atualizar state local se for o usuário atual
-                if (offer.to === state.currentUser) {
-                    // Atualizar jogador
-                    if (toSlot.type === 'starters') {
-                        state.starters[toSlot.index] = myPlayerObj;
-                    } else {
-                        state.reserves[toSlot.index] = myPlayerObj;
-                    }
-                    // Atualizar pontos (quem aceitou GANHA pontos)
-                    if (points > 0) {
-                        if (!state.scores.market) state.scores.market = { purchases: [] };
-                        if (!state.scores.market.purchases) state.scores.market.purchases = [];
-                        state.scores.market.purchases.push({
-                            type: 'trade_in',
-                            playerId: 0,
-                            playerName: `Troca: ${theirPlayerObj.name} por ${myPlayerObj.name} (bonus recebido)`,
-                            price: points,
-                            date: new Date().toISOString()
-                        });
-                    }
+                if (!fromUser || !toUser) {
+                    alert('Usuário não encontrado.');
+                    return;
                 }
                 
-                if (offer.from === state.currentUser) {
-                    // Atualizar jogador
-                    if (fromSlot.type === 'starters') {
-                        state.starters[fromSlot.index] = theirPlayerObj;
+                console.log('fromUser:', offer.from, fromUser);
+                console.log('toUser:', offer.to, toUser);
+                
+                const fromStarters = ensureArray(fromUser.starters, 11);
+                const fromReserves = ensureArray(fromUser.reserves, 7);
+                const toStarters = ensureArray(toUser.starters, 11);
+                const toReserves = ensureArray(toUser.reserves, 7);
+                
+                // Encontrar posição do jogador de quem ofereceu
+                let fromSlot = null;
+                const myPlayerId = parseInt(offer.myPlayer.id) || offer.myPlayer.id;
+                fromStarters.forEach((p, i) => { 
+                    const pid = parseInt(p?.id) || p?.id;
+                    if (pid == myPlayerId) fromSlot = { type: 'starters', index: i }; 
+                });
+                fromReserves.forEach((p, i) => { 
+                    const pid = parseInt(p?.id) || p?.id;
+                    if (pid == myPlayerId) fromSlot = { type: 'reserves', index: i }; 
+                });
+                
+                // Encontrar posição do jogador de quem aceita
+                let toSlot = null;
+                const theirPlayerId = parseInt(offer.theirPlayer.id) || offer.theirPlayer.id;
+                toStarters.forEach((p, i) => { 
+                    const pid = parseInt(p?.id) || p?.id;
+                    if (pid == theirPlayerId) toSlot = { type: 'starters', index: i }; 
+                });
+                toReserves.forEach((p, i) => { 
+                    const pid = parseInt(p?.id) || p?.id;
+                    if (pid == theirPlayerId) toSlot = { type: 'reserves', index: i }; 
+                });
+                
+                console.log('fromSlot:', fromSlot);
+                console.log('toSlot:', toSlot);
+                
+                if (!fromSlot || !toSlot) {
+                    alert('Um dos jogadores não está mais no time!');
+                    db.ref('tradeOffers/' + offerId).update({ status: 'cancelled' });
+                    return;
+                }
+                
+                // Executar a troca
+                const myPlayerObj = offer.myPlayer;
+                const theirPlayerObj = offer.theirPlayer;
+                
+                // Atualizar time de quem ofereceu (from)
+                if (fromSlot.type === 'starters') {
+                    fromStarters[fromSlot.index] = theirPlayerObj;
+                } else {
+                    fromReserves[fromSlot.index] = theirPlayerObj;
+                }
+                
+                // Atualizar time de quem aceitou (to)
+                if (toSlot.type === 'starters') {
+                    toStarters[toSlot.index] = myPlayerObj;
+                } else {
+                    toReserves[toSlot.index] = myPlayerObj;
+                }
+                
+                // Transferir pontos
+                const points = offer.pointsOffered || 0;
+                
+                console.log('=== TROCA ACEITA ===');
+                console.log('De:', offer.from, '→ Para:', offer.to);
+                console.log('Pontos oferecidos:', points);
+                
+                // Preparar transações de pontos
+                let fromPurchases = Array.isArray(fromUser.scores?.market?.purchases) 
+                    ? [...fromUser.scores.market.purchases] 
+                    : [];
+                let toPurchases = Array.isArray(toUser.scores?.market?.purchases) 
+                    ? [...toUser.scores.market.purchases] 
+                    : [];
+                
+                console.log('fromPurchases antes:', fromPurchases.length, fromPurchases);
+                console.log('toPurchases antes:', toPurchases.length, toPurchases);
+                
+                // Processar pontos da troca
+                if (points > 0) {
+                    // Remover a transação "trade_pending" e substituir por "trade_confirmed"
+                    // Os pontos JÁ foram descontados quando a proposta foi enviada
+                    const pendingIndex = fromPurchases.findIndex(p => p.tradeId === offerId && p.type === 'trade_pending');
+                    if (pendingIndex >= 0) {
+                        // Substituir pending por confirmed
+                        fromPurchases[pendingIndex] = {
+                            type: 'trade_confirmed',
+                            playerId: 0,
+                            playerName: `Troca aceita: ${myPlayerObj.name} por ${theirPlayerObj.name} (${points} pts enviados)`,
+                            price: -points,
+                            date: new Date().toISOString(),
+                            tradeId: offerId
+                        };
+                        console.log('Transação pending encontrada e convertida para confirmed');
                     } else {
-                        state.reserves[fromSlot.index] = theirPlayerObj;
-                    }
-                    // Atualizar pontos (quem ofereceu PERDE pontos)
-                    if (points > 0) {
-                        if (!state.scores.market) state.scores.market = { purchases: [] };
-                        if (!state.scores.market.purchases) state.scores.market.purchases = [];
-                        state.scores.market.purchases.push({
+                        // Se não encontrou pending, adicionar como trade_out (caso de trocas antigas)
+                        fromPurchases.push({
                             type: 'trade_out',
                             playerId: 0,
                             playerName: `Troca: ${myPlayerObj.name} por ${theirPlayerObj.name} (bonus enviado)`,
                             price: -points,
                             date: new Date().toISOString()
                         });
+                        console.log('Transação pending NÃO encontrada, adicionando trade_out');
                     }
+                    
+                    // Quem aceitou (to) ganha os pontos
+                    toPurchases.push({
+                        type: 'trade_in',
+                        playerId: 0,
+                        playerName: `Troca: ${theirPlayerObj.name} por ${myPlayerObj.name} (bonus recebido)`,
+                        price: points,
+                        date: new Date().toISOString()
+                    });
+                        date: new Date().toISOString()
+                    });
+                    
+                    console.log('fromPurchases depois:', fromPurchases);
+                    console.log('toPurchases depois:', toPurchases);
                 }
                 
-                alert('Troca realizada com sucesso!\n\nVocê recebeu: ' + myPlayerObj.name + (points > 0 ? ' + ' + points + ' pts' : ''));
-                render();
+                // Salvar no Firebase
+                const updates = {};
+                updates['users/' + offer.from + '/starters'] = fromStarters;
+                updates['users/' + offer.from + '/reserves'] = fromReserves;
+                updates['users/' + offer.to + '/starters'] = toStarters;
+                updates['users/' + offer.to + '/reserves'] = toReserves;
+                
+                // SEMPRE salvar os scores/market/purchases para garantir que existam
+                updates['users/' + offer.from + '/scores/market/purchases'] = fromPurchases;
+                updates['users/' + offer.to + '/scores/market/purchases'] = toPurchases;
+                
+                // Incrementar contador de trocas
+                const month = getCurrentMonth();
+                updates['monthlyTrades/' + month + '/' + offer.from] = (state.monthlyTrades[month]?.[offer.from] || 0) + 1;
+                updates['monthlyTrades/' + month + '/' + offer.to] = (state.monthlyTrades[month]?.[offer.to] || 0) + 1;
+                
+                // Marcar oferta como aceita
+                updates['tradeOffers/' + offerId + '/status'] = 'accepted';
+                updates['tradeOffers/' + offerId + '/acceptedAt'] = Date.now();
+                
+                console.log('Updates a enviar:', updates);
+                
+                db.ref().update(updates).then(() => {
+                    console.log('=== TROCA SALVA COM SUCESSO ===');
+                    
+                    // Atualizar state local se for o usuário atual
+                    if (offer.to === state.currentUser) {
+                        // Atualizar jogador
+                        if (toSlot.type === 'starters') {
+                            state.starters[toSlot.index] = myPlayerObj;
+                        } else {
+                            state.reserves[toSlot.index] = myPlayerObj;
+                        }
+                        // Atualizar pontos (quem aceitou GANHA pontos)
+                        if (points > 0) {
+                            if (!state.scores.market) state.scores.market = { purchases: [] };
+                            if (!state.scores.market.purchases) state.scores.market.purchases = [];
+                            state.scores.market.purchases = toPurchases;
+                        }
+                    }
+                    
+                    if (offer.from === state.currentUser) {
+                        // Atualizar jogador
+                        if (fromSlot.type === 'starters') {
+                            state.starters[fromSlot.index] = theirPlayerObj;
+                        } else {
+                            state.reserves[fromSlot.index] = theirPlayerObj;
+                        }
+                        // Atualizar pontos (quem ofereceu PERDE pontos)
+                        if (points > 0) {
+                            if (!state.scores.market) state.scores.market = { purchases: [] };
+                            if (!state.scores.market.purchases) state.scores.market.purchases = [];
+                            state.scores.market.purchases = fromPurchases;
+                        }
+                    }
+                    
+                    alert('Troca realizada com sucesso!\n\nVocê recebeu: ' + myPlayerObj.name + (points > 0 ? ' + ' + points + ' pts' : ''));
+                    render();
+                }).catch(err => {
+                    console.error('Erro na troca:', err);
+                    alert('Erro ao realizar troca. Tente novamente.');
+                });
             }).catch(err => {
-                console.error('Erro na troca:', err);
-                alert('Erro ao realizar troca. Tente novamente.');
+                console.error('Erro ao buscar usuários:', err);
+                alert('Erro ao buscar dados. Tente novamente.');
             });
         }
         
@@ -1912,10 +1983,41 @@
             
             if (offer.to !== state.currentUser) return;
             
-            db.ref('tradeOffers/' + offerId).update({ 
-                status: 'rejected',
-                rejectedAt: Date.now()
-            });
+            const points = offer.pointsOffered || 0;
+            
+            // Se tinha pontos reservados, devolver para quem propôs
+            if (points > 0) {
+                db.ref('users/' + offer.from + '/scores/market/purchases').once('value').then(snap => {
+                    let purchases = snap.val() || [];
+                    if (!Array.isArray(purchases)) purchases = [];
+                    
+                    // Encontrar e remover a transação pending
+                    const pendingIndex = purchases.findIndex(p => p.tradeId === offerId && p.type === 'trade_pending');
+                    if (pendingIndex >= 0) {
+                        // Substituir por transação de devolução
+                        purchases[pendingIndex] = {
+                            type: 'trade_refund',
+                            playerId: 0,
+                            playerName: `Proposta recusada: pontos devolvidos (${points} pts)`,
+                            price: points, // Positivo para devolver
+                            date: new Date().toISOString(),
+                            tradeId: offerId
+                        };
+                    }
+                    
+                    const updates = {};
+                    updates['tradeOffers/' + offerId + '/status'] = 'rejected';
+                    updates['tradeOffers/' + offerId + '/rejectedAt'] = Date.now();
+                    updates['users/' + offer.from + '/scores/market/purchases'] = purchases;
+                    
+                    db.ref().update(updates);
+                });
+            } else {
+                db.ref('tradeOffers/' + offerId).update({ 
+                    status: 'rejected',
+                    rejectedAt: Date.now()
+                });
+            }
             
             alert('Oferta recusada.');
         }
@@ -1929,10 +2031,47 @@
             
             if (offer.from !== state.currentUser) return;
             
-            db.ref('tradeOffers/' + offerId).update({ 
-                status: 'cancelled',
-                cancelledAt: Date.now()
-            });
+            const points = offer.pointsOffered || 0;
+            
+            // Se tinha pontos reservados, devolver
+            if (points > 0) {
+                db.ref('users/' + state.currentUser + '/scores/market/purchases').once('value').then(snap => {
+                    let purchases = snap.val() || [];
+                    if (!Array.isArray(purchases)) purchases = [];
+                    
+                    // Encontrar e remover a transação pending
+                    const pendingIndex = purchases.findIndex(p => p.tradeId === offerId && p.type === 'trade_pending');
+                    if (pendingIndex >= 0) {
+                        // Substituir por transação de devolução
+                        purchases[pendingIndex] = {
+                            type: 'trade_refund',
+                            playerId: 0,
+                            playerName: `Proposta cancelada: pontos devolvidos (${points} pts)`,
+                            price: points, // Positivo para devolver
+                            date: new Date().toISOString(),
+                            tradeId: offerId
+                        };
+                        
+                        // Atualizar state local
+                        if (!state.scores.market) state.scores.market = { purchases: [] };
+                        state.scores.market.purchases = purchases;
+                    }
+                    
+                    const updates = {};
+                    updates['tradeOffers/' + offerId + '/status'] = 'cancelled';
+                    updates['tradeOffers/' + offerId + '/cancelledAt'] = Date.now();
+                    updates['users/' + state.currentUser + '/scores/market/purchases'] = purchases;
+                    
+                    db.ref().update(updates).then(() => {
+                        render();
+                    });
+                });
+            } else {
+                db.ref('tradeOffers/' + offerId).update({ 
+                    status: 'cancelled',
+                    cancelledAt: Date.now()
+                });
+            }
             
             alert('Oferta cancelada.');
         }
@@ -7428,15 +7567,15 @@
                 { top: '32%', left: '40%' },   // ZAG
                 { top: '32%', left: '60%' },   // ZAG
                 { top: '32%', left: '80%' },   // LE
-                { top: '55%', left: '28%' },   // VOL
+                { top: '55%', left: '28%' },   // MC
                 { top: '55%', left: '50%' },   // MEI
-                { top: '55%', left: '72%' },   // VOL
+                { top: '55%', left: '72%' },   // MC
                 { top: '78%', left: '25%' },   // PE
                 { top: '78%', left: '50%' },   // ATA
                 { top: '78%', left: '75%' },   // PD
             ];
             
-            const slotLabels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'VOL', 'MEI', 'VOL', 'PE', 'ATA', 'PD'];
+            const slotLabels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MC', 'MEI', 'MC', 'PE', 'ATA', 'PD'];
             const reserveLabels = ['GOL', 'DEF', 'DEF', 'MEI', 'MEI', 'ATA', 'ATA'];
             
             return `
@@ -7471,7 +7610,7 @@
                         ${fieldPositions.map((pos, i) => `
                             <div class="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer"
                                 style="top: ${pos.top}; left: ${pos.left};"
-                                onclick="selectDraftSlot('starter', ${i})">
+                                onclick="${starters[i] ? `event.stopPropagation()` : `openDraftPlayerModal('starter', ${i}, '${slotLabels[i]}')`}">
                                 ${starters[i] ? `
                                     <div class="text-center relative group">
                                         <img src="${starters[i].photo}" 
@@ -7485,10 +7624,10 @@
                                     </div>
                                 ` : `
                                     <div class="text-center">
-                                        <div class="w-11 h-11 mx-auto rounded-full border-2 border-dashed border-white/30 flex items-center justify-center bg-black/20 hover:bg-black/40 transition ${state.draftSlotType === 'starter' && state.draftSlotIndex === i ? 'border-emerald-500 bg-emerald-600/20' : ''}">
-                                            <svg class="w-4 h-4 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                        <div class="w-11 h-11 mx-auto rounded-full border-2 border-dashed border-white/30 flex items-center justify-center bg-black/20 hover:bg-emerald-500/30 hover:border-emerald-400 transition">
+                                            <svg class="w-5 h-5 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                         </div>
-                                        <p class="text-white/50 text-xs mt-1">${slotLabels[i]}</p>
+                                        <p class="text-white/70 text-xs mt-1 font-medium">${slotLabels[i]}</p>
                                     </div>
                                 `}
                             </div>
@@ -7500,7 +7639,7 @@
                         <p class="text-zinc-400 text-xs mb-2">RESERVAS (${reserves.filter(r => r).length}/7)</p>
                         <div class="flex flex-wrap gap-2">
                             ${reserves.map((p, i) => `
-                                <div class="cursor-pointer relative group" onclick="selectDraftSlot('reserve', ${i})">
+                                <div class="cursor-pointer relative group" onclick="${p ? `event.stopPropagation()` : `openDraftPlayerModal('reserve', ${i}, '${reserveLabels[i]}')`}">
                                     ${p ? `
                                         <div class="flex items-center gap-2 bg-zinc-700 rounded-lg p-2">
                                             <img src="${p.photo}" class="w-8 h-8 rounded-full object-cover">
@@ -7512,8 +7651,8 @@
                                                 class="w-4 h-4 bg-red-500 rounded-full text-white text-xs opacity-0 group-hover:opacity-100 transition">×</button>
                                         </div>
                                     ` : `
-                                        <div class="w-16 h-12 rounded-lg border-2 border-dashed border-zinc-600 flex items-center justify-center ${state.draftSlotType === 'reserve' && state.draftSlotIndex === i ? 'border-emerald-500 bg-emerald-600/20' : ''}">
-                                            <span class="text-zinc-500 text-xs">${reserveLabels[i]}</span>
+                                        <div class="w-16 h-12 rounded-lg border-2 border-dashed border-zinc-600 flex items-center justify-center hover:border-emerald-400 hover:bg-emerald-500/10 transition">
+                                            <span class="text-zinc-400 text-xs font-medium">${reserveLabels[i]}</span>
                                         </div>
                                     `}
                                 </div>
@@ -7522,7 +7661,7 @@
                     </div>
                     
                     <!-- Técnico -->
-                    <div class="bg-orange-500/10 rounded-lg p-3 border border-orange-500/20">
+                    <div class="mt-3 bg-orange-500/10 rounded-lg p-3 border border-orange-500/20">
                         <p class="text-orange-400 text-xs mb-2 font-medium">👔 TÉCNICO</p>
                         ${user.coach ? `
                             <div class="flex items-center gap-3 bg-zinc-800 rounded-lg p-2 relative group">
@@ -7537,15 +7676,192 @@
                                     class="absolute top-1 right-1 w-5 h-5 bg-red-500 rounded-full text-white text-xs opacity-0 group-hover:opacity-100 transition">×</button>
                             </div>
                         ` : `
-                            <div class="flex items-center justify-center gap-2 bg-zinc-800/50 rounded-lg p-3 border-2 border-dashed border-orange-500/30">
+                            <div class="flex items-center justify-center gap-2 bg-zinc-800/50 rounded-lg p-3 border-2 border-dashed border-orange-500/30 cursor-pointer hover:bg-orange-500/10 transition" onclick="state.draftTab='coaches';render()">
                                 <svg class="w-5 h-5 text-orange-400/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
-                                <span class="text-orange-400/50 text-sm">Selecione na aba Técnicos</span>
+                                <span class="text-orange-400/50 text-sm">Clique para escolher técnico</span>
                             </div>
                         `}
                     </div>
                 </div>
+                
+                <!-- Modal de seleção de jogador -->
+                ${state.draftPlayerModal ? renderDraftPlayerSelectModal() : ''}
             `;
         }
+        
+        // Função para abrir modal de seleção de jogador
+        function openDraftPlayerModal(type, index, slotLabel) {
+            state.draftPlayerModal = { type, index, slotLabel };
+            state.draftPlayerSearch = '';
+            render();
+        }
+        
+        // Função para fechar modal
+        function closeDraftPlayerModal() {
+            state.draftPlayerModal = null;
+            state.draftPlayerSearch = '';
+            render();
+        }
+        
+        // Renderiza modal de seleção de jogador com filtro por posição
+        function renderDraftPlayerSelectModal() {
+            if (!state.draftPlayerModal) return '';
+            
+            const { type, index, slotLabel } = state.draftPlayerModal;
+            const slotPos = type === 'starter' ? getPositionForSlot(index) : getReservePosition(index);
+            
+            // Pegar jogadores já escalados em todos os times
+            const usedPlayerIds = new Set();
+            Object.values(state.users).forEach(user => {
+                (user.starters || []).forEach(p => { if (p) usedPlayerIds.add(p.id); });
+                (user.reserves || []).forEach(p => { if (p) usedPlayerIds.add(p.id); });
+            });
+            
+            // Filtrar jogadores compatíveis e disponíveis
+            let compatiblePlayers = state.players.filter(player => {
+                // Não está escalado
+                if (usedPlayerIds.has(player.id)) return false;
+                // É compatível com a posição
+                return isPositionCompatible(player.position, slotPos, player);
+            });
+            
+            // Aplicar busca
+            if (state.draftPlayerSearch) {
+                const search = state.draftPlayerSearch.toLowerCase();
+                compatiblePlayers = compatiblePlayers.filter(p => 
+                    p.name.toLowerCase().includes(search) || 
+                    p.team.toLowerCase().includes(search)
+                );
+            }
+            
+            // Ordenar por nome
+            compatiblePlayers.sort((a, b) => a.name.localeCompare(b.name));
+            
+            const posLabels = {
+                'GOL': 'Goleiro',
+                'ZAG': 'Zagueiro',
+                'LD': 'Lateral Direito',
+                'LE': 'Lateral Esquerdo',
+                'LAT': 'Lateral',
+                'DEF': 'Defensor',
+                'MC': 'Meia Central',
+                'MEI': 'Meia Armador',
+                'PE': 'Ponta Esquerda',
+                'PD': 'Ponta Direita',
+                'ATA': 'Atacante'
+            };
+            
+            return `
+                <div class="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4" onclick="closeDraftPlayerModal()">
+                    <div class="bg-zinc-900 rounded-2xl w-full max-w-lg max-h-[80vh] overflow-hidden" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="bg-emerald-600 p-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-white font-bold text-lg">Selecionar ${posLabels[slotLabel] || slotLabel}</h3>
+                                    <p class="text-emerald-200 text-sm">${compatiblePlayers.length} jogadores disponíveis</p>
+                                </div>
+                                <button onclick="closeDraftPlayerModal()" class="text-white/80 hover:text-white">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                            </div>
+                            <!-- Busca -->
+                            <input type="text" 
+                                placeholder="Buscar jogador ou time..." 
+                                value="${state.draftPlayerSearch}"
+                                onkeyup="state.draftPlayerSearch=this.value;render()"
+                                class="mt-3 w-full px-4 py-2 bg-white/20 text-white placeholder-white/60 rounded-lg border-0 focus:ring-2 focus:ring-white/50">
+                        </div>
+                        
+                        <!-- Lista de jogadores -->
+                        <div class="overflow-y-auto" style="max-height: calc(80vh - 140px);">
+                            ${compatiblePlayers.length === 0 ? `
+                                <div class="p-8 text-center">
+                                    <p class="text-zinc-500">Nenhum jogador disponível para esta posição</p>
+                                </div>
+                            ` : `
+                                <div class="divide-y divide-zinc-800">
+                                    ${compatiblePlayers.slice(0, 100).map(player => `
+                                        <div class="flex items-center gap-3 p-3 hover:bg-zinc-800 cursor-pointer transition"
+                                            onclick="selectDraftPlayerFromModal(${player.id})">
+                                            <img src="${player.photo}" 
+                                                class="w-12 h-12 rounded-full object-cover border-2 border-zinc-700"
+                                                onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${player.name.charAt(0)}'">
+                                            <div class="flex-1 min-w-0">
+                                                <p class="text-white font-medium truncate">${player.name}</p>
+                                                <p class="text-zinc-500 text-sm">${player.team}</p>
+                                            </div>
+                                            <span class="px-2 py-1 bg-zinc-700 text-zinc-300 text-xs rounded">
+                                                ${normalizePosition(player.position)}
+                                            </span>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Selecionar jogador do modal
+        window.selectDraftPlayerFromModal = function(playerId) {
+            if (!state.draftPlayerModal || !state.selectedDraftUser) return;
+            
+            const { type, index } = state.draftPlayerModal;
+            const player = state.players.find(p => p.id === playerId);
+            if (!player) return;
+            
+            const user = state.users[state.selectedDraftUser];
+            if (!user) return;
+            
+            // Garantir arrays
+            user.starters = ensureArray(user.starters, 11);
+            user.reserves = ensureArray(user.reserves, 7);
+            
+            // Criar cópia do jogador
+            const playerCopy = { ...player };
+            
+            // Definir posição específica se for defensor
+            const slotPos = type === 'starter' ? getPositionForSlot(index) : getReservePosition(index);
+            const playerPosNorm = normalizePosition(player.position);
+            
+            if (playerPosNorm === 'DEF') {
+                if (slotPos === 'ZAG') playerCopy.specificPosition = 'ZAG';
+                else if (slotPos === 'LD' || slotPos === 'LE' || slotPos === 'LAT') playerCopy.specificPosition = 'LAT';
+            }
+            
+            // Adicionar ao time
+            if (type === 'starter') {
+                user.starters[index] = playerCopy;
+            } else {
+                user.reserves[index] = playerCopy;
+            }
+            
+            // Fechar modal
+            state.draftPlayerModal = null;
+            state.draftPlayerSearch = '';
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('users/' + state.selectedDraftUser).update({
+                    starters: user.starters,
+                    reserves: user.reserves
+                });
+            }
+            
+            render();
+        };
+        
+        // Fechar modal
+        window.closeDraftPlayerModal = function() {
+            state.draftPlayerModal = null;
+            state.draftPlayerSearch = '';
+            render();
+        };
+        
+        // Abrir modal
+        window.openDraftPlayerModal = openDraftPlayerModal;
 
         // ==================== HELPERS ====================
         
@@ -7658,19 +7974,42 @@
             
             // Para slots de ZAG (titulares)
             if (slotPos === 'ZAG') {
-                // Aceita zagueiros específicos ou defensores genéricos
                 return specificPlayer === 'ZAG' || specificPlayer === 'DEF';
             }
             
-            // Para slots de LAT (LD/LE titulares)
+            // Para slots de LD ou LE (laterais específicos)
+            if (slotPos === 'LD' || slotPos === 'LE') {
+                return specificPlayer === 'LAT' || specificPlayer === 'DEF';
+            }
+            
+            // Para slots de LAT genérico (mantém retrocompatibilidade)
             if (slotPos === 'LAT') {
-                // Aceita laterais específicos ou defensores genéricos
                 return specificPlayer === 'LAT' || specificPlayer === 'DEF';
             }
             
             // Para slots de DEF (reservas), aceita qualquer defensor
             if (slotPos === 'DEF') {
                 return specificPlayer === 'ZAG' || specificPlayer === 'LAT' || specificPlayer === 'DEF';
+            }
+            
+            // Para slots de MC (meia central/volante)
+            if (slotPos === 'MC') {
+                return normalizedPlayer === 'MEI';
+            }
+            
+            // Para slots de MEI (meia armador/ofensivo)
+            if (slotPos === 'MEI') {
+                return normalizedPlayer === 'MEI';
+            }
+            
+            // Para slots de PE ou PD (pontas) - ACEITA ATACANTES E MEIAS
+            if (slotPos === 'PE' || slotPos === 'PD') {
+                return normalizedPlayer === 'ATA' || normalizedPlayer === 'MEI';
+            }
+            
+            // Para slot de ATA (centroavante)
+            if (slotPos === 'ATA') {
+                return normalizedPlayer === 'ATA';
             }
             
             // Para outros slots, usa a posição normalizada
@@ -7680,23 +8019,23 @@
         // Posições dos titulares por formação (específicas para ZAG/LAT)
         function getPositionForSlot(index) {
             if (state.formation === '4-4-2') {
-                // 4-4-2: 1 GOL, 2 LAT (LD/LE), 2 ZAG, 4 MEI, 2 ATA
-                const positions = ['GOL', 'LAT', 'ZAG', 'ZAG', 'LAT', 'MEI', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA'];
+                // 4-4-2: GOL, LD, ZAG, ZAG, LE, MD, MC, MC, ME, ATA, ATA
+                const positions = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MC', 'MC', 'MC', 'MC', 'ATA', 'ATA'];
                 return positions[index];
             }
-            // 4-3-3 (padrão): 1 GOL, 2 LAT (LD/LE), 2 ZAG, 3 MEI, 3 ATA
-            const positions = ['GOL', 'LAT', 'ZAG', 'ZAG', 'LAT', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA', 'ATA'];
+            // 4-3-3 (padrão): GOL, LD, ZAG, ZAG, LE, MC, MEI, MC, PE, ATA, PD
+            const positions = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MC', 'MEI', 'MC', 'PE', 'ATA', 'PD'];
             return positions[index];
         }
         
         // Labels para exibição dos slots titulares (indicação visual)
         function getSlotLabel(index) {
             if (state.formation === '4-4-2') {
-                const labels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MD', 'VOL', 'VOL', 'ME', 'ATA', 'ATA'];
+                const labels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MD', 'MC', 'MC', 'ME', 'ATA', 'ATA'];
                 return labels[index];
             }
             // 4-3-3
-            const labels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'VOL', 'MEI', 'VOL', 'PD', 'ATA', 'PE'];
+            const labels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MC', 'MEI', 'MC', 'PE', 'ATA', 'PD'];
             return labels[index];
         }
         
@@ -7710,8 +8049,8 @@
                     { top: '28%', left: '62%' },  // 3: ZAG
                     { top: '28%', left: '85%' },  // 4: LE
                     { top: '52%', left: '15%' },  // 5: MD
-                    { top: '52%', left: '38%' },  // 6: VOL
-                    { top: '52%', left: '62%' },  // 7: VOL
+                    { top: '52%', left: '38%' },  // 6: MC
+                    { top: '52%', left: '62%' },  // 7: MC
                     { top: '52%', left: '85%' },  // 8: ME
                     { top: '78%', left: '35%' },  // 9: ATA
                     { top: '78%', left: '65%' },  // 10: ATA
@@ -7724,12 +8063,12 @@
                 { top: '28%', left: '38%' },  // 2: ZAG
                 { top: '28%', left: '62%' },  // 3: ZAG
                 { top: '28%', left: '85%' },  // 4: LE
-                { top: '52%', left: '25%' },  // 5: VOL
+                { top: '52%', left: '25%' },  // 5: MC
                 { top: '52%', left: '50%' },  // 6: MEI
-                { top: '52%', left: '75%' },  // 7: VOL
-                { top: '78%', left: '20%' },  // 8: PD
+                { top: '52%', left: '75%' },  // 7: MC
+                { top: '78%', left: '20%' },  // 8: PE
                 { top: '78%', left: '50%' },  // 9: ATA
-                { top: '78%', left: '80%' },  // 10: PE
+                { top: '78%', left: '80%' },  // 10: PD
             ];
         }
 
