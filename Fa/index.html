@@ -4061,6 +4061,27 @@
                 score += (s.penalty?.won || 0) * 2;
             }
             
+            // ==================== PONTOS POR RESULTADO DO TIME ====================
+            // +3 vitória, +1 empate, 0 derrota
+            if (fixture && fixture.teams && fixture.goals) {
+                const playerTeamId = stats.statistics?.[0]?.team?.id;
+                if (playerTeamId) {
+                    const isHome = fixture.teams.home?.id === playerTeamId;
+                    const homeGoals = fixture.goals.home ?? 0;
+                    const awayGoals = fixture.goals.away ?? 0;
+                    
+                    const teamGoals = isHome ? homeGoals : awayGoals;
+                    const opponentGoals = isHome ? awayGoals : homeGoals;
+                    
+                    if (teamGoals > opponentGoals) {
+                        score += 3; // Vitória
+                    } else if (teamGoals === opponentGoals) {
+                        score += 1; // Empate
+                    }
+                    // Derrota = 0 pontos (não precisa adicionar nada)
+                }
+            }
+            
             // Arredondar para evitar decimais estranhos
             return Math.round(score * 10) / 10;
         }
@@ -4199,7 +4220,8 @@
                             if (allPlayerStats[player.id]) {
                                 // Jogador tem dados - calcular pontuação normal
                                 const playerData = allPlayerStats[player.id].data;
-                                const score = calculatePlayerScore(playerData);
+                                const fixtureData = allPlayerStats[player.id].fixture;
+                                const score = calculatePlayerScore(playerData, fixtureData);
                                 user.scores[round].players[player.id] = score;
                                 
                                 // Verificar novos gols apenas para o usuário atual
@@ -4224,7 +4246,8 @@
                             if (allPlayerStats[player.id]) {
                                 // Jogador tem dados - calcular pontuação (50% para reserva)
                                 const playerData = allPlayerStats[player.id].data;
-                                const score = Math.round(calculatePlayerScore(playerData) * 0.5);
+                                const fixtureData = allPlayerStats[player.id].fixture;
+                                const score = Math.round(calculatePlayerScore(playerData, fixtureData) * 0.5);
                                 user.scores[round].players[player.id] = score;
                                 
                                 // Verificar novos gols apenas para o usuário atual
@@ -4862,7 +4885,7 @@
                                     ` : `
                                         <div class="flex items-center gap-2 text-zinc-500">
                                             <span class="w-1.5 h-1.5 bg-zinc-600 rounded-full"></span>
-                                            <span class="text-xs">Mercado fecha ${getTimeUntilMarketOpens() ? `em ${getTimeUntilMarketOpens().days}d` : ''}</span>
+                                            <span class="text-xs">Mercado abre ${getTimeUntilMarketOpens() ? `em ${getTimeUntilMarketOpens().days}d` : 'em breve'}</span>
                                         </div>
                                     `}
                                 </div>
@@ -7830,6 +7853,9 @@
         }
 
         function renderRanking() {
+            const round = state.selectedRound;
+            
+            // RANKING GERAL (pontos totais)
             const rankings = Object.entries(state.users)
                 .filter(([_, u]) => u.isConfirmed)
                 .map(([nick, u]) => ({
@@ -7841,11 +7867,59 @@
                 }))
                 .sort((a, b) => b.score - a.score);
             
+            // TOP PONTUADORES DA RODADA (usuários)
+            const roundRankings = Object.entries(state.users)
+                .filter(([_, u]) => u.isConfirmed)
+                .map(([nick, u]) => {
+                    // Calcular pontuação só da rodada selecionada
+                    let roundScore = 0;
+                    const userScores = u.scores?.[round];
+                    if (userScores) {
+                        // Somar pontos dos jogadores
+                        if (userScores.players) {
+                            Object.values(userScores.players).forEach(s => roundScore += (s || 0));
+                        }
+                        // Somar pontos do técnico
+                        roundScore += userScores.coach || 0;
+                    }
+                    return {
+                        nick,
+                        team: u.teamName,
+                        logo: u.teamLogo,
+                        score: roundScore
+                    };
+                })
+                .sort((a, b) => b.score - a.score);
+            
+            // TOP CRAVADORES DA RODADA
+            const cravadores = Object.entries(state.users)
+                .filter(([nick, u]) => u.isConfirmed && nick !== 'admin')
+                .map(([nick, u]) => {
+                    const palpites = u.palpitesCravados?.[round];
+                    if (!palpites) return { nick, team: u.teamName, logo: u.teamLogo, acertos: 0, total: 0 };
+                    
+                    let acertos = 0;
+                    let total = 0;
+                    const jogos = getJogosDaRodada();
+                    
+                    jogos.forEach(jogo => {
+                        if (jogo.status !== 'FT') return;
+                        const palpite = palpites[jogo.id] || palpites[String(jogo.id)];
+                        if (!palpite || palpite.casa === '' || palpite.fora === '') return;
+                        total++;
+                        if (String(palpite.casa) === String(jogo.golsCasa) && String(palpite.fora) === String(jogo.golsFora)) {
+                            acertos++;
+                        }
+                    });
+                    
+                    return { nick, team: u.teamName, logo: u.teamLogo, acertos, total };
+                })
+                .filter(c => c.total > 0)
+                .sort((a, b) => b.acertos - a.acertos || b.total - a.total);
+            
             // Calcular melhores jogadores da rodada
-            const round = state.selectedRound;
             const playerScores = {};
             
-            // Coletar pontuação de todos os jogadores de todos os usuários
             Object.entries(state.users).forEach(([nick, user]) => {
                 if (!user.isConfirmed || nick === 'admin') return;
                 
@@ -7853,11 +7927,9 @@
                 const userReserves = ensureArray(user.reserves, 7);
                 const roundScores = user.scores?.[round]?.players || {};
                 
-                // Processar titulares (pontuação 100%)
                 userStarters.forEach(player => {
                     if (player && player.id && roundScores[player.id] !== undefined) {
                         const score = roundScores[player.id];
-                        // Guardar a maior pontuação (100%) encontrada
                         if (!playerScores[player.id] || score > playerScores[player.id].score) {
                             playerScores[player.id] = {
                                 id: player.id,
@@ -7871,12 +7943,9 @@
                     }
                 });
                 
-                // Processar reservas - converter de volta para 100%
                 userReserves.forEach(player => {
                     if (player && player.id && roundScores[player.id] !== undefined) {
-                        // Reserva salva com 50%, multiplicar por 2 para obter 100%
                         const realScore = roundScores[player.id] * 2;
-                        // Só atualizar se for maior que o atual (priorizar titular se existir)
                         if (!playerScores[player.id] || realScore > playerScores[player.id].score) {
                             playerScores[player.id] = {
                                 id: player.id,
@@ -7891,10 +7960,9 @@
                 });
             });
             
-            // Ordenar e pegar top 10
             const topPlayers = Object.values(playerScores)
                 .sort((a, b) => b.score - a.score)
-                .slice(0, 10);
+                .slice(0, 5);
 
             return `
                 <div class="min-h-screen bg-[#0a0a0a]">
@@ -7916,31 +7984,76 @@
                     </nav>
 
                     <div class="max-w-7xl mx-auto p-4">
-                        <!-- Countdown Timer no Ranking -->
-                        ${state.nextRoundDate ? `
-                            <div class="card rounded-xl p-4 mb-4 border border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-transparent">
-                                <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+                        <!-- Cards de Destaque -->
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                            <!-- Top 1 Pontuador da Rodada -->
+                            <div class="card rounded-xl p-4 border border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-transparent">
+                                <p class="text-amber-400 text-xs font-display tracking-wider mb-2">TOP RODADA ${round}</p>
+                                ${roundRankings[0] && roundRankings[0].score > 0 ? `
                                     <div class="flex items-center gap-3">
-                                        <span class="text-3xl"></span>
-                                        <div>
-                                            <h3 class="text-white font-bold">Rodada ${state.nextRoundNumber || (state.currentRound + 1)} começa em:</h3>
-                                            <p class="text-zinc-500 text-xs">${new Date(state.nextRoundDate).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>
+                                        ${roundRankings[0].logo ? 
+                                            `<img src="${roundRankings[0].logo}" class="w-12 h-12 rounded-full object-cover border-2 border-amber-500">` :
+                                            `<div class="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-400 font-bold">${(roundRankings[0].nick || 'U')[0].toUpperCase()}</div>`
+                                        }
+                                        <div class="flex-1 min-w-0">
+                                            <p class="text-white font-bold truncate">${roundRankings[0].team}</p>
+                                            <p class="text-zinc-500 text-xs">@${roundRankings[0].nick}</p>
+                                        </div>
+                                        <p class="text-amber-400 font-display text-2xl">${roundRankings[0].score}</p>
+                                    </div>
+                                ` : `
+                                    <p class="text-zinc-500 text-sm">Nenhuma pontuação</p>
+                                `}
+                            </div>
+                            
+                            <!-- Top Cravador -->
+                            <div class="card rounded-xl p-4 border border-emerald-500/30 bg-gradient-to-br from-emerald-500/10 to-transparent">
+                                <p class="text-emerald-400 text-xs font-display tracking-wider mb-2">TOP CRAVADOR</p>
+                                ${cravadores[0] && cravadores[0].acertos > 0 ? `
+                                    <div class="flex items-center gap-3">
+                                        ${cravadores[0].logo ? 
+                                            `<img src="${cravadores[0].logo}" class="w-12 h-12 rounded-full object-cover border-2 border-emerald-500">` :
+                                            `<div class="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold">${(cravadores[0].nick || 'U')[0].toUpperCase()}</div>`
+                                        }
+                                        <div class="flex-1 min-w-0">
+                                            <p class="text-white font-bold truncate">${cravadores[0].team}</p>
+                                            <p class="text-zinc-500 text-xs">@${cravadores[0].nick}</p>
+                                        </div>
+                                        <div class="text-right">
+                                            <p class="text-emerald-400 font-display text-2xl">${cravadores[0].acertos}</p>
+                                            <p class="text-zinc-500 text-xs">acertos</p>
                                         </div>
                                     </div>
-                                    <div id="countdownTimer" class="text-center">
-                                        <span class="text-zinc-500">Carregando...</span>
-                                    </div>
-                                </div>
+                                ` : `
+                                    <p class="text-zinc-500 text-sm">Nenhum acerto</p>
+                                `}
                             </div>
-                        ` : ''}
+                            
+                            <!-- Top Jogador -->
+                            <div class="card rounded-xl p-4 border border-purple-500/30 bg-gradient-to-br from-purple-500/10 to-transparent">
+                                <p class="text-purple-400 text-xs font-display tracking-wider mb-2">CRAQUE DA RODADA</p>
+                                ${topPlayers[0] && topPlayers[0].score > 0 ? `
+                                    <div class="flex items-center gap-3">
+                                        <img src="${topPlayers[0].photo}" class="w-12 h-12 rounded-full object-cover border-2 border-purple-500" onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${topPlayers[0].name?.charAt(0) || '?'}'">
+                                        <div class="flex-1 min-w-0">
+                                            <p class="text-white font-bold truncate">${topPlayers[0].name?.split(' ').pop() || 'Jogador'}</p>
+                                            <p class="text-zinc-500 text-xs">${topPlayers[0].team || ''}</p>
+                                        </div>
+                                        <p class="text-purple-400 font-display text-2xl">${topPlayers[0].score}</p>
+                                    </div>
+                                ` : `
+                                    <p class="text-zinc-500 text-sm">Nenhuma pontuação</p>
+                                `}
+                            </div>
+                        </div>
                         
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            <!-- Coluna do Ranking de Times -->
-                            <div>
+                            <!-- Coluna do Ranking Geral -->
+                            <div class="lg:col-span-2">
                                 <div class="mb-4 flex items-center justify-between">
                                     <div>
-                                        <h2 class="font-display text-xl text-white tracking-wider"> RANKING</h2>
-                                        <p class="text-white/40 text-xs">${rankings.length} times</p>
+                                        <h2 class="font-display text-xl text-white tracking-wider">RANKING GERAL</h2>
+                                        <p class="text-white/40 text-xs">${rankings.length} times · Pontuação total</p>
                                     </div>
                                     <button onclick="updateAllScores()" 
                                         class="flex items-center gap-1 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition text-xs" 
@@ -7955,135 +8068,175 @@
                                         <p class="text-white/40 text-sm">Nenhum time confirmado</p>
                                     </div>
                                 ` : `
-                                    <div class="space-y-2 max-h-[80vh] overflow-y-auto pr-1">
-                                        ${rankings.map((r, i) => {
-                                            const userData = state.users[r.nick] || {};
-                                            const userAchievements = userData.achievements || [];
-                                            const topBadges = userAchievements.slice(0, 3).map(id => ACHIEVEMENTS[id]).filter(a => a);
-                                            return `
-                                            <div onclick="viewProfile('${r.nick}')" class="card rounded-xl p-3 flex items-center gap-3 cursor-pointer hover:bg-zinc-800/50 transition ${r.nick === state.currentUser ? 'border border-emerald-500/30' : ''}">
-                                                <div class="w-8 h-8 flex items-center justify-center rounded ${i === 0 ? 'bg-amber-500/10 text-amber-400' : i === 1 ? 'bg-gray-400/20 text-gray-400' : i === 2 ? 'bg-orange-500/20 text-orange-500' : 'bg-white/5 text-white/30'} font-bold text-sm">
+                                    <!-- Top 3 destacado -->
+                                    <div class="grid grid-cols-3 gap-3 mb-4">
+                                        ${rankings.slice(0, 3).map((r, i) => `
+                                            <div onclick="viewProfile('${r.nick}')" class="card rounded-xl p-4 cursor-pointer hover:bg-zinc-800/50 transition text-center ${i === 0 ? 'border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-transparent' : i === 1 ? 'border border-gray-400/30' : 'border border-orange-500/30'}">
+                                                <div class="w-8 h-8 mx-auto mb-2 flex items-center justify-center rounded-full ${i === 0 ? 'bg-amber-500/20 text-amber-400' : i === 1 ? 'bg-gray-400/20 text-gray-400' : 'bg-orange-500/20 text-orange-500'} font-bold text-lg">
                                                     ${i + 1}
                                                 </div>
                                                 ${r.logo ? 
-                                                    `<img src="${r.logo}" class="w-10 h-10 rounded-full object-cover border border-emerald-500/50">` :
-                                                    `<div class="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-sm font-medium">${(r.nick || 'U')[0].toUpperCase()}</div>`
+                                                    `<img src="${r.logo}" class="w-14 h-14 mx-auto rounded-full object-cover border-2 ${i === 0 ? 'border-amber-500' : i === 1 ? 'border-gray-400' : 'border-orange-500'} mb-2">` :
+                                                    `<div class="w-14 h-14 mx-auto rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xl font-medium mb-2">${(r.nick || 'U')[0].toUpperCase()}</div>`
                                                 }
-                                                <div class="flex-1 min-w-0">
-                                                    <p class="text-white font-medium truncate text-sm">${r.team}</p>
-                                                    <div class="flex items-center gap-1">
-                                                        <span class="text-white/40 text-xs">@${r.nick}</span>
-                                                        ${topBadges.length > 0 ? topBadges.map(a => `<span class="text-xs" title="${a.name}">${a.icon}</span>`).join('') : ''}
-                                                    </div>
-                                                </div>
-                                                <div class="text-right">
-                                                    <p class="text-2xl font-bold text-white">${r.score}</p>
-                                                </div>
-                                            </div>
-                                        `}).join('')}
-                                    </div>
-                                `}
-                            </div>
-                            
-                            <!-- Coluna dos Melhores Jogadores da Rodada -->
-                            <div>
-                                <div class="mb-4">
-                                    <h2 class="font-display text-xl text-white tracking-wider"> TOP RODADA ${round}</h2>
-                                    <p class="text-white/40 text-xs">Melhores pontuadores</p>
-                                </div>
-                                
-                                ${topPlayers.length === 0 ? `
-                                    <div class="card rounded-xl p-8 text-center">
-                                        <p class="text-white/40 text-sm">Nenhuma pontuação ainda</p>
-                                        <p class="text-zinc-600 text-xs mt-1">Clique em "Atualizar" para calcular</p>
-                                    </div>
-                                ` : `
-                                    <div class="space-y-2 max-h-[80vh] overflow-y-auto pr-1">
-                                        ${topPlayers.map((p, i) => `
-                                            <div class="card rounded-xl p-3 flex items-center gap-3">
-                                                <div class="w-8 h-8 flex items-center justify-center rounded ${i === 0 ? 'bg-amber-500/10 text-amber-400' : i === 1 ? 'bg-gray-400/20 text-gray-400' : i === 2 ? 'bg-orange-500/20 text-orange-500' : 'bg-white/5 text-white/30'} font-bold text-sm">
-                                                    ${i + 1}
-                                                </div>
-                                                <img src="${p.photo}" 
-                                                    onclick="viewPlayer(${JSON.stringify(p).replace(/"/g, '&quot;')})"
-                                                    class="w-10 h-10 rounded-full object-cover border border-zinc-700 cursor-pointer hover:border-emerald-500 hover:scale-110 transition"
-                                                    onerror="this.src='https://via.placeholder.com/32/1a1a1a/ffffff?text=${p.name?.charAt(0) || '?'}'">
-                                                <div class="flex-1 min-w-0">
-                                                    <p class="text-white font-medium truncate text-sm">${p.name?.split(' ').pop() || 'Jogador'}</p>
-                                                    <p class="text-zinc-500 text-xs truncate">${p.team || ''}</p>
-                                                </div>
-                                                <div class="text-right">
-                                                    <p class="text-2xl font-bold ${p.score >= 0 ? 'text-emerald-400' : 'text-red-400'}">${p.score}</p>
-                                                </div>
+                                                <p class="text-white font-medium truncate text-sm">${r.team}</p>
+                                                <p class="text-zinc-500 text-xs mb-1">@${r.nick}</p>
+                                                <p class="text-xl font-bold ${i === 0 ? 'text-amber-400' : i === 1 ? 'text-gray-400' : 'text-orange-500'}">${r.score} pts</p>
                                             </div>
                                         `).join('')}
                                     </div>
+                                    
+                                    <!-- Resto do ranking (expansível) -->
+                                    ${rankings.length > 3 ? `
+                                        <div class="card rounded-xl overflow-hidden">
+                                            <div id="rankingList" class="space-y-1 p-2 ${state.rankingExpanded ? '' : 'max-h-[300px] overflow-hidden'}">
+                                                ${rankings.slice(3).map((r, i) => {
+                                                    const pos = i + 4;
+                                                    const userData = state.users[r.nick] || {};
+                                                    const userAchievements = userData.achievements || [];
+                                                    const topBadges = userAchievements.slice(0, 3).map(id => ACHIEVEMENTS[id]).filter(a => a);
+                                                    return `
+                                                    <div onclick="viewProfile('${r.nick}')" class="p-3 flex items-center gap-3 cursor-pointer hover:bg-zinc-800/50 rounded-lg transition ${r.nick === state.currentUser ? 'bg-emerald-500/10 border border-emerald-500/30' : ''}">
+                                                        <div class="w-7 h-7 flex items-center justify-center rounded bg-white/5 text-white/40 font-bold text-sm">
+                                                            ${pos}
+                                                        </div>
+                                                        ${r.logo ? 
+                                                            `<img src="${r.logo}" class="w-9 h-9 rounded-full object-cover border border-zinc-700">` :
+                                                            `<div class="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-sm font-medium">${(r.nick || 'U')[0].toUpperCase()}</div>`
+                                                        }
+                                                        <div class="flex-1 min-w-0">
+                                                            <p class="text-white font-medium truncate text-sm">${r.team}</p>
+                                                            <div class="flex items-center gap-1">
+                                                                <span class="text-white/40 text-xs">@${r.nick}</span>
+                                                                ${topBadges.length > 0 ? topBadges.map(a => `<span class="text-xs" title="${a.name}">${a.icon}</span>`).join('') : ''}
+                                                            </div>
+                                                        </div>
+                                                        <p class="text-lg font-bold text-white">${r.score}</p>
+                                                    </div>
+                                                `}).join('')}
+                                            </div>
+                                            ${rankings.length > 6 ? `
+                                                <button onclick="state.rankingExpanded=!state.rankingExpanded;render()" class="w-full py-3 text-center text-zinc-400 hover:text-white text-sm border-t border-zinc-800 hover:bg-zinc-800/50 transition">
+                                                    ${state.rankingExpanded ? 'Ver menos' : `Ver mais ${rankings.length - 3} times`}
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    ` : ''}
                                 `}
                             </div>
                             
-                            <!-- Coluna do Chat -->
-                            <div class="card rounded-xl overflow-hidden flex flex-col" style="height: 80vh;">
-                                <div class="p-4 border-b border-zinc-800 flex items-center gap-2">
-                                    <span class="text-lg"></span>
-                                    <h3 class="font-display text-lg text-white">CHAT</h3>
+                            <!-- Coluna Lateral -->
+                            <div class="space-y-4">
+                                <!-- Top Pontuadores da Rodada -->
+                                <div class="card rounded-xl p-4">
+                                    <h3 class="font-display text-sm text-amber-400 tracking-wider mb-3">TOP RODADA ${round}</h3>
+                                    <div class="space-y-2">
+                                        ${roundRankings.slice(0, 5).map((r, i) => `
+                                            <div onclick="viewProfile('${r.nick}')" class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition">
+                                                <span class="w-5 h-5 flex items-center justify-center text-xs font-bold ${i === 0 ? 'text-amber-400' : 'text-zinc-500'}">${i + 1}</span>
+                                                ${r.logo ? 
+                                                    `<img src="${r.logo}" class="w-7 h-7 rounded-full object-cover">` :
+                                                    `<div class="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs">${(r.nick || 'U')[0].toUpperCase()}</div>`
+                                                }
+                                                <span class="flex-1 text-white text-sm truncate">${r.team}</span>
+                                                <span class="text-amber-400 font-bold text-sm">${r.score}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
                                 </div>
                                 
-                                <!-- Mensagens -->
-                                <div id="chatMessages" class="flex-1 overflow-y-auto p-4 space-y-4">
-                                    ${state.chatMessages.length === 0 ? 
-                                        `<p class="text-zinc-600 text-center text-sm py-8">Nenhuma mensagem ainda </p>` :
-                                        state.chatMessages.map(m => {
-                                            const isMe = m.user === state.currentUser;
-                                            const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                                            
-                                            return `
-                                                <div class="flex gap-3 ${isMe ? 'flex-row-reverse' : ''}">
-                                                    ${m.teamLogo ? 
-                                                        `<img src="${m.teamLogo}" onclick="event.stopPropagation();viewProfile('${m.user}')" class="w-10 h-10 rounded-full object-cover flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition">` :
-                                                        `<div onclick="event.stopPropagation();viewProfile('${m.user}')" class="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 text-sm font-bold flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition">${(m.user || 'U')[0].toUpperCase()}</div>`
+                                <!-- Top Cravadores -->
+                                <div class="card rounded-xl p-4">
+                                    <h3 class="font-display text-sm text-emerald-400 tracking-wider mb-3">TOP CRAVADORES</h3>
+                                    ${cravadores.length === 0 ? `
+                                        <p class="text-zinc-500 text-sm">Nenhum palpite cravado</p>
+                                    ` : `
+                                        <div class="space-y-2">
+                                            ${cravadores.slice(0, 5).map((c, i) => `
+                                                <div onclick="viewProfile('${c.nick}')" class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition">
+                                                    <span class="w-5 h-5 flex items-center justify-center text-xs font-bold ${i === 0 ? 'text-emerald-400' : 'text-zinc-500'}">${i + 1}</span>
+                                                    ${c.logo ? 
+                                                        `<img src="${c.logo}" class="w-7 h-7 rounded-full object-cover">` :
+                                                        `<div class="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs">${(c.nick || 'U')[0].toUpperCase()}</div>`
                                                     }
-                                                    <div class="${isMe ? 'bg-emerald-600/20 border-emerald-500/30' : 'bg-zinc-800/80'} rounded-xl px-4 py-2.5 max-w-[75%] border border-transparent">
-                                                        <div class="flex items-center gap-2 mb-1">
-                                                            <span onclick="event.stopPropagation();viewProfile('${m.user}')" class="text-sm font-medium ${isMe ? 'text-emerald-400' : 'text-zinc-400'} hover:underline cursor-pointer">@${m.user}</span>
-                                                            <span class="text-zinc-600 text-xs">${time}</span>
-                                                        </div>
-                                                        <p class="text-white text-sm break-words">${escapeHtml(m.text)}</p>
-                                                    </div>
+                                                    <span class="flex-1 text-white text-sm truncate">${c.team}</span>
+                                                    <span class="text-emerald-400 font-bold text-sm">${c.acertos}/${c.total}</span>
                                                 </div>
-                                            `;
-                                        }).join('')
-                                    }
-                                </div>
-                                
-                                <!-- Input -->
-                                <div class="p-3 border-t border-zinc-800">
-                                    <!-- Seletor de Escudos -->
-                                    <div id="teamEmojiPicker" class="hidden mb-2 p-2 bg-zinc-800/80 rounded-xl">
-                                        <p class="text-zinc-500 text-xs mb-2">Escudos dos Times:</p>
-                                        <div class="flex flex-wrap gap-1">
-                                            ${getTeamEmojis().map(t => `
-                                                <button onclick="insertTeamEmoji('${t.name}', '${t.logo}')" 
-                                                    class="w-8 h-8 rounded-lg hover:bg-zinc-700 transition flex items-center justify-center" 
-                                                    title="${t.name}">
-                                                    <img src="${t.logo}" class="w-6 h-6 object-contain">
-                                                </button>
                                             `).join('')}
                                         </div>
+                                    `}
+                                </div>
+                                
+                                <!-- Top Jogadores -->
+                                <div class="card rounded-xl p-4">
+                                    <h3 class="font-display text-sm text-purple-400 tracking-wider mb-3">CRAQUES RODADA ${round}</h3>
+                                    ${topPlayers.length === 0 ? `
+                                        <p class="text-zinc-500 text-sm">Nenhuma pontuação</p>
+                                    ` : `
+                                        <div class="space-y-2">
+                                            ${topPlayers.map((p, i) => `
+                                                <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition" onclick="viewPlayer(${JSON.stringify(p).replace(/"/g, '&quot;')})">
+                                                    <span class="w-5 h-5 flex items-center justify-center text-xs font-bold ${i === 0 ? 'text-purple-400' : 'text-zinc-500'}">${i + 1}</span>
+                                                    <img src="${p.photo}" class="w-7 h-7 rounded-full object-cover" onerror="this.src='https://via.placeholder.com/28/1a1a1a/ffffff?text=${p.name?.charAt(0) || '?'}'">
+                                                    <span class="flex-1 text-white text-sm truncate">${p.name?.split(' ').pop() || 'Jogador'}</span>
+                                                    <span class="text-purple-400 font-bold text-sm">${p.score}</span>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                    `}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Chat (colapsável em mobile) -->
+                        <div class="mt-6">
+                            <button onclick="state.chatExpanded=!state.chatExpanded;render()" class="w-full card rounded-xl p-4 flex items-center justify-between hover:bg-zinc-800/50 transition lg:hidden">
+                                <span class="font-display text-white">CHAT</span>
+                                <svg class="w-5 h-5 text-zinc-500 ${state.chatExpanded ? 'rotate-180' : ''} transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            </button>
+                            
+                            <div class="${state.chatExpanded ? 'block' : 'hidden'} lg:block mt-4 lg:mt-0">
+                                <div class="card rounded-xl overflow-hidden" style="height: 400px;">
+                                    <div class="p-3 border-b border-zinc-800 flex items-center gap-2">
+                                        <h3 class="font-display text-sm text-white">CHAT</h3>
                                     </div>
-                                    <div class="flex gap-2">
-                                        <button onclick="toggleEmojiPicker()" 
-                                            class="px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl transition" title="Escudos">
-                                            
-                                        </button>
-                                        <input type="text" id="chatInput" 
-                                            placeholder="Manda a zoeira..." 
-                                            class="flex-1 px-4 py-2.5 input-dark rounded-xl text-white text-sm"
-                                            onkeypress="if(event.key === 'Enter') sendMessage()"
-                                            maxlength="200">
-                                        <button onclick="sendMessage()" 
-                                            class="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition flex items-center gap-2">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"></path></svg>
-                                        </button>
+                                    
+                                    <div id="chatMessages" class="overflow-y-auto p-3 space-y-3" style="height: calc(400px - 100px);">
+                                        ${state.chatMessages.length === 0 ? 
+                                            `<p class="text-zinc-600 text-center text-sm py-8">Nenhuma mensagem</p>` :
+                                            state.chatMessages.slice(-20).map(m => {
+                                                const isMe = m.user === state.currentUser;
+                                                const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                                                
+                                                return `
+                                                    <div class="flex gap-2 ${isMe ? 'flex-row-reverse' : ''}">
+                                                        ${m.teamLogo ? 
+                                                            `<img src="${m.teamLogo}" onclick="event.stopPropagation();viewProfile('${m.user}')" class="w-8 h-8 rounded-full object-cover flex-shrink-0 cursor-pointer">` :
+                                                            `<div onclick="event.stopPropagation();viewProfile('${m.user}')" class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-zinc-400 text-xs font-bold flex-shrink-0 cursor-pointer">${(m.user || 'U')[0].toUpperCase()}</div>`
+                                                        }
+                                                        <div class="${isMe ? 'bg-emerald-600/20' : 'bg-zinc-800/80'} rounded-lg px-3 py-2 max-w-[80%]">
+                                                            <div class="flex items-center gap-2 mb-0.5">
+                                                                <span class="text-xs font-medium ${isMe ? 'text-emerald-400' : 'text-zinc-400'}">@${m.user}</span>
+                                                                <span class="text-zinc-600 text-xs">${time}</span>
+                                                            </div>
+                                                            <p class="text-white text-sm break-words">${escapeHtml(m.text)}</p>
+                                                        </div>
+                                                    </div>
+                                                `;
+                                            }).join('')
+                                        }
+                                    </div>
+                                    
+                                    <div class="p-3 border-t border-zinc-800">
+                                        <div class="flex gap-2">
+                                            <input type="text" id="chatInput" placeholder="Digite sua mensagem..."
+                                                class="flex-1 px-3 py-2 input-dark rounded-lg text-sm text-white"
+                                                onkeypress="if(event.key==='Enter')sendChatMessage(this.value)">
+                                            <button onclick="sendChatMessage(document.getElementById('chatInput').value)" 
+                                                class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white text-sm transition">
+                                                Enviar
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
