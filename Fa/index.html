@@ -332,6 +332,30 @@
     <div id="root"></div>
     
     <script>
+        // ==================== LIMPAR FOTOS ANTIGAS DO LOCALSTORAGE ====================
+        // Isso resolve o erro "QuotaExceededError"
+        (function() {
+            try {
+                const saved = localStorage.getItem('fantasyBrasileirao2026');
+                if (saved) {
+                    const data = JSON.parse(saved);
+                    let mudou = false;
+                    Object.keys(data.users || {}).forEach(nick => {
+                        if (data.users[nick] && data.users[nick].teamLogo) {
+                            delete data.users[nick].teamLogo;
+                            mudou = true;
+                        }
+                    });
+                    if (mudou) {
+                        localStorage.setItem('fantasyBrasileirao2026', JSON.stringify(data));
+                        console.log('🧹 Fotos removidas do localStorage para liberar espaço');
+                    }
+                }
+            } catch (e) {
+                console.log('Erro ao limpar localStorage:', e);
+            }
+        })();
+        
         // ==================== FIREBASE CONFIG ====================
         const firebaseConfig = {
             apiKey: "AIzaSyB92rpIZQsvDzWmOV2sb1bgRmeJl1spTEo",
@@ -405,6 +429,7 @@
             currentRound: 1, // Rodada atual do campeonato (detectada automaticamente)
             nextRoundDate: null, // Data/hora do início da próxima rodada
             nextRoundNumber: null, // Número da próxima rodada
+            firebaseSynced: false, // Se já sincronizou com Firebase
             
             // Sistema de Draft
             draftParticipants: [], // Lista de inscritos no draft
@@ -1589,14 +1614,20 @@
                         if (!state.users[nick]) {
                             state.users[nick] = {};
                         }
-                        // Mesclar dados da nuvem (incluindo starters e reserves para o draft)
-                        // Usar ensureArray para garantir que são arrays
+                        
+                        const isCurrentUser = (nick === state.currentUser);
+                        
+                        // Para usuário atual: manter foto que já está no state
+                        // Para outros: usar do Firebase
+                        const fotoParaUsar = isCurrentUser 
+                            ? (state.teamLogo || cloudUsers[nick].teamLogo)
+                            : cloudUsers[nick].teamLogo;
+                        
                         state.users[nick] = {
                             ...state.users[nick],
-                            // Carregar senha da nuvem se não tiver localmente
                             password: state.users[nick].password || cloudUsers[nick].password,
                             teamName: cloudUsers[nick].teamName || state.users[nick].teamName,
-                            teamLogo: cloudUsers[nick].teamLogo || state.users[nick].teamLogo,
+                            teamLogo: fotoParaUsar,
                             coach: cloudUsers[nick].coach || state.users[nick].coach,
                             starters: ensureArray(cloudUsers[nick].starters || state.users[nick].starters, 11),
                             reserves: ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7),
@@ -1608,17 +1639,51 @@
                             achievements: cloudUsers[nick].achievements || [],
                             titles: cloudUsers[nick].titles || []
                         };
+                        
+                        // IMPORTANTE: Se for o usuário atual, atualizar TUDO no state principal
+                        if (isCurrentUser) {
+                            if (cloudUsers[nick].teamLogo) {
+                                state.teamLogo = cloudUsers[nick].teamLogo;
+                            }
+                            // Atualizar starters e reserves do Firebase
+                            if (cloudUsers[nick].starters) {
+                                state.starters = ensureArray(cloudUsers[nick].starters, 11);
+                            }
+                            if (cloudUsers[nick].reserves) {
+                                state.reserves = ensureArray(cloudUsers[nick].reserves, 7);
+                            }
+                            if (cloudUsers[nick].coach) {
+                                state.coach = cloudUsers[nick].coach;
+                            }
+                            if (cloudUsers[nick].formation) {
+                                state.formation = cloudUsers[nick].formation;
+                            }
+                            if (cloudUsers[nick].scores) {
+                                state.scores = cloudUsers[nick].scores;
+                            }
+                            state.isConfirmed = cloudUsers[nick].isConfirmed || false;
+                        }
                     });
                     console.log('☁️ Usuários atualizados da nuvem:', Object.keys(cloudUsers).length);
+                    state.firebaseSynced = true; // Marcar que sincronizou
                     
-                    // Salvar no localStorage para ter os usuários da nuvem disponíveis
-                    localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
-                        users: state.users,
-                        currentUser: state.currentUser
-                    }));
+                    // Salvar no localStorage SEM as fotos (economiza espaço)
+                    try {
+                        const usersParaSalvar = {};
+                        Object.keys(state.users).forEach(nick => {
+                            usersParaSalvar[nick] = { ...state.users[nick] };
+                            delete usersParaSalvar[nick].teamLogo;
+                        });
+                        localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
+                            users: usersParaSalvar,
+                            currentUser: state.currentUser
+                        }));
+                    } catch (e) {
+                        console.error('Erro ao salvar localStorage:', e);
+                    }
                     
-                    // Atualizar tela se estiver no draft OU no ranking
-                    if (state.screen === 'draft' || state.screen === 'ranking') {
+                    // Atualizar tela
+                    if (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup') {
                         render();
                     }
                 }
@@ -1767,7 +1832,7 @@
                     if (state.currentUser && state.users[state.currentUser]) {
                         const userData = state.users[state.currentUser];
                         state.teamName = userData.teamName || '';
-                        state.teamLogo = userData.teamLogo || null;
+                        state.teamLogo = null; // Foto vem do Firebase
                         state.formation = userData.formation || '4-3-3';
                         state.starters = ensureArray(userData.starters, 11);
                         state.reserves = ensureArray(userData.reserves, 7);
@@ -1777,6 +1842,21 @@
                         state.favoriteTeam = userData.favoriteTeam || null;
                         state.userBio = userData.userBio || '';
                         state.screen = userData.teamName ? 'lineup' : 'createTeam';
+                        
+                        // Buscar foto do Firebase
+                        if (db && state.currentUser) {
+                            db.ref('users/' + state.currentUser + '/teamLogo').once('value').then(snapshot => {
+                                const foto = snapshot.val();
+                                if (foto) {
+                                    state.teamLogo = foto;
+                                    if (state.users[state.currentUser]) {
+                                        state.users[state.currentUser].teamLogo = foto;
+                                    }
+                                    render();
+                                    console.log('☁️ Foto carregada do Firebase');
+                                }
+                            });
+                        }
                     }
                 }
                 
@@ -1814,10 +1894,12 @@
         function saveState() {
             try {
                 if (state.currentUser) {
+                    // NÃO incluir teamLogo no localStorage (ocupa muito espaço)
+                    // Foto fica só no Firebase
                     state.users[state.currentUser] = {
                         ...state.users[state.currentUser],
                         teamName: state.teamName,
-                        teamLogo: state.teamLogo,
+                        // teamLogo: NÃO SALVAR AQUI - vai pro Firebase direto
                         formation: state.formation,
                         starters: state.starters,
                         reserves: state.reserves,
@@ -1829,16 +1911,45 @@
                         lastUpdate: new Date().toISOString()
                     };
                     
-                    // Salvar na nuvem para ranking compartilhado
-                    saveUserToCloud(state.currentUser, state.users[state.currentUser]);
+                    // Salvar na nuvem (incluindo foto)
+                    saveUserToCloud(state.currentUser, {
+                        ...state.users[state.currentUser],
+                        teamLogo: state.teamLogo
+                    });
                 }
                 
+                // Remover fotos do objeto users antes de salvar no localStorage
+                const usersParaSalvar = {};
+                Object.keys(state.users).forEach(nick => {
+                    usersParaSalvar[nick] = { ...state.users[nick] };
+                    delete usersParaSalvar[nick].teamLogo; // Remove foto para economizar espaço
+                });
+                
                 localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
-                    users: state.users,
+                    users: usersParaSalvar,
                     currentUser: state.currentUser
                 }));
             } catch (e) {
                 console.error('Erro ao salvar:', e);
+                // Se der erro de quota, tentar limpar fotos antigas
+                if (e.name === 'QuotaExceededError') {
+                    console.log('🧹 Limpando localStorage...');
+                    try {
+                        const saved = localStorage.getItem('fantasyBrasileirao2026');
+                        if (saved) {
+                            const data = JSON.parse(saved);
+                            Object.keys(data.users || {}).forEach(nick => {
+                                if (data.users[nick]) {
+                                    delete data.users[nick].teamLogo;
+                                }
+                            });
+                            localStorage.setItem('fantasyBrasileirao2026', JSON.stringify(data));
+                            console.log('✅ localStorage limpo!');
+                        }
+                    } catch (e2) {
+                        console.error('Erro ao limpar:', e2);
+                    }
+                }
             }
         }
 
@@ -2986,9 +3097,13 @@
                         <div class="space-y-4">
                             <!-- Pontuação Total -->
                             <div class="card rounded-xl p-4">
-                                <div class="flex items-center justify-between mb-4">
-                                    <span class="text-zinc-400 text-sm font-medium">PONTUAÇÃO TOTAL</span>
-                                    <span class="text-4xl font-bold text-green-400">${getTotalScore()}</span>
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-zinc-400 text-sm font-medium">PONTUAÇÃO GERAL</span>
+                                    <span class="text-3xl font-bold text-green-400">${getTotalScore()} pts</span>
+                                </div>
+                                <div class="flex items-center justify-between mb-4 pb-3 border-b border-zinc-800">
+                                    <span class="text-zinc-500 text-xs">Rodada ${state.selectedRound}</span>
+                                    <span class="text-xl font-semibold text-white">${getRoundScore(state.selectedRound)} pts</span>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <select onchange="changeRound(this.value)" class="flex-1 px-3 py-2 input-dark rounded-lg text-white text-sm">
@@ -3001,6 +3116,16 @@
                                             const roundScore = state.scores[state.selectedRound];
                                             const isLive = state.hasLiveGames || roundScore?.live;
                                             const hasScore = roundScore?.total > 0 || Object.keys(roundScore?.players || {}).length > 0;
+                                            
+                                            // Só mostrar status de jogadores se já sincronizou com Firebase
+                                            if (!state.firebaseSynced) {
+                                                return `
+                                                    <span class="px-2 py-1 bg-zinc-700/50 text-zinc-400 text-xs rounded-lg flex items-center gap-1">
+                                                        <span class="w-2 h-2 bg-zinc-500 rounded-full animate-pulse"></span>
+                                                        Sincronizando...
+                                                    </span>
+                                                `;
+                                            }
                                             
                                             // Verificar se todos os jogadores do time já jogaram
                                             const playersWithScore = roundScore?.players || {};
@@ -3098,7 +3223,7 @@
                                                             <span class="text-white text-sm truncate">${state.reserves[0].name.split(' ').pop()}</span>
                                                             ${state.scores[state.selectedRound]?.players?.[state.reserves[0].id] !== undefined ? `
                                                                 <span class="ml-auto px-1.5 py-0.5 rounded text-xs font-bold bg-orange-500/20 text-orange-400">
-                                                                    ${state.scores[state.selectedRound].players[state.reserves[0].id]} <span class="text-orange-300/60 text-[10px]">50%</span>
+                                                                    ${state.scores[state.selectedRound].players[state.reserves[0].id]}
                                                                 </span>
                                                             ` : ''}
                                                         </div>
@@ -6738,74 +6863,56 @@
         
         window.handleSettingsLogoUpload = function(event) {
             const file = event.target.files[0];
-            if (file) {
-                // Verificar tamanho do arquivo (max 1MB)
-                if (file.size > 1024 * 1024) {
-                    alert('⚠️ Imagem muito grande!\n\nO tamanho máximo é 1MB. Por favor, escolha uma imagem menor.');
-                    return;
-                }
-                
-                const reader = new FileReader();
-                reader.onload = function(ev) {
-                    // Comprimir imagem usando canvas
-                    const img = new Image();
-                    img.onload = function() {
-                        const canvas = document.createElement('canvas');
-                        const ctx = canvas.getContext('2d');
-                        
-                        // Redimensionar para max 200x200
-                        const maxSize = 200;
-                        let width = img.width;
-                        let height = img.height;
-                        
-                        if (width > height) {
-                            if (width > maxSize) {
-                                height *= maxSize / width;
-                                width = maxSize;
-                            }
-                        } else {
-                            if (height > maxSize) {
-                                width *= maxSize / height;
-                                height = maxSize;
-                            }
-                        }
-                        
-                        canvas.width = width;
-                        canvas.height = height;
-                        ctx.drawImage(img, 0, 0, width, height);
-                        
-                        // Converter para JPEG com qualidade 0.7
-                        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
-                        
-                        state.teamLogo = compressedBase64;
-                        
-                        // Atualizar também no objeto do usuário
-                        if (state.users[state.currentUser]) {
-                            state.users[state.currentUser].teamLogo = state.teamLogo;
-                        }
-                        
-                        // Salvar no localStorage imediatamente
-                        saveState();
-                        
-                        // Salvar no Firebase imediatamente
-                        if (db && state.currentUser) {
-                            db.ref('users/' + state.currentUser + '/teamLogo').set(state.teamLogo)
-                                .then(() => {
-                                    console.log('☁️ Foto de perfil salva no Firebase');
-                                    alert('✅ Foto salva com sucesso!');
-                                })
-                                .catch(err => {
-                                    console.error('❌ Erro ao salvar foto:', err);
-                                    alert('❌ Erro ao salvar foto. Tente novamente.');
-                                });
-                        }
-                        
-                        render();
-                    };
-                    img.src = ev.target.result;
-                };
-                reader.readAsDataURL(file);
+            if (!file) return;
+            
+            if (file.size > 2 * 1024 * 1024) {
+                alert('⚠️ Imagem muito grande! Máximo 2MB.');
+                event.target.value = '';
+                return;
             }
+            
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    
+                    const maxSize = 150;
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    if (width > height) {
+                        if (width > maxSize) { height *= maxSize / width; width = maxSize; }
+                    } else {
+                        if (height > maxSize) { width *= maxSize / height; height = maxSize; }
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    const novaFoto = canvas.toDataURL('image/jpeg', 0.6);
+                    
+                    // Atualizar state (memória)
+                    state.teamLogo = novaFoto;
+                    if (state.users[state.currentUser]) {
+                        state.users[state.currentUser].teamLogo = novaFoto;
+                    }
+                    
+                    // Salvar DIRETO no Firebase (não no localStorage)
+                    if (db && state.currentUser) {
+                        db.ref('users/' + state.currentUser + '/teamLogo').set(novaFoto)
+                            .then(() => console.log('☁️ Foto salva no Firebase'))
+                            .catch(err => console.error('❌ Erro:', err));
+                    }
+                    
+                    render();
+                };
+                img.src = ev.target.result;
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
         };
         
         window.removeTeamLogo = function() {
@@ -6814,20 +6921,11 @@
                 state.users[state.currentUser].teamLogo = null;
             }
             
-            // Salvar no localStorage
-            saveState();
-            
-            // Salvar no Firebase
+            // Remover do Firebase
             if (db && state.currentUser) {
                 db.ref('users/' + state.currentUser + '/teamLogo').set(null)
-                    .then(() => {
-                        console.log('☁️ Foto removida do Firebase');
-                        alert('✅ Foto removida!');
-                    })
-                    .catch(err => {
-                        console.error('❌ Erro ao remover foto:', err);
-                        alert('❌ Erro ao remover foto. Tente novamente.');
-                    });
+                    .then(() => console.log('☁️ Foto removida do Firebase'))
+                    .catch(err => console.error('❌ Erro:', err));
             }
             
             render();
