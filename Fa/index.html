@@ -971,21 +971,50 @@
         
         // Garante que um valor seja um array (Firebase pode retornar objetos)
         function ensureArray(value, defaultLength = 0) {
-            if (!value) return Array(defaultLength).fill(null);
-            if (Array.isArray(value)) return value;
-            // Se for objeto, converter para array
-            if (typeof value === 'object') {
-                const arr = [];
+            let arr;
+            
+            if (!value) {
+                arr = Array(defaultLength).fill(null);
+            } else if (Array.isArray(value)) {
+                arr = [...value]; // Cópia para não modificar original
+            } else if (typeof value === 'object') {
+                // Se for objeto, converter para array
+                arr = [];
                 Object.keys(value).forEach(key => {
                     const idx = parseInt(key);
                     if (!isNaN(idx)) {
                         arr[idx] = value[key];
                     }
                 });
-                while (arr.length < defaultLength) arr.push(null);
-                return arr;
+            } else {
+                arr = Array(defaultLength).fill(null);
             }
-            return Array(defaultLength).fill(null);
+            
+            // Garantir tamanho EXATO
+            while (arr.length < defaultLength) {
+                arr.push(null);
+            }
+            // Cortar se for maior que o esperado
+            if (arr.length > defaultLength && defaultLength > 0) {
+                arr = arr.slice(0, defaultLength);
+            }
+            
+            return arr;
+        }
+        
+        // Normaliza os arrays de jogadores de um usuário
+        function normalizeUserPlayers(user) {
+            if (!user) return user;
+            user.starters = ensureArray(user.starters, 11);
+            user.reserves = ensureArray(user.reserves, 7);
+            return user;
+        }
+        
+        // Normaliza todos os usuários
+        function normalizeAllUsers() {
+            Object.keys(state.users).forEach(nick => {
+                normalizeUserPlayers(state.users[nick]);
+            });
         }
 
         // ==================== SISTEMA DE PREÇOS ====================
@@ -6857,6 +6886,22 @@
                                     </div>
                                 </div>
 
+                                <!-- Manutenção de Times -->
+                                <div class="bg-zinc-900 rounded-xl p-6">
+                                    <h4 class="text-white font-medium mb-4">Manutencao de Times</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Corrige times com numero incorreto de jogadores (deve ter 11 titulares e 7 reservas)</p>
+                                    <div class="flex flex-wrap gap-3">
+                                        <button onclick="adminNormalizeAllTeams()" 
+                                            class="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">
+                                            Normalizar Todos os Times
+                                        </button>
+                                        <button onclick="adminShowTeamsStatus()" 
+                                            class="px-5 py-3 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg font-medium">
+                                            Ver Status dos Times
+                                        </button>
+                                    </div>
+                                </div>
+
                                 <!-- Limpar Dados -->
                                 <div class="bg-zinc-900 rounded-xl p-6 border border-red-500/30">
                                     <h4 class="text-red-400 font-medium mb-4">Zona de Perigo</h4>
@@ -10386,6 +10431,77 @@
             
             alert('Histórico de transferências limpo!');
             render();
+        };
+        
+        // Normalizar todos os times (garantir 11 titulares + 7 reservas)
+        window.adminNormalizeAllTeams = function() {
+            if (!confirm('Isso vai garantir que todos os times tenham exatamente 11 titulares e 7 reservas. Continuar?')) return;
+            
+            let fixed = 0;
+            const updates = {};
+            
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (nick === 'admin') return;
+                
+                const oldStarters = user.starters || [];
+                const oldReserves = user.reserves || [];
+                
+                const newStarters = ensureArray(oldStarters, 11);
+                const newReserves = ensureArray(oldReserves, 7);
+                
+                // Verificar se precisa corrigir
+                const startersChanged = JSON.stringify(oldStarters) !== JSON.stringify(newStarters);
+                const reservesChanged = JSON.stringify(oldReserves) !== JSON.stringify(newReserves);
+                
+                if (startersChanged || reservesChanged || 
+                    (Array.isArray(oldStarters) && oldStarters.length !== 11) ||
+                    (Array.isArray(oldReserves) && oldReserves.length !== 7)) {
+                    
+                    user.starters = newStarters;
+                    user.reserves = newReserves;
+                    
+                    updates['users/' + nick + '/starters'] = newStarters;
+                    updates['users/' + nick + '/reserves'] = newReserves;
+                    
+                    fixed++;
+                    console.log(`Corrigido time de @${nick}: titulares ${oldStarters?.length || 0}→11, reservas ${oldReserves?.length || 0}→7`);
+                }
+            });
+            
+            if (Object.keys(updates).length > 0 && db) {
+                db.ref().update(updates).then(() => {
+                    alert(`${fixed} time(s) normalizado(s)!\n\nTodos os times agora têm 11 titulares e 7 reservas.`);
+                    render();
+                }).catch(err => {
+                    alert('Erro ao salvar: ' + err.message);
+                });
+            } else {
+                alert('Todos os times já estão normalizados!');
+            }
+        };
+        
+        // Mostrar status dos times
+        window.adminShowTeamsStatus = function() {
+            let report = 'STATUS DOS TIMES:\n\n';
+            
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (nick === 'admin') return;
+                
+                const starters = user.starters || [];
+                const reserves = user.reserves || [];
+                const startersCount = Array.isArray(starters) ? starters.length : 0;
+                const reservesCount = Array.isArray(reserves) ? reserves.length : 0;
+                const startersPlayers = Array.isArray(starters) ? starters.filter(p => p).length : 0;
+                const reservesPlayers = Array.isArray(reserves) ? reserves.filter(p => p).length : 0;
+                
+                const isOk = startersCount === 11 && reservesCount === 7;
+                
+                report += `${isOk ? '✓' : '✗'} @${nick} (${user.teamName || 'Sem time'})\n`;
+                report += `   Titulares: ${startersPlayers}/11 (array: ${startersCount})\n`;
+                report += `   Reservas: ${reservesPlayers}/7 (array: ${reservesCount})\n\n`;
+            });
+            
+            alert(report);
         };
         
         // Carregar configurações do admin do Firebase
