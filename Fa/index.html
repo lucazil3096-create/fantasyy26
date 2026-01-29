@@ -6857,7 +6857,7 @@
                                             </p>
                                         </div>
                                     </div>
-                                    <div class="flex flex-wrap gap-3">
+                                    <div class="flex flex-wrap gap-3 mb-4">
                                         <button onclick="adminSetMarket('open')" 
                                             class="px-5 py-3 ${marketMode === 'open' ? 'bg-emerald-600' : 'bg-zinc-800 hover:bg-zinc-700'} text-white rounded-lg font-medium">
                                             Abrir Mercado
@@ -6869,6 +6869,13 @@
                                         <button onclick="adminSetMarket('auto')" 
                                             class="px-5 py-3 ${marketMode === 'auto' ? 'bg-blue-600' : 'bg-zinc-800 hover:bg-zinc-700'} text-white rounded-lg font-medium">
                                             Modo Automatico
+                                        </button>
+                                    </div>
+                                    <div class="border-t border-zinc-800 pt-4">
+                                        <p class="text-zinc-500 text-sm mb-3">Limite de trocas: 2 por usuario por mes</p>
+                                        <button onclick="adminResetTradesLimit()" 
+                                            class="px-5 py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-medium">
+                                            Resetar Limite de Trocas (Todos)
                                         </button>
                                     </div>
                                 </div>
@@ -10502,6 +10509,27 @@
             });
             
             alert(report);
+        };
+        
+        // Resetar limite de trocas de todos os usuários
+        window.adminResetTradesLimit = function() {
+            if (!confirm('Resetar o limite de trocas de TODOS os usuários?\n\nIsso vai permitir que todos façam novas trocas.')) return;
+            
+            // Limpar monthlyTrades no state
+            state.monthlyTrades = {};
+            
+            // Limpar no Firebase
+            if (db) {
+                db.ref('monthlyTrades').set({}).then(() => {
+                    alert('Limite de trocas resetado para todos os usuários!');
+                    render();
+                }).catch(err => {
+                    alert('Erro: ' + err.message);
+                });
+            } else {
+                alert('Limite de trocas resetado (local)!');
+                render();
+            }
         };
         
         // Carregar configurações do admin do Firebase
