@@ -1416,7 +1416,9 @@
         function isMarketOpen() {
             const today = new Date();
             const day = today.getDate();
-            return day === 1 || day === 2;
+            const month = today.getMonth(); // 0 = Janeiro, 2 = Março
+            // Mercado só abre dia 1 e 2 de Março
+            return month === 2 && (day === 1 || day === 2);
         }
 
         function getTimeUntilMarketOpens() {
@@ -1427,16 +1429,14 @@
             
             let nextMarketDate;
             
-            if (currentDay > 2) {
-                // Próximo mês, dia 1
-                if (currentMonth === 11) {
-                    nextMarketDate = new Date(currentYear + 1, 0, 1, 0, 0, 0);
-                } else {
-                    nextMarketDate = new Date(currentYear, currentMonth + 1, 1, 0, 0, 0);
-                }
-            } else if (currentDay < 1) {
-                // Este mês, dia 1
-                nextMarketDate = new Date(currentYear, currentMonth, 1, 0, 0, 0);
+            // Próxima abertura é 1 de março
+            if (currentMonth < 2 || (currentMonth === 2 && currentDay > 2)) {
+                // Se ainda não chegou março ou já passou dia 2 de março
+                const year = currentMonth >= 2 ? currentYear + 1 : currentYear;
+                nextMarketDate = new Date(year, 2, 1, 0, 0, 0); // 1 de março
+            } else if (currentMonth === 2 && currentDay < 1) {
+                // Março mas antes do dia 1
+                nextMarketDate = new Date(currentYear, 2, 1, 0, 0, 0);
             } else {
                 // Já está aberto
                 return null;
@@ -2766,60 +2766,60 @@
                 <div class="min-h-screen">
                     <!-- Top Navigation -->
                     <nav class="border-b border-zinc-800/50 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-50">
-                        <div class="max-w-6xl mx-auto px-4">
-                            <div class="flex items-center justify-between h-16">
-                                <div class="flex items-center gap-6">
-                                    <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-10">
-                                    <div class="hidden sm:flex items-center gap-1">
-                                        <button onclick="state.screen='lineup';render()" class="px-4 py-2 text-sm font-medium ${state.screen === 'lineup' ? 'text-white' : 'text-zinc-500 hover:text-white'} transition">
+                        <div class="max-w-7xl mx-auto px-8">
+                            <div class="flex items-center justify-between h-24">
+                                <div class="flex items-center gap-10">
+                                    <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-20">
+                                    <div class="hidden sm:flex items-center gap-3">
+                                        <button onclick="state.screen='lineup';render()" class="px-6 py-3 text-lg font-semibold ${state.screen === 'lineup' ? 'text-white' : 'text-zinc-500 hover:text-white'} transition">
                                             Escalação
                                         </button>
-                                        <button onclick="state.screen='userDraft';render()" class="px-4 py-2 text-sm font-medium ${state.screen === 'userDraft' ? 'text-white bg-purple-500/20 rounded-lg' : 'text-purple-400 hover:text-purple-300'} transition flex items-center gap-1">
+                                        <button onclick="state.screen='userDraft';render()" class="px-6 py-3 text-lg font-semibold ${state.screen === 'userDraft' ? 'text-white bg-purple-500/20 rounded-lg' : 'text-purple-400 hover:text-purple-300'} transition flex items-center gap-2">
                                             🎯 Draft
                                         </button>
-                                        <button onclick="openMarketModal()" class="px-4 py-2 text-sm font-medium text-zinc-500 hover:text-white transition flex items-center gap-2">
+                                        <button onclick="openMarketModal()" class="px-6 py-3 text-lg font-semibold text-zinc-500 hover:text-white transition flex items-center gap-2">
                                             Mercado
-                                            ${!isMarketOpen() ? '<span class="w-2 h-2 bg-red-500 rounded-full"></span>' : '<span class="w-2 h-2 bg-green-500 rounded-full"></span>'}
+                                            ${!isMarketOpen() ? '<span class="w-3 h-3 bg-red-500 rounded-full"></span>' : '<span class="w-3 h-3 bg-green-500 rounded-full"></span>'}
                                         </button>
-                                        <button onclick="openTeamsModal()" class="px-4 py-2 text-sm font-medium text-zinc-500 hover:text-white transition">
+                                        <button onclick="openTeamsModal()" class="px-6 py-3 text-lg font-semibold text-zinc-500 hover:text-white transition">
                                             Times
                                         </button>
-                                        <button onclick="goToRanking()" class="px-4 py-2 text-sm font-medium ${state.screen === 'ranking' ? 'text-white' : 'text-zinc-500 hover:text-white'} transition">
+                                        <button onclick="goToRanking()" class="px-6 py-3 text-lg font-semibold ${state.screen === 'ranking' ? 'text-white' : 'text-zinc-500 hover:text-white'} transition">
                                             Ranking/Chat
                                         </button>
                                     </div>
                                 </div>
-                                <div class="flex items-center gap-4">
+                                <div class="flex items-center gap-6">
                                     ${pendingOffers > 0 ? `
                                         <button onclick="openOffersModal()" class="relative p-2 text-zinc-400 hover:text-white transition">
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-                                            <span class="absolute -top-1 -right-1 w-5 h-5 bg-green-500 text-white text-xs flex items-center justify-center rounded-full">${pendingOffers}</span>
+                                            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                                            <span class="absolute -top-1 -right-1 w-6 h-6 bg-green-500 text-white text-sm flex items-center justify-center rounded-full">${pendingOffers}</span>
                                         </button>
                                     ` : ''}
                                     
                                     <!-- Botão de Mensagens -->
                                     <button onclick="openMessagesModal()" class="relative p-2 text-zinc-400 hover:text-white transition" title="Mensagens">
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
-                                        ${getUnreadMessagesCount() > 0 ? `<span class="absolute -top-1 -right-1 w-5 h-5 bg-blue-500 text-white text-xs flex items-center justify-center rounded-full">${getUnreadMessagesCount()}</span>` : ''}
+                                        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                                        ${getUnreadMessagesCount() > 0 ? `<span class="absolute -top-1 -right-1 w-6 h-6 bg-blue-500 text-white text-sm flex items-center justify-center rounded-full">${getUnreadMessagesCount()}</span>` : ''}
                                     </button>
                                     
-                                    <div class="flex items-center gap-3">
+                                    <div class="flex items-center gap-4">
                                         <div class="relative cursor-pointer" onclick="openSettingsModal()">
                                             ${state.teamLogo ? 
-                                                `<img src="${state.teamLogo}" class="w-8 h-8 rounded-full object-cover border-2 border-green-500 hover:opacity-80 transition">` :
-                                                `<div class="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-500 text-sm font-bold hover:bg-zinc-700 transition">${(state.currentUser || 'U')[0].toUpperCase()}</div>`
+                                                `<img src="${state.teamLogo}" class="w-12 h-12 rounded-full object-cover border-2 border-green-500 hover:opacity-80 transition">` :
+                                                `<div class="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-500 text-lg font-bold hover:bg-zinc-700 transition">${(state.currentUser || 'U')[0].toUpperCase()}</div>`
                                             }
-                                            <div class="absolute -bottom-1 -right-1 w-4 h-4 bg-zinc-700 rounded-full flex items-center justify-center">
-                                                <svg class="w-2.5 h-2.5 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                            <div class="absolute -bottom-1 -right-1 w-5 h-5 bg-zinc-700 rounded-full flex items-center justify-center">
+                                                <svg class="w-3 h-3 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
                                             </div>
                                         </div>
                                         <div class="hidden sm:block">
-                                            <p class="text-sm font-medium text-white">${state.teamName || 'Meu Time'}</p>
-                                            <p onclick="viewProfile('${state.currentUser}')" class="text-xs text-zinc-500 cursor-pointer hover:underline">@${state.currentUser}</p>
+                                            <p class="text-lg font-semibold text-white">${state.teamName || 'Meu Time'}</p>
+                                            <p onclick="viewProfile('${state.currentUser}')" class="text-base text-zinc-500 cursor-pointer hover:underline">@${state.currentUser}</p>
                                         </div>
                                     </div>
                                     <button onclick="logout()" class="p-2 text-zinc-500 hover:text-white transition">
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                                     </button>
                                 </div>
                             </div>
@@ -2885,7 +2885,7 @@
                                         <option value="4-4-2" ${state.formation === '4-4-2' ? 'selected' : ''}>4-4-2</option>
                                     </select>
                                 </div>
-                                <div class="campo-bg rounded-xl relative" style="min-height: 500px;">
+                                <div class="campo-bg rounded-xl relative" style="min-height: 620px;">
                                 
                                 <!-- Linhas do campo -->
                                 <div class="campo-linhas"></div>
@@ -2940,7 +2940,7 @@
                             <div class="card rounded-xl p-4">
                                 <div class="flex items-center justify-between mb-4">
                                     <span class="text-zinc-400 text-sm font-medium">PONTUAÇÃO TOTAL</span>
-                                    <span class="text-2xl font-bold text-white">${getTotalScore()}</span>
+                                    <span class="text-4xl font-bold text-green-400">${getTotalScore()}</span>
                                 </div>
                                 <div class="flex items-center gap-2">
                                     <select onchange="changeRound(this.value)" class="flex-1 px-3 py-2 input-dark rounded-lg text-white text-sm">
@@ -2952,26 +2952,42 @@
                                         ${(() => {
                                             const roundScore = state.scores[state.selectedRound];
                                             const isLive = state.hasLiveGames || roundScore?.live;
-                                            const hasScore = roundScore?.total > 0;
+                                            const hasScore = roundScore?.total > 0 || Object.keys(roundScore?.players || {}).length > 0;
                                             
-                                            if (isLive) {
+                                            // Verificar se todos os jogadores do time já jogaram
+                                            const playersWithScore = roundScore?.players || {};
+                                            const allStarters = state.starters.filter(p => p);
+                                            const allReserves = state.reserves.filter(p => p);
+                                            const allPlayers = [...allStarters, ...allReserves];
+                                            const playersPlayed = allPlayers.filter(p => playersWithScore[p.id] !== undefined).length;
+                                            const allPlayersPlayed = allPlayers.length > 0 && playersPlayed === allPlayers.length;
+                                            const playersRemaining = allPlayers.length - playersPlayed;
+                                            
+                                            // Se nem todos jogaram, mostrar quantos faltam
+                                            if (hasScore && !allPlayersPlayed && playersRemaining > 0) {
+                                                return `
+                                                    <span class="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded-lg animate-pulse flex items-center gap-1">
+                                                        <span class="w-2 h-2 bg-yellow-500 rounded-full"></span>
+                                                        ${playersRemaining} jogador${playersRemaining > 1 ? 'es' : ''} restante${playersRemaining > 1 ? 's' : ''}
+                                                    </span>
+                                                `;
+                                            } else if (isLive && !hasScore) {
                                                 return `
                                                     <span class="px-2 py-1 bg-red-500/20 text-red-400 text-xs rounded-lg animate-pulse flex items-center gap-1">
                                                         <span class="w-2 h-2 bg-red-500 rounded-full"></span>
                                                         AO VIVO
                                                     </span>
                                                 `;
-                                            } else if (hasScore && !isLive) {
+                                            } else if (hasScore && allPlayersPlayed) {
                                                 return `
-                                                    <span class="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded-lg flex items-center gap-1">
+                                                    <span class="px-3 py-1.5 bg-green-500/20 text-green-400 text-xs rounded-lg flex items-center gap-2">
                                                         <span class="w-2 h-2 bg-green-500 rounded-full"></span>
-                                                        FINAL
+                                                        ✅ Pontuação fechada
                                                     </span>
                                                 `;
                                             }
                                             return '';
                                         })()}
-                                        <span class="px-3 py-2 bg-zinc-800 rounded-lg text-green-400 font-semibold">${getRoundScore(state.selectedRound || 1)} pts</span>
                                         <button onclick="syncRoundScores()" 
                                             class="p-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-zinc-400 hover:text-white transition ${state.liveScoresUpdating ? 'animate-spin' : ''}"
                                             title="Atualizar pontuação">
@@ -3180,6 +3196,28 @@
                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                                                 Fazer Substituição
                                             </button>
+                                        </div>
+                                    `;
+                                }
+                                
+                                // Verificar se todos os jogadores já jogaram
+                                const roundScore = state.scores[state.selectedRound];
+                                const playersWithScore = roundScore?.players || {};
+                                const allStarters = state.starters.filter(p => p);
+                                const allReserves = state.reserves.filter(p => p);
+                                const allPlayers = [...allStarters, ...allReserves];
+                                const playersPlayed = allPlayers.filter(p => playersWithScore[p.id] !== undefined).length;
+                                const allPlayersPlayed = allPlayers.length > 0 && playersPlayed === allPlayers.length;
+                                
+                                if (allPlayersPlayed) {
+                                    // Rodada encerrada
+                                    return `
+                                        <div class="card rounded-xl p-4 border border-green-500/30 bg-green-500/5">
+                                            <div class="flex items-center gap-2 text-green-400 mb-2">
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                <span class="text-sm font-medium">✅ Pontuação Fechada</span>
+                                            </div>
+                                            <p class="text-zinc-400 text-xs">Prepare-se para a próxima rodada! 🚀</p>
                                         </div>
                                     `;
                                 }
@@ -3451,31 +3489,18 @@
                                     </button>
                                 </div>
                             </div>
-                            
-                            <!-- Tabs -->
-                            <div class="flex gap-2">
-                                <button onclick="state.marketTab='buy';render()" 
-                                    class="flex-1 py-2 rounded-lg text-sm font-medium ${!state.marketTab || state.marketTab === 'buy' ? 'bg-green-500 text-white' : 'bg-zinc-800/50 text-zinc-500'}">
-                                    🛒 Comprar
-                                </button>
-                                <button onclick="state.marketTab='sell';render()" 
-                                    class="flex-1 py-2 rounded-lg text-sm font-medium ${state.marketTab === 'sell' ? 'bg-green-500 text-white' : 'bg-zinc-800/50 text-zinc-500'}">
-                                    💰 Vender
-                                </button>
-                            </div>
                         </div>
                         
                         <div id="marketListContainer" class="p-4 overflow-y-auto" style="max-height: calc(90vh - 250px);">
-                            ${!state.marketTab || state.marketTab === 'buy' ? `
-                                <!-- Lista de jogadores para comprar -->
-                                ${filteredPlayers.length === 0 ? `
-                                    <p class="text-zinc-500 text-center py-8">Nenhum jogador disponível</p>
-                                ` : `
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                        ${filteredPlayers.slice(0, 60).map(p => `
-                                            <div class="bg-zinc-800/50 rounded-lg p-3 flex items-center gap-3">
-                                                <img src="${p.photo}" class="w-12 h-12 rounded-lg object-cover"
-                                                    onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${p.name.charAt(0)}'">
+                            <!-- Lista de jogadores para comprar -->
+                            ${filteredPlayers.length === 0 ? `
+                                <p class="text-zinc-500 text-center py-8">Nenhum jogador disponível</p>
+                            ` : `
+                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                    ${filteredPlayers.slice(0, 60).map(p => `
+                                        <div class="bg-zinc-800/50 rounded-lg p-3 flex items-center gap-3">
+                                            <img src="${p.photo}" class="w-12 h-12 rounded-lg object-cover"
+                                                onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${p.name.charAt(0)}'">>
                                                 <div class="flex-1 min-w-0">
                                                     <p class="text-white text-sm font-medium truncate">${p.name}</p>
                                                     <p class="text-zinc-500 text-xs truncate">${p.team}</p>
@@ -3496,53 +3521,6 @@
                                         <p class="text-zinc-600 text-center text-sm mt-4">Mostrando 60 de ${filteredPlayers.length}. Use os filtros.</p>
                                     ` : ''}
                                 `}
-                            ` : `
-                                <!-- Lista de jogadores do meu time para vender -->
-                                <div class="mb-4">
-                                    <h4 class="text-zinc-400 text-sm mb-2">TITULARES</h4>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                        ${state.starters.map((p, i) => p ? `
-                                            <div class="bg-zinc-800/50 rounded-lg p-3 flex items-center gap-3">
-                                                <img src="${p.photo}" class="w-10 h-10 rounded-lg object-cover"
-                                                    onerror="this.src='https://via.placeholder.com/40/1a1a1a/ffffff?text=${p.name.charAt(0)}'">
-                                                <div class="flex-1 min-w-0">
-                                                    <p class="text-white text-sm font-medium truncate">${p.name}</p>
-                                                    <p class="text-zinc-500 text-xs">${p.position} - ${p.team}</p>
-                                                </div>
-                                                <div class="text-right">
-                                                    <p class="text-green-400 font-bold text-sm">+${getPlayerPrice(p.id)}</p>
-                                                    <button onclick="confirmSellPlayer('starter', ${i})" 
-                                                        class="mt-1 px-2 py-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white text-xs rounded transition">
-                                                        Vender
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ` : '').join('')}
-                                    </div>
-                                </div>
-                                <div>
-                                    <h4 class="text-zinc-400 text-sm mb-2">RESERVAS</h4>
-                                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                                        ${state.reserves.map((p, i) => p ? `
-                                            <div class="bg-zinc-800/50 rounded-lg p-3 flex items-center gap-3">
-                                                <img src="${p.photo}" class="w-10 h-10 rounded-lg object-cover"
-                                                    onerror="this.src='https://via.placeholder.com/40/1a1a1a/ffffff?text=${p.name.charAt(0)}'">
-                                                <div class="flex-1 min-w-0">
-                                                    <p class="text-white text-sm font-medium truncate">${p.name}</p>
-                                                    <p class="text-zinc-500 text-xs">${p.position} - ${p.team}</p>
-                                                </div>
-                                                <div class="text-right">
-                                                    <p class="text-green-400 font-bold text-sm">+${getPlayerPrice(p.id)}</p>
-                                                    <button onclick="confirmSellPlayer('reserve', ${i})" 
-                                                        class="mt-1 px-2 py-1 bg-red-500/20 hover:bg-red-500 text-red-400 hover:text-white text-xs rounded transition">
-                                                        Vender
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ` : '').join('')}
-                                    </div>
-                                </div>
-                            `}
                         </div>
                         
                         <!-- Legenda de preços -->
@@ -4335,7 +4313,7 @@
                                 <svg class="w-8 h-8 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
                             </div>
                             <h3 class="text-xl font-semibold text-white mb-2">Mercado Fechado</h3>
-                            <p class="text-zinc-500 text-sm mb-6">Abre nos dias 1 e 2 de cada mês</p>
+                            <p class="text-zinc-500 text-sm mb-6">Abre nos dias 1 e 2 de Março</p>
                             
                             ${timeLeft ? `
                                 <div class="bg-zinc-800/50 rounded-xl p-4 mb-6">
@@ -4875,15 +4853,15 @@
                 <div class="min-h-screen bg-[#09090b]">
                     <!-- Header -->
                     <nav class="border-b border-white/5 bg-[#0f0f10]">
-                        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-                            <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-10">
-                            <div class="flex items-center gap-3">
-                                <select onchange="state.selectedRound=parseInt(this.value);render()" class="px-3 py-2 input-dark rounded-lg text-white text-sm">
+                        <div class="max-w-7xl mx-auto px-8 h-24 flex items-center justify-between">
+                            <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-20">
+                            <div class="flex items-center gap-5">
+                                <select onchange="state.selectedRound=parseInt(this.value);render()" class="px-5 py-3 input-dark rounded-lg text-white text-lg">
                                     ${Array.from({length: state.currentRound || 1}, (_, i) => `
                                         <option value="${i+1}" ${state.selectedRound === i+1 ? 'selected' : ''}>Rodada ${i+1}</option>
                                     `).join('')}
                                 </select>
-                                <button onclick="state.screen='lineup';render()" class="px-4 py-2 btn-secondary text-white/70 rounded-lg text-sm">
+                                <button onclick="state.screen='lineup';render()" class="px-6 py-3 btn-secondary text-white/70 rounded-lg text-lg font-semibold">
                                     Voltar
                                 </button>
                             </div>
@@ -5289,13 +5267,13 @@
                 <div class="min-h-screen bg-[#09090b]">
                     <!-- Header -->
                     <nav class="border-b border-purple-500/20 bg-purple-500/5">
-                        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-                            <div class="flex items-center gap-3">
-                                <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-10">
-                                <span class="px-3 py-1 bg-purple-500/20 text-purple-400 text-xs font-bold rounded-full">🎯 DRAFT</span>
+                        <div class="max-w-7xl mx-auto px-8 h-24 flex items-center justify-between">
+                            <div class="flex items-center gap-5">
+                                <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-20">
+                                <span class="px-5 py-2 bg-purple-500/20 text-purple-400 text-base font-bold rounded-full">🎯 DRAFT</span>
                             </div>
-                            <button onclick="state.screen='lineup';render()" class="px-4 py-2 btn-secondary text-white/70 rounded-lg text-sm flex items-center gap-2">
-                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                            <button onclick="state.screen='lineup';render()" class="px-6 py-3 btn-secondary text-white/70 rounded-lg text-lg font-semibold flex items-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
                                 Voltar
                             </button>
                         </div>
@@ -5582,12 +5560,12 @@
                 <div class="min-h-screen bg-[#09090b]">
                     <!-- Header Admin -->
                     <nav class="border-b border-white/5 bg-[#0f0f10]">
-                        <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-                            <div class="flex items-center gap-4">
-                                <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-10">
-                                <span class="px-3 py-1 bg-red-500/20 text-red-400 text-xs font-bold rounded">ADMIN</span>
+                        <div class="max-w-7xl mx-auto px-8 h-24 flex items-center justify-between">
+                            <div class="flex items-center gap-5">
+                                <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-20">
+                                <span class="px-5 py-2 bg-red-500/20 text-red-400 text-base font-bold rounded">ADMIN</span>
                             </div>
-                            <button onclick="logout()" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm">
+                            <button onclick="logout()" class="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-lg font-semibold">
                                 Sair
                             </button>
                         </div>
@@ -6158,7 +6136,7 @@
         function getFieldPositions() {
             if (state.formation === '4-4-2') {
                 return [
-                    { top: '8%', left: '50%' },   // 0: GOL
+                    { top: '10%', left: '50%' },   // 0: GOL
                     { top: '28%', left: '15%' },  // 1: LD
                     { top: '28%', left: '38%' },  // 2: ZAG
                     { top: '28%', left: '62%' },  // 3: ZAG
@@ -6173,7 +6151,7 @@
             }
             // 4-3-3 (padrão)
             return [
-                { top: '8%', left: '50%' },   // 0: GOL
+                { top: '10%', left: '50%' },   // 0: GOL
                 { top: '28%', left: '15%' },  // 1: LD
                 { top: '28%', left: '38%' },  // 2: ZAG
                 { top: '28%', left: '62%' },  // 3: ZAG
