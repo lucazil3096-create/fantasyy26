@@ -2650,70 +2650,83 @@
         function renderAuth() {
             return `
                 <div class="min-h-screen flex items-center justify-center p-4">
-                    <div class="card rounded-2xl p-8 w-full max-w-md">
-                        <div class="text-center mb-8">
-                            <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-32 mx-auto mb-2">
+                    <div class="card rounded-2xl p-10 w-full max-w-lg">
+                        <div class="text-center mb-10">
+                            <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-44 mx-auto mb-2">
+                            <p class="text-zinc-600 text-xs tracking-wider">by LUCAS VIEIRA</p>
                         </div>
                         
-                        <div class="flex mb-8 bg-zinc-900 rounded-lg p-1">
-                            <button onclick="setAuthMode('login')" class="flex-1 py-2.5 rounded-md text-sm font-medium transition ${state.authMode === 'login' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}">
+                        <div class="flex mb-8 bg-zinc-900 rounded-xl p-1.5">
+                            <button onclick="setAuthMode('login')" class="flex-1 py-3.5 rounded-lg text-base font-semibold transition ${state.authMode === 'login' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}">
                                 Entrar
                             </button>
-                            <button onclick="setAuthMode('register')" class="flex-1 py-2.5 rounded-md text-sm font-medium transition ${state.authMode === 'register' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}">
+                            <button onclick="setAuthMode('register')" class="flex-1 py-3.5 rounded-lg text-base font-semibold transition ${state.authMode === 'register' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'}">
                                 Cadastrar
                             </button>
                         </div>
                         
-                        <div class="space-y-4">
+                        <div class="space-y-5">
                             <div>
-                                <label class="block text-zinc-400 text-sm mb-2">Nickname</label>
+                                <label class="block text-zinc-400 text-base mb-2">Nickname</label>
                                 <input type="text" id="nickname" placeholder="Seu apelido" 
-                                    class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm"
+                                    class="w-full px-5 py-4 input-dark rounded-xl text-white text-base"
                                     onkeypress="if(event.key==='Enter')document.getElementById('password').focus()">
                             </div>
                             
                             <div>
-                                <label class="block text-zinc-400 text-sm mb-2">Senha</label>
-                                <input type="password" id="password" placeholder="Sua senha" 
-                                    class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm"
-                                    onkeypress="if(event.key==='Enter'){${state.authMode === 'register' ? "document.getElementById('accessCode').focus()" : 'handleAuth()'}}">
+                                <label class="block text-zinc-400 text-base mb-2">Senha</label>
+                                <div class="relative">
+                                    <input type="password" id="password" placeholder="Sua senha" 
+                                        class="w-full px-5 py-4 pr-14 input-dark rounded-xl text-white text-base"
+                                        onkeypress="if(event.key==='Enter'){${state.authMode === 'register' ? "document.getElementById('accessCode').focus()" : 'handleAuth()'}}">
+                                    <button type="button" onclick="togglePasswordVisibility('password')" 
+                                        class="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition p-1">
+                                        <svg id="password-eye-open" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                                        </svg>
+                                        <svg id="password-eye-closed" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+                                        </svg>
+                                    </button>
+                                </div>
                             </div>
                             
                             ${state.authMode === 'register' ? `
                                 <div>
-                                    <label class="block text-zinc-400 text-sm mb-2">Código de Acesso</label>
+                                    <label class="block text-zinc-400 text-base mb-2">Código de Acesso</label>
                                     <input type="text" id="accessCode" placeholder="Código para entrar" 
-                                        class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm"
+                                        class="w-full px-5 py-4 input-dark rounded-xl text-white text-base"
                                         onkeypress="if(event.key==='Enter')handleAuth()">
                                 </div>
                             ` : ''}
                             
                             <button onclick="handleAuth()" 
-                                class="w-full py-3.5 btn-primary text-white font-semibold rounded-lg text-sm mt-6 transition">
+                                class="w-full py-4 btn-primary text-white font-bold rounded-xl text-lg mt-6 transition">
                                 ${state.authMode === 'login' ? 'Entrar' : 'Criar Conta'}
                             </button>
                             
                             ${state.authMode === 'login' ? `
                                 <button onclick="setAuthMode('recover')" 
-                                    class="w-full text-zinc-500 hover:text-zinc-300 text-xs mt-4 transition">
+                                    class="w-full text-zinc-500 hover:text-zinc-300 text-sm mt-4 transition">
                                     Esqueci minha senha
                                 </button>
                             ` : ''}
                             
                             ${state.authMode === 'recover' ? `
-                                <div class="mt-4 p-4 bg-zinc-800/50 rounded-lg">
-                                    <p class="text-zinc-400 text-xs mb-3">Digite o código de acesso para resetar sua senha:</p>
+                                <div class="mt-4 p-5 bg-zinc-800/50 rounded-xl">
+                                    <p class="text-zinc-400 text-sm mb-4">Digite o código de acesso para resetar sua senha:</p>
                                     <input type="text" id="recoverCode" placeholder="Código de acesso" 
-                                        class="w-full px-4 py-2 input-dark rounded-lg text-white text-sm mb-3">
+                                        class="w-full px-5 py-3 input-dark rounded-xl text-white text-base mb-4">
                                     <button onclick="recoverPassword()" 
-                                        class="w-full py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-semibold rounded-lg text-sm transition">
+                                        class="w-full py-3 bg-yellow-500 hover:bg-yellow-400 text-black font-bold rounded-xl text-base transition">
                                         Resetar Senha
                                     </button>
                                 </div>
                             ` : ''}
                         </div>
                         
-                        <p id="authError" class="text-red-500 text-center text-sm mt-4 hidden"></p>
+                        <p id="authError" class="text-red-500 text-center text-base mt-6 hidden"></p>
                     </div>
                 </div>
             `;
@@ -6245,6 +6258,23 @@
         window.setAuthMode = function(mode) {
             state.authMode = mode;
             render();
+        };
+        
+        // Função para mostrar/esconder senha
+        window.togglePasswordVisibility = function(inputId) {
+            const input = document.getElementById(inputId);
+            const eyeOpen = document.getElementById(inputId + '-eye-open');
+            const eyeClosed = document.getElementById(inputId + '-eye-closed');
+            
+            if (input.type === 'password') {
+                input.type = 'text';
+                if (eyeOpen) eyeOpen.classList.add('hidden');
+                if (eyeClosed) eyeClosed.classList.remove('hidden');
+            } else {
+                input.type = 'password';
+                if (eyeOpen) eyeOpen.classList.remove('hidden');
+                if (eyeClosed) eyeClosed.classList.add('hidden');
+            }
         };
         
         // Recuperar/Resetar senha
