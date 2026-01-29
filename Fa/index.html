@@ -640,11 +640,13 @@
                     db.ref('users/' + userNick + '/achievements').set(achievements);
                 }
                 
-                // Notificar novas conquistas
-                newAchievements.forEach(id => {
+                // Notificar novas conquistas (uma de cada vez com delay)
+                newAchievements.forEach((id, index) => {
                     const ach = ACHIEVEMENTS[id];
                     if (ach) {
-                        showAchievementNotification(ach);
+                        setTimeout(() => {
+                            showAchievementNotification(ach);
+                        }, index * 4500); // Delay de 4.5s entre cada uma
                     }
                 });
             }
@@ -652,12 +654,20 @@
             return achievements;
         }
         
+        // Contador de notificações ativas para posicionamento
+        let activeAchievementNotifications = 0;
+        
         // Mostrar notificação de conquista
         function showAchievementNotification(achievement) {
             const rarity = RARITY_COLORS[achievement.rarity] || RARITY_COLORS.common;
             
+            // Calcular posição baseada em notificações ativas
+            const topOffset = 16 + (activeAchievementNotifications * 100);
+            activeAchievementNotifications++;
+            
             const notification = document.createElement('div');
-            notification.className = 'fixed top-4 right-4 z-[99999] animate-bounce';
+            notification.className = 'fixed right-4 z-[99999] animate-bounce';
+            notification.style.top = topOffset + 'px';
             notification.innerHTML = `
                 <div class="card rounded-xl p-4 border-2 ${rarity.border} ${rarity.bg} shadow-2xl max-w-xs">
                     <div class="flex items-center gap-3">
@@ -676,7 +686,10 @@
             setTimeout(() => {
                 notification.classList.remove('animate-bounce');
                 notification.classList.add('transition-opacity', 'duration-500', 'opacity-0');
-                setTimeout(() => notification.remove(), 500);
+                setTimeout(() => {
+                    notification.remove();
+                    activeAchievementNotifications--;
+                }, 500);
             }, 4000);
         }
         
@@ -2410,6 +2423,7 @@
 
                 // Coletar todas as stats dos jogadores de todos os jogos
                 const allPlayerStats = {};
+                const teamsWithGames = new Set(); // Times que tiveram jogos processados
                 
                 for (let i = 0; i < gamesToProcess.length; i++) {
                     const fixture = gamesToProcess[i];
@@ -2417,6 +2431,10 @@
                     if (!fixture || !fixture.teams || !fixture.teams.home || !fixture.teams.away) {
                         continue;
                     }
+                    
+                    // Guardar IDs dos times que jogaram
+                    teamsWithGames.add(fixture.teams.home.id);
+                    teamsWithGames.add(fixture.teams.away.id);
                     
                     console.log(`⚽ ${fixture.teams.home.name} x ${fixture.teams.away.name}`);
                     
@@ -2459,36 +2477,47 @@
                     const isCurrentUser = nick === state.currentUser;
                     
                     userStarters.forEach(player => {
-                        if (player && player.id && allPlayerStats[player.id]) {
-                            const playerData = allPlayerStats[player.id].data;
-                            const score = calculatePlayerScore(playerData);
-                            user.scores[round].players[player.id] = score;
-                            
-                            // Verificar novos gols apenas para o usuário atual
-                            if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
-                                const goals = playerData.statistics[0].goals.total;
-                                const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
-                                    ? allPlayerStats[player.id].fixture?.teams?.home?.name 
-                                    : allPlayerStats[player.id].fixture?.teams?.away?.name;
-                                checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals);
+                        if (player && player.id) {
+                            if (allPlayerStats[player.id]) {
+                                // Jogador tem dados - calcular pontuação normal
+                                const playerData = allPlayerStats[player.id].data;
+                                const score = calculatePlayerScore(playerData);
+                                user.scores[round].players[player.id] = score;
+                                
+                                // Verificar novos gols apenas para o usuário atual
+                                if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
+                                    const goals = playerData.statistics[0].goals.total;
+                                    const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
+                                        ? allPlayerStats[player.id].fixture?.teams?.home?.name 
+                                        : allPlayerStats[player.id].fixture?.teams?.away?.name;
+                                    checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals);
+                                }
+                            } else if (player.teamId && teamsWithGames.has(player.teamId)) {
+                                // Time jogou mas jogador não tem dados = não entrou em campo = 0 pontos
+                                user.scores[round].players[player.id] = 0;
                             }
                         }
                     });
                     
                     userReserves.forEach(player => {
-                        if (player && player.id && allPlayerStats[player.id]) {
-                            const playerData = allPlayerStats[player.id].data;
-                            // Reserva = 50% dos pontos
-                            const score = Math.round(calculatePlayerScore(playerData) * 0.5);
-                            user.scores[round].players[player.id] = score;
-                            
-                            // Verificar novos gols apenas para o usuário atual
-                            if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
-                                const goals = playerData.statistics[0].goals.total;
-                                const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
-                                    ? allPlayerStats[player.id].fixture?.teams?.home?.name 
-                                    : allPlayerStats[player.id].fixture?.teams?.away?.name;
-                                checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals);
+                        if (player && player.id) {
+                            if (allPlayerStats[player.id]) {
+                                // Jogador tem dados - calcular pontuação (50% para reserva)
+                                const playerData = allPlayerStats[player.id].data;
+                                const score = Math.round(calculatePlayerScore(playerData) * 0.5);
+                                user.scores[round].players[player.id] = score;
+                                
+                                // Verificar novos gols apenas para o usuário atual
+                                if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
+                                    const goals = playerData.statistics[0].goals.total;
+                                    const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
+                                        ? allPlayerStats[player.id].fixture?.teams?.home?.name 
+                                        : allPlayerStats[player.id].fixture?.teams?.away?.name;
+                                    checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals);
+                                }
+                            } else if (player.teamId && teamsWithGames.has(player.teamId)) {
+                                // Time jogou mas jogador não tem dados = não entrou em campo = 0 pontos
+                                user.scores[round].players[player.id] = 0;
                             }
                         }
                     });
@@ -6248,6 +6277,19 @@
                         const reader = new FileReader();
                         reader.onload = (ev) => {
                             state.teamLogo = ev.target.result;
+                            
+                            // Atualizar também no objeto do usuário
+                            if (state.users[state.currentUser]) {
+                                state.users[state.currentUser].teamLogo = state.teamLogo;
+                            }
+                            
+                            // Salvar no Firebase
+                            if (db && state.currentUser) {
+                                db.ref('users/' + state.currentUser + '/teamLogo').set(state.teamLogo);
+                                console.log('☁️ Foto de perfil salva no Firebase');
+                            }
+                            
+                            saveState();
                             render();
                         };
                         reader.readAsDataURL(file);
@@ -6655,6 +6697,12 @@
                 const reader = new FileReader();
                 reader.onload = function(ev) {
                     state.teamLogo = ev.target.result;
+                    
+                    // Atualizar também no objeto do usuário
+                    if (state.users[state.currentUser]) {
+                        state.users[state.currentUser].teamLogo = state.teamLogo;
+                    }
+                    
                     render();
                 };
                 reader.readAsDataURL(file);
@@ -6663,6 +6711,9 @@
         
         window.removeTeamLogo = function() {
             state.teamLogo = null;
+            if (state.users[state.currentUser]) {
+                state.users[state.currentUser].teamLogo = null;
+            }
             render();
         };
         
@@ -6680,6 +6731,7 @@
             // Atualizar também no objeto do usuário
             if (state.users[state.currentUser]) {
                 state.users[state.currentUser].teamName = state.teamName;
+                state.users[state.currentUser].teamLogo = state.teamLogo;
                 state.users[state.currentUser].favoriteTeam = state.favoriteTeam;
                 state.users[state.currentUser].userBio = state.userBio;
             }
@@ -6690,6 +6742,7 @@
             if (db && state.currentUser) {
                 db.ref('users/' + state.currentUser).update({
                     teamName: state.teamName,
+                    teamLogo: state.teamLogo || null,
                     favoriteTeam: state.favoriteTeam,
                     userBio: state.userBio
                 });
