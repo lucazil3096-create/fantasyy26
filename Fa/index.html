@@ -3209,7 +3209,7 @@
                                 const playersPlayed = allPlayers.filter(p => playersWithScore[p.id] !== undefined).length;
                                 const allPlayersPlayed = allPlayers.length > 0 && playersPlayed === allPlayers.length;
                                 
-                                if (allPlayersPlayed) {
+                                                if (allPlayersPlayed) {
                                     // Rodada encerrada
                                     return `
                                         <div class="card rounded-xl p-4 border border-green-500/30 bg-green-500/5">
@@ -3218,6 +3218,21 @@
                                                 <span class="text-sm font-medium">✅ Pontuação Fechada</span>
                                             </div>
                                             <p class="text-zinc-400 text-xs">Prepare-se para a próxima rodada! 🚀</p>
+                                        </div>
+                                    `;
+                                }
+                                
+                                // Verificar se usuário não tem time (não participou do draft)
+                                const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
+                                if (!hasTeam) {
+                                    return `
+                                        <div class="card rounded-xl p-4 border border-red-500/30 bg-red-500/5">
+                                            <div class="flex items-center gap-2 text-red-400 mb-2">
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                                <span class="text-sm font-medium">⚠️ Sem Time</span>
+                                            </div>
+                                            <p class="text-zinc-400 text-xs mb-2">Você não participou do draft.</p>
+                                            <p class="text-zinc-500 text-xs">Aguarde o mercado abrir (1-2 de Março) para montar seu time.</p>
                                         </div>
                                     `;
                                 }
@@ -6531,6 +6546,23 @@
                 alert('Escalação confirmada! Use o botão "Fazer Substituição" para trocar titular por reserva.');
                 return;
             }
+            
+            // Verificar se o mercado está fechado e o usuário não tem time (não participou do draft)
+            const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
+            if (!isMarketOpen() && !hasTeam) {
+                alert('⚠️ O Draft já foi realizado!\n\nVocê não participou do draft, então não pode escalar jogadores.\n\nAguarde a abertura do mercado de transferências (dias 1 e 2 de Março) para montar seu time.');
+                return;
+            }
+            
+            // Se mercado fechado e já tem time, não pode adicionar novos jogadores
+            if (!isMarketOpen() && hasTeam) {
+                const currentPlayer = type === 'starter' ? state.starters[index] : state.reserves[index];
+                if (!currentPlayer) {
+                    alert('⚠️ Mercado fechado!\n\nVocê só pode editar jogadores existentes.\nAguarde o mercado abrir para adicionar novos jogadores.');
+                    return;
+                }
+            }
+            
             state.scrollY = window.scrollY;
             state.modal = 'player';
             state.slotIndex = index;
@@ -6550,6 +6582,20 @@
                 alert('Escalação confirmada! Não é possível alterar o técnico.');
                 return;
             }
+            
+            // Verificar se o mercado está fechado e o usuário não tem time (não participou do draft)
+            const hasTeam = state.starters.some(p => p) || state.reserves.some(p => p);
+            if (!isMarketOpen() && !hasTeam) {
+                alert('⚠️ O Draft já foi realizado!\n\nVocê não participou do draft, então não pode escalar jogadores.\n\nAguarde a abertura do mercado de transferências (dias 1 e 2 de Março) para montar seu time.');
+                return;
+            }
+            
+            // Se mercado fechado e não tem técnico
+            if (!isMarketOpen() && !state.coach) {
+                alert('⚠️ Mercado fechado!\n\nVocê não pode adicionar técnico agora.\nAguarde o mercado abrir.');
+                return;
+            }
+            
             state.scrollY = window.scrollY;
             state.modal = 'coach';
             document.body.classList.add('modal-open');
