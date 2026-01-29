@@ -558,6 +558,11 @@
             selectedChatUser: null, // Usuário selecionado para chat privado
             viewingProfile: null, // Perfil sendo visualizado
             viewingPlayer: null, // Jogador sendo visualizado
+            // Admin Panel
+            adminTab: 'transfers', // transfers, users, points, settings
+            adminMarketOpen: null, // null = automático, true/false = manual
+            bannedUsers: [], // Lista de usuários banidos
+            allTransfers: [], // Histórico de todas as transferências
             previousModal: null // Modal anterior (para voltar após fechar perfil)
         };
 
@@ -1607,6 +1612,16 @@
                 return false;
             }
             
+            // Validar posições - só pode trocar mesma posição
+            const myPos = normalizePosition(myPlayer.position);
+            const theirPos = normalizePosition(theirPlayer.position);
+            
+            if (myPos !== theirPos) {
+                const posNames = { 'GOL': 'Goleiro', 'DEF': 'Defensor', 'MEI': 'Meia', 'ATA': 'Atacante' };
+                alert(`Posições incompatíveis!\n\nVocê só pode trocar ${posNames[myPos]} por ${posNames[myPos]}.\n\nSeu jogador: ${posNames[myPos]}\nJogador deles: ${posNames[theirPos]}`);
+                return false;
+            }
+            
             // Calcular data de expiração
             const now = new Date();
             const day = now.getDate();
@@ -1814,13 +1829,14 @@
 
         // ==================== MERCADO DE TRANSFERÊNCIAS ====================
         
-        // Verifica se o MERCADO DE TRANSFERÊNCIAS está aberto (dias 1 e 2 de cada mês, a partir de março)
+        // Verifica se o MERCADO DE TRANSFERÊNCIAS está aberto
         function isMarketOpen() {
-            // MODO TESTE: Sempre aberto
-            // Quando for pra produção, descomentar o código abaixo e remover o return true
-            return true;
+            // Se admin definiu manualmente, usar essa configuração
+            if (state.adminMarketOpen !== null) {
+                return state.adminMarketOpen;
+            }
             
-            /*
+            // Caso contrário, usar regra automática (dias 1 e 2 de cada mês, a partir de março)
             const today = new Date();
             const day = today.getDate();
             const month = today.getMonth(); // 0 = Janeiro, 1 = Fevereiro, 2 = Março...
@@ -1830,7 +1846,6 @@
                 return true;
             }
             return false;
-            */
         }
         
         // Verifica se pode EDITAR ESCALAÇÃO (trocar titulares/reservas, mudar formação)
@@ -2540,6 +2555,20 @@
             };
             return map[pos] || 'MEI';
         }
+        
+        // Retorna posição específica (ZAG/LAT para defensores)
+        // Usa campo specificPosition se disponível, senão tenta inferir
+        function getPlayerSpecificPosition(player) {
+            if (!player) return 'MEI';
+            
+            // Se tem posição específica definida manualmente, usa ela
+            if (player.specificPosition) {
+                return player.specificPosition;
+            }
+            
+            // Se não, usa a função getSpecificPosition normal
+            return getSpecificPosition(player.position);
+        }
 
         // ==================== PONTUAÇÃO ====================
         
@@ -3148,6 +3177,9 @@
                         break;
                     case 'userDraft':
                         root.innerHTML = renderUserDraft();
+                        break;
+                    case 'adminPanel':
+                        root.innerHTML = renderAdminPanel();
                         break;
                     default:
                         state.screen = 'auth';
@@ -4377,7 +4409,7 @@
             
             // Filtrar por posição do slot automaticamente (usando compatibilidade)
             if (positionForSlot) {
-                filtered = filtered.filter(p => isPositionCompatible(p.position, positionForSlot));
+                filtered = filtered.filter(p => isPositionCompatible(p.position, positionForSlot, p));
             }
             
             if (state.filterTeam) {
@@ -4386,7 +4418,7 @@
             
             // Filtro manual de posição (sobrescreve se selecionado)
             if (state.filterPosition) {
-                filtered = state.players.filter(p => !usedIds.includes(p.id) && isPositionCompatible(p.position, state.filterPosition));
+                filtered = state.players.filter(p => !usedIds.includes(p.id) && isPositionCompatible(p.position, state.filterPosition, p));
                 if (state.filterTeam) {
                     filtered = filtered.filter(p => p.team === state.filterTeam);
                 }
@@ -4398,7 +4430,8 @@
             }
 
             const uniqueTeams = [...new Set(state.players.map(p => p.team))].sort();
-            const posLabel = positionForSlot === 'GOL' ? 'Goleiro' : positionForSlot === 'DEF' ? 'Defensor' : positionForSlot === 'MEI' ? 'Meio-campo' : 'Atacante';
+            const posLabels = { 'GOL': 'Goleiro', 'ZAG': 'Zagueiro', 'LAT': 'Lateral', 'DEF': 'Defensor', 'MEI': 'Meio-campo', 'ATA': 'Atacante' };
+            const posLabel = posLabels[positionForSlot] || positionForSlot;
 
             return `
                 <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-2 sm:p-4" onclick="closeModal(event)">
@@ -4433,7 +4466,8 @@
                                     class="px-4 py-3 input-dark text-white rounded-xl text-sm">
                                     <option value="" ${state.filterPosition === '' ? 'selected' : ''}>Todas posicoes</option>
                                     <option value="GOL" ${state.filterPosition === 'GOL' ? 'selected' : ''}>Goleiro</option>
-                                    <option value="DEF" ${state.filterPosition === 'DEF' ? 'selected' : ''}>Defensor</option>
+                                    <option value="ZAG" ${state.filterPosition === 'ZAG' ? 'selected' : ''}>Zagueiro</option>
+                                    <option value="LAT" ${state.filterPosition === 'LAT' ? 'selected' : ''}>Lateral</option>
                                     <option value="MEI" ${state.filterPosition === 'MEI' ? 'selected' : ''}>Meio-campo</option>
                                     <option value="ATA" ${state.filterPosition === 'ATA' ? 'selected' : ''}>Atacante</option>
                                 </select>
@@ -4901,7 +4935,7 @@
             
             // Filtrar por posição do slot automaticamente (usando compatibilidade)
             if (positionForSlot) {
-                filtered = filtered.filter(p => isPositionCompatible(p.position, positionForSlot));
+                filtered = filtered.filter(p => isPositionCompatible(p.position, positionForSlot, p));
             }
             
             if (state.filterTeam) {
@@ -4910,7 +4944,7 @@
             
             // Filtro manual de posição (sobrescreve se selecionado)
             if (state.filterPosition) {
-                filtered = state.players.filter(p => !usedIds.includes(p.id) && isPositionCompatible(p.position, state.filterPosition));
+                filtered = state.players.filter(p => !usedIds.includes(p.id) && isPositionCompatible(p.position, state.filterPosition, p));
                 if (state.filterTeam) {
                     filtered = filtered.filter(p => p.team === state.filterTeam);
                 }
@@ -5260,26 +5294,36 @@
             const myPlayers = [...(state.starters || []).filter(p => p), ...(state.reserves || []).filter(p => p)];
             
             const targetUser = state.offerTargetUser ? state.users[state.offerTargetUser] : null;
-            const targetPlayers = targetUser ? [
+            let targetPlayers = targetUser ? [
                 ...ensureArray(targetUser.starters, 11).filter(p => p),
                 ...ensureArray(targetUser.reserves, 7).filter(p => p)
             ] : [];
             
+            // Filtrar jogadores do alvo pela mesma posição do jogador selecionado
+            const selectedPos = state.selectedPlayerForOffer ? normalizePosition(state.selectedPlayerForOffer.position) : null;
+            if (selectedPos) {
+                targetPlayers = targetPlayers.filter(p => normalizePosition(p.position) === selectedPos);
+            }
+            
             const maxPoints = state.selectedPlayerForOffer ? getMaxTradePoints(state.selectedPlayerForOffer.id) : 0;
+            const posNames = { 'GOL': 'Goleiro', 'DEF': 'Defensor', 'MEI': 'Meia', 'ATA': 'Atacante' };
             
             return `
                 <div class="space-y-5">
                     <!-- Passo 1: Seu jogador -->
                     <div>
-                        <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Seu jogador</label>
+                        <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Seu jogador ${state.selectedPlayerForOffer ? `<span class="text-emerald-400">(${posNames[selectedPos]})</span>` : ''}</label>
                         <div class="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto">
-                            ${myPlayers.map(p => `
-                                <div onclick="state.selectedPlayerForOffer=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
+                            ${myPlayers.map(p => {
+                                const pos = normalizePosition(p.position);
+                                return `
+                                <div onclick="state.selectedPlayerForOffer=${JSON.stringify(p).replace(/"/g, '&quot;')};state.marketPlayerToBuy=null;render()" 
                                     class="cursor-pointer p-1.5 rounded-lg text-center transition ${state.selectedPlayerForOffer?.id === p.id ? 'bg-emerald-600/20 ring-2 ring-emerald-500' : 'bg-zinc-800/50 hover:bg-zinc-800'}">
                                     <img src="${p.photo}" class="w-10 h-10 rounded-full mx-auto object-cover" onerror="this.src='https://via.placeholder.com/40'">
                                     <p class="text-white text-[9px] mt-1 truncate">${p.name.split(' ').pop()}</p>
+                                    <span class="text-[8px] px-1 py-0.5 rounded ${pos === 'GOL' ? 'bg-yellow-500/20 text-yellow-400' : pos === 'DEF' ? 'bg-blue-500/20 text-blue-400' : pos === 'MEI' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${pos}</span>
                                 </div>
-                            `).join('')}
+                            `}).join('')}
                         </div>
                     </div>
                     
@@ -5297,18 +5341,31 @@
                     </div>
                     
                     <!-- Passo 3: Jogador do outro -->
-                    ${state.offerTargetUser && targetPlayers.length > 0 ? `
+                    ${state.offerTargetUser && state.selectedPlayerForOffer ? `
                         <div>
-                            <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">Jogador de ${state.offerTargetUser}</label>
-                            <div class="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto">
-                                ${targetPlayers.map(p => `
-                                    <div onclick="state.marketPlayerToBuy=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
-                                        class="cursor-pointer p-1.5 rounded-lg text-center transition ${state.marketPlayerToBuy?.id === p.id ? 'bg-amber-600/20 ring-2 ring-amber-500' : 'bg-zinc-800/50 hover:bg-zinc-800'}">
-                                        <img src="${p.photo}" class="w-10 h-10 rounded-full mx-auto object-cover" onerror="this.src='https://via.placeholder.com/40'">
-                                        <p class="text-white text-[9px] mt-1 truncate">${p.name.split(' ').pop()}</p>
-                                    </div>
-                                `).join('')}
-                            </div>
+                            <label class="text-xs text-zinc-500 uppercase tracking-wider mb-2 block">${posNames[selectedPos]}${targetPlayers.length > 1 ? 's' : ''} de ${state.offerTargetUser}</label>
+                            ${targetPlayers.length > 0 ? `
+                                <div class="grid grid-cols-5 gap-2 max-h-32 overflow-y-auto">
+                                    ${targetPlayers.map(p => {
+                                        const pos = normalizePosition(p.position);
+                                        return `
+                                        <div onclick="state.marketPlayerToBuy=${JSON.stringify(p).replace(/"/g, '&quot;')};render()" 
+                                            class="cursor-pointer p-1.5 rounded-lg text-center transition ${state.marketPlayerToBuy?.id === p.id ? 'bg-amber-600/20 ring-2 ring-amber-500' : 'bg-zinc-800/50 hover:bg-zinc-800'}">
+                                            <img src="${p.photo}" class="w-10 h-10 rounded-full mx-auto object-cover" onerror="this.src='https://via.placeholder.com/40'">
+                                            <p class="text-white text-[9px] mt-1 truncate">${p.name.split(' ').pop()}</p>
+                                            <span class="text-[8px] px-1 py-0.5 rounded ${pos === 'GOL' ? 'bg-yellow-500/20 text-yellow-400' : pos === 'DEF' ? 'bg-blue-500/20 text-blue-400' : pos === 'MEI' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}">${pos}</span>
+                                        </div>
+                                    `}).join('')}
+                                </div>
+                            ` : `
+                                <div class="text-center py-4 bg-zinc-800/30 rounded-lg">
+                                    <p class="text-zinc-500 text-sm">${state.offerTargetUser} não tem ${posNames[selectedPos].toLowerCase()}s disponíveis</p>
+                                </div>
+                            `}
+                        </div>
+                    ` : state.offerTargetUser ? `
+                        <div class="text-center py-4 bg-zinc-800/30 rounded-lg">
+                            <p class="text-zinc-500 text-sm">Selecione primeiro seu jogador</p>
                         </div>
                     ` : ''}
                     
@@ -5334,22 +5391,23 @@
                         
                         <!-- Preview -->
                         <div class="bg-zinc-800/30 rounded-xl p-4">
+                            <p class="text-center text-zinc-500 text-xs mb-3">Troca de ${posNames[selectedPos]}</p>
                             <div class="flex items-center justify-around">
                                 <div class="text-center">
                                     <img src="${state.selectedPlayerForOffer.photo}" class="w-12 h-12 rounded-full mx-auto object-cover border-2 border-red-500/50">
                                     <p class="text-white text-xs mt-1">${state.selectedPlayerForOffer.name.split(' ').pop()}</p>
-                                    <p class="text-red-400 text-[10px]">Envia</p>
+                                    <p class="text-red-400 text-[10px]">Voce envia</p>
                                 </div>
-                                <div class="text-zinc-600"></div>
+                                <div class="text-zinc-500 text-xl">⇄</div>
                                 <div class="text-center">
                                     <img src="${state.marketPlayerToBuy.photo}" class="w-12 h-12 rounded-full mx-auto object-cover border-2 border-emerald-500/50">
                                     <p class="text-white text-xs mt-1">${state.marketPlayerToBuy.name.split(' ').pop()}</p>
-                                    <p class="text-emerald-400 text-[10px]">Recebe</p>
+                                    <p class="text-emerald-400 text-[10px]">Voce recebe</p>
                                 </div>
                             </div>
                         </div>
                         
-                        <button onclick="submitTradeOffer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-600 text-white rounded-xl font-medium transition">
+                        <button onclick="submitTradeOffer()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-medium transition">
                             Enviar Proposta
                         </button>
                     ` : `
@@ -6439,6 +6497,387 @@
         }
 
         // ==================== DRAFT SYSTEM (ADMIN) ====================
+        // ==================== ADMIN PANEL ====================
+        function renderAdminPanel() {
+            const isAdmin = state.currentUser === 'admin';
+            if (!isAdmin) {
+                state.screen = 'lineup';
+                return renderLineup();
+            }
+            
+            // Coletar todas as transferências de todos os usuários
+            const allTransfers = [];
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (user.scores?.market?.purchases) {
+                    user.scores.market.purchases.forEach(t => {
+                        allTransfers.push({
+                            ...t,
+                            user: nick,
+                            teamName: user.teamName || nick
+                        });
+                    });
+                }
+            });
+            allTransfers.sort((a, b) => new Date(b.date) - new Date(a.date));
+            
+            // Ofertas de troca pendentes e aceitas
+            const pendingTrades = (state.tradeOffers || []).filter(o => o.status === 'pending');
+            const acceptedTrades = (state.tradeOffers || []).filter(o => o.status === 'accepted');
+            const allTrades = (state.tradeOffers || []).sort((a, b) => b.createdAt - a.createdAt);
+            
+            // Lista de usuários
+            const usersList = Object.entries(state.users)
+                .filter(([nick]) => nick !== 'admin')
+                .map(([nick, u]) => ({ nick, ...u }));
+            
+            const marketOpen = isMarketOpen();
+            const marketMode = state.adminMarketOpen === null ? 'auto' : (state.adminMarketOpen ? 'open' : 'closed');
+
+            return `
+                <div class="min-h-screen bg-[#0a0a0a]">
+                    <!-- Header Admin -->
+                    <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl">
+                        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
+                            <div class="flex items-center gap-4">
+                                <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
+                                <span class="px-4 py-1.5 bg-purple-500/20 text-purple-400 text-sm font-display tracking-wider rounded">PAINEL ADMIN</span>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <button onclick="state.screen='draft';render()" class="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-display tracking-wider">
+                                    DRAFT
+                                </button>
+                                <button onclick="logout()" class="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-display tracking-wider">
+                                    SAIR
+                                </button>
+                            </div>
+                        </div>
+                    </nav>
+
+                    <div class="max-w-7xl mx-auto p-4">
+                        <!-- Abas -->
+                        <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
+                            <button onclick="state.adminTab='transfers';render()" 
+                                class="px-5 py-3 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'transfers' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                Transferencias
+                            </button>
+                            <button onclick="state.adminTab='trades';render()" 
+                                class="px-5 py-3 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'trades' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                Trocas (${pendingTrades.length})
+                            </button>
+                            <button onclick="state.adminTab='users';render()" 
+                                class="px-5 py-3 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'users' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                Usuarios (${usersList.length})
+                            </button>
+                            <button onclick="state.adminTab='points';render()" 
+                                class="px-5 py-3 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'points' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                Pontuacao
+                            </button>
+                            <button onclick="state.adminTab='settings';render()" 
+                                class="px-5 py-3 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'settings' ? 'bg-purple-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                Configuracoes
+                            </button>
+                        </div>
+
+                        <!-- Conteúdo -->
+                        ${state.adminTab === 'transfers' ? `
+                            <!-- ABA TRANSFERÊNCIAS -->
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="text-xl font-bold text-white">Historico de Transferencias</h3>
+                                    <span class="text-zinc-500">${allTransfers.length} transacoes</span>
+                                </div>
+                                
+                                ${allTransfers.length === 0 ? `
+                                    <div class="bg-zinc-900 rounded-xl p-8 text-center">
+                                        <p class="text-zinc-500">Nenhuma transferencia realizada ainda</p>
+                                    </div>
+                                ` : `
+                                    <div class="bg-zinc-900 rounded-xl overflow-hidden">
+                                        <div class="overflow-x-auto">
+                                            <table class="w-full">
+                                                <thead class="bg-zinc-800">
+                                                    <tr>
+                                                        <th class="px-4 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Data</th>
+                                                        <th class="px-4 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Usuario</th>
+                                                        <th class="px-4 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Tipo</th>
+                                                        <th class="px-4 py-3 text-left text-xs font-medium text-zinc-400 uppercase">Jogador</th>
+                                                        <th class="px-4 py-3 text-right text-xs font-medium text-zinc-400 uppercase">Valor</th>
+                                                        <th class="px-4 py-3 text-center text-xs font-medium text-zinc-400 uppercase">Acao</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-zinc-800">
+                                                    ${allTransfers.slice(0, 50).map((t, idx) => `
+                                                        <tr class="hover:bg-zinc-800/50">
+                                                            <td class="px-4 py-3 text-sm text-zinc-400">${new Date(t.date).toLocaleDateString('pt-BR')}</td>
+                                                            <td class="px-4 py-3 text-sm text-white">${t.teamName}</td>
+                                                            <td class="px-4 py-3">
+                                                                <span class="px-2 py-1 rounded text-xs ${t.type === 'buy' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">
+                                                                    ${t.type === 'buy' ? 'COMPRA' : 'VENDA'}
+                                                                </span>
+                                                            </td>
+                                                            <td class="px-4 py-3 text-sm text-white">${t.playerName}</td>
+                                                            <td class="px-4 py-3 text-sm text-right ${t.price >= 0 ? 'text-emerald-400' : 'text-red-400'}">${t.price} pts</td>
+                                                            <td class="px-4 py-3 text-center">
+                                                                <button onclick="adminCancelTransfer('${t.user}', ${idx})" 
+                                                                    class="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs">
+                                                                    Cancelar
+                                                                </button>
+                                                            </td>
+                                                        </tr>
+                                                    `).join('')}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                `}
+                            </div>
+                        ` : ''}
+
+                        ${state.adminTab === 'trades' ? `
+                            <!-- ABA TROCAS -->
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="text-xl font-bold text-white">Trocas entre Usuarios</h3>
+                                </div>
+                                
+                                ${allTrades.length === 0 ? `
+                                    <div class="bg-zinc-900 rounded-xl p-8 text-center">
+                                        <p class="text-zinc-500">Nenhuma troca registrada</p>
+                                    </div>
+                                ` : `
+                                    <div class="space-y-3">
+                                        ${allTrades.map(t => `
+                                            <div class="bg-zinc-900 rounded-xl p-4 border ${t.status === 'pending' ? 'border-yellow-500/30' : t.status === 'accepted' ? 'border-emerald-500/30' : 'border-zinc-800'}">
+                                                <div class="flex items-center justify-between mb-3">
+                                                    <div class="flex items-center gap-2">
+                                                        <span class="px-2 py-1 rounded text-xs ${t.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' : t.status === 'accepted' ? 'bg-emerald-500/20 text-emerald-400' : t.status === 'rejected' ? 'bg-red-500/20 text-red-400' : 'bg-zinc-700 text-zinc-400'}">
+                                                            ${t.status === 'pending' ? 'PENDENTE' : t.status === 'accepted' ? 'ACEITA' : t.status === 'rejected' ? 'RECUSADA' : 'EXPIRADA'}
+                                                        </span>
+                                                        <span class="text-zinc-500 text-xs">${new Date(t.createdAt).toLocaleDateString('pt-BR')}</span>
+                                                    </div>
+                                                    ${t.status === 'pending' ? `
+                                                        <button onclick="adminCancelTrade('${t.id}')" 
+                                                            class="px-3 py-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs">
+                                                            Cancelar Troca
+                                                        </button>
+                                                    ` : t.status === 'accepted' ? `
+                                                        <button onclick="adminRevertTrade('${t.id}')" 
+                                                            class="px-3 py-1 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded text-xs">
+                                                            Reverter Troca
+                                                        </button>
+                                                    ` : ''}
+                                                </div>
+                                                <div class="flex items-center gap-4">
+                                                    <div class="flex-1 text-center">
+                                                        <p class="text-white font-medium">${t.fromTeamName || t.from}</p>
+                                                        <p class="text-zinc-500 text-xs">@${t.from}</p>
+                                                        <p class="text-red-400 text-sm mt-1">Envia: ${t.myPlayer?.name || '?'}</p>
+                                                    </div>
+                                                    <div class="text-2xl text-zinc-600">⇄</div>
+                                                    <div class="flex-1 text-center">
+                                                        <p class="text-white font-medium">${state.users[t.to]?.teamName || t.to}</p>
+                                                        <p class="text-zinc-500 text-xs">@${t.to}</p>
+                                                        <p class="text-emerald-400 text-sm mt-1">Envia: ${t.theirPlayer?.name || '?'}</p>
+                                                    </div>
+                                                </div>
+                                                ${t.pointsOffered > 0 ? `
+                                                    <p class="text-center text-amber-400 text-sm mt-2">+ ${t.pointsOffered} pts de bonus</p>
+                                                ` : ''}
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                `}
+                            </div>
+                        ` : ''}
+
+                        ${state.adminTab === 'users' ? `
+                            <!-- ABA USUÁRIOS -->
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="text-xl font-bold text-white">Gerenciar Usuarios</h3>
+                                </div>
+                                
+                                <div class="grid gap-3">
+                                    ${usersList.map(u => {
+                                        const userScore = calculateUserScore(u);
+                                        const isBanned = (state.bannedUsers || []).includes(u.nick);
+                                        return `
+                                            <div class="bg-zinc-900 rounded-xl p-4 flex items-center gap-4 ${isBanned ? 'opacity-50' : ''}">
+                                                <div class="relative">
+                                                    ${u.teamLogo ? 
+                                                        `<img src="${u.teamLogo}" class="w-14 h-14 rounded-xl object-cover">` :
+                                                        `<div class="w-14 h-14 rounded-xl bg-zinc-700 flex items-center justify-center text-zinc-400 text-xl font-bold">${(u.teamName || u.nick)[0]}</div>`
+                                                    }
+                                                    ${u.isConfirmed ? `<span class="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-zinc-900"></span>` : ''}
+                                                </div>
+                                                <div class="flex-1 min-w-0">
+                                                    <p class="text-white font-semibold">${u.teamName || 'Sem time'}</p>
+                                                    <p class="text-zinc-500 text-sm">@${u.nick}</p>
+                                                    <p class="text-emerald-400 text-sm">${userScore} pts</p>
+                                                </div>
+                                                <div class="flex items-center gap-2">
+                                                    ${isBanned ? `
+                                                        <button onclick="adminUnbanUser('${u.nick}')" 
+                                                            class="px-3 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg text-xs">
+                                                            Desbanir
+                                                        </button>
+                                                    ` : `
+                                                        <button onclick="adminRemoveUser('${u.nick}')" 
+                                                            class="px-3 py-2 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded-lg text-xs">
+                                                            Remover da Liga
+                                                        </button>
+                                                        <button onclick="adminBanUser('${u.nick}')" 
+                                                            class="px-3 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg text-xs">
+                                                            Banir
+                                                        </button>
+                                                    `}
+                                                </div>
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        ${state.adminTab === 'points' ? `
+                            <!-- ABA PONTUAÇÃO -->
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="text-xl font-bold text-white">Gerenciar Pontuacao</h3>
+                                </div>
+                                
+                                <div class="bg-zinc-900 rounded-xl p-6">
+                                    <h4 class="text-white font-medium mb-4">Adicionar/Remover Pontos de Usuario</h4>
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                        <div>
+                                            <label class="text-zinc-500 text-sm mb-2 block">Usuario</label>
+                                            <select id="adminPointsUser" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                                <option value="">Selecione...</option>
+                                                ${usersList.map(u => `
+                                                    <option value="${u.nick}">${u.teamName || u.nick} (@${u.nick})</option>
+                                                `).join('')}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="text-zinc-500 text-sm mb-2 block">Pontos (negativo para remover)</label>
+                                            <input type="number" id="adminPointsAmount" placeholder="Ex: 10 ou -5" 
+                                                class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        </div>
+                                        <div>
+                                            <label class="text-zinc-500 text-sm mb-2 block">Motivo</label>
+                                            <input type="text" id="adminPointsReason" placeholder="Ex: Bonus por participacao" 
+                                                class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        </div>
+                                    </div>
+                                    <button onclick="adminAddPoints()" 
+                                        class="mt-4 px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium">
+                                        Aplicar Pontos
+                                    </button>
+                                </div>
+
+                                <div class="bg-zinc-900 rounded-xl p-6">
+                                    <h4 class="text-white font-medium mb-4">Pontuacao por Jogador (Rodada ${state.selectedRound || 1})</h4>
+                                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                                        <div>
+                                            <label class="text-zinc-500 text-sm mb-2 block">Jogador</label>
+                                            <select id="adminPlayerPoints" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                                <option value="">Selecione...</option>
+                                                ${state.players.slice(0, 200).map(p => `
+                                                    <option value="${p.id}">${p.name} (${p.team})</option>
+                                                `).join('')}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label class="text-zinc-500 text-sm mb-2 block">Pontos</label>
+                                            <input type="number" id="adminPlayerPointsAmount" placeholder="Ex: 8" 
+                                                class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        </div>
+                                        <div>
+                                            <label class="text-zinc-500 text-sm mb-2 block">Rodada</label>
+                                            <input type="number" id="adminPlayerRound" value="${state.selectedRound || 1}" min="1" max="38"
+                                                class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        </div>
+                                    </div>
+                                    <button onclick="adminSetPlayerPoints()" 
+                                        class="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">
+                                        Definir Pontuacao do Jogador
+                                    </button>
+                                </div>
+                            </div>
+                        ` : ''}
+
+                        ${state.adminTab === 'settings' ? `
+                            <!-- ABA CONFIGURAÇÕES -->
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <h3 class="text-xl font-bold text-white">Configuracoes do Sistema</h3>
+                                </div>
+                                
+                                <!-- Mercado de Transferências -->
+                                <div class="bg-zinc-900 rounded-xl p-6">
+                                    <h4 class="text-white font-medium mb-4">Mercado de Transferencias</h4>
+                                    <div class="flex items-center gap-4 mb-4">
+                                        <div class="flex-1">
+                                            <p class="text-zinc-400">Status atual: 
+                                                <span class="${marketOpen ? 'text-emerald-400' : 'text-red-400'} font-bold">
+                                                    ${marketOpen ? 'ABERTO' : 'FECHADO'}
+                                                </span>
+                                            </p>
+                                            <p class="text-zinc-500 text-sm">
+                                                Modo: ${marketMode === 'auto' ? 'Automatico (dias 1 e 2 de cada mes)' : marketMode === 'open' ? 'Forcado ABERTO' : 'Forcado FECHADO'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-wrap gap-3">
+                                        <button onclick="adminSetMarket('open')" 
+                                            class="px-5 py-3 ${marketMode === 'open' ? 'bg-emerald-600' : 'bg-zinc-800 hover:bg-zinc-700'} text-white rounded-lg font-medium">
+                                            Abrir Mercado
+                                        </button>
+                                        <button onclick="adminSetMarket('closed')" 
+                                            class="px-5 py-3 ${marketMode === 'closed' ? 'bg-red-600' : 'bg-zinc-800 hover:bg-zinc-700'} text-white rounded-lg font-medium">
+                                            Fechar Mercado
+                                        </button>
+                                        <button onclick="adminSetMarket('auto')" 
+                                            class="px-5 py-3 ${marketMode === 'auto' ? 'bg-blue-600' : 'bg-zinc-800 hover:bg-zinc-700'} text-white rounded-lg font-medium">
+                                            Modo Automatico
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Rodada Atual -->
+                                <div class="bg-zinc-900 rounded-xl p-6">
+                                    <h4 class="text-white font-medium mb-4">Rodada Atual</h4>
+                                    <div class="flex items-center gap-4">
+                                        <input type="number" id="adminCurrentRound" value="${state.selectedRound || 1}" min="1" max="38"
+                                            class="w-32 px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-center text-xl">
+                                        <button onclick="adminSetRound()" 
+                                            class="px-5 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">
+                                            Definir Rodada
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Limpar Dados -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border border-red-500/30">
+                                    <h4 class="text-red-400 font-medium mb-4">Zona de Perigo</h4>
+                                    <div class="flex flex-wrap gap-3">
+                                        <button onclick="adminResetAllScores()" 
+                                            class="px-5 py-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg font-medium">
+                                            Zerar Todas as Pontuacoes
+                                        </button>
+                                        <button onclick="adminResetMarketHistory()" 
+                                            class="px-5 py-3 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-lg font-medium">
+                                            Limpar Historico de Transferencias
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
         function renderDraft() {
             if (!state.isAdmin) {
                 return `<div class="min-h-screen flex items-center justify-center"><p class="text-white">Acesso negado</p></div>`;
@@ -6488,15 +6927,20 @@
                                 <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
                                 <span class="px-4 py-1.5 bg-red-500/20 text-red-400 text-sm font-display tracking-wider rounded">ADMIN</span>
                             </div>
-                            <button onclick="logout()" class="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-base font-display tracking-wider">
-                                SAIR
-                            </button>
+                            <div class="flex items-center gap-3">
+                                <button onclick="state.screen='adminPanel';render()" class="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-display tracking-wider">
+                                    PAINEL
+                                </button>
+                                <button onclick="logout()" class="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm font-display tracking-wider">
+                                    SAIR
+                                </button>
+                            </div>
                         </div>
                     </nav>
 
                     <div class="max-w-7xl mx-auto p-4">
                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-                            <h2 class="font-display text-3xl text-white"> DRAFT - MONTE OS TIMES</h2>
+                            <h2 class="font-display text-3xl text-white">DRAFT - MONTE OS TIMES</h2>
                             
                             <!-- Botão Iniciar/Encerrar Draft -->
                             <div class="flex items-center gap-3">
@@ -6994,7 +7438,8 @@
             // Defensor (zagueiros E laterais - todos são DEF)
             if (upper === 'ZAG' || upper === 'DEF' || upper === 'D' || upper === 'DEFENDER' ||
                 upper === 'CB' || upper === 'LE' || upper === 'LD' || upper === 'LAT' || 
-                upper === 'LB' || upper === 'RB' || upper === 'LWB' || upper === 'RWB') {
+                upper === 'LB' || upper === 'RB' || upper === 'LWB' || upper === 'RWB' ||
+                upper === 'ZAGUEIRO' || upper === 'LATERAL') {
                 return 'DEF';
             }
             
@@ -7016,11 +7461,57 @@
             return 'MEI'; // Default
         }
         
+        // Retorna posição específica para defensores (ZAG ou LAT)
+        function getSpecificPosition(pos) {
+            if (!pos) return 'MEI';
+            const upper = pos.toUpperCase();
+            
+            // Goleiro
+            if (upper === 'GOL' || upper === 'G' || upper === 'GK' || upper === 'GOLEIRO' || upper === 'GOALKEEPER') {
+                return 'GOL';
+            }
+            
+            // DEF genérico (da API) - retorna DEF para aceitar em qualquer slot de defesa
+            if (upper === 'DEF' || upper === 'D' || upper === 'DEFENDER') {
+                return 'DEF';
+            }
+            
+            // Zagueiro específico
+            if (upper === 'ZAG' || upper === 'CB' || upper === 'ZAGUEIRO') {
+                return 'ZAG';
+            }
+            
+            // Lateral específico
+            if (upper === 'LE' || upper === 'LD' || upper === 'LAT' || upper === 'LB' || upper === 'RB' || 
+                upper === 'LWB' || upper === 'RWB' || upper === 'LATERAL') {
+                return 'LAT';
+            }
+            
+            // Meio-campo
+            if (upper === 'MEI' || upper === 'MC' || upper === 'VOL' || upper === 'M' || upper === 'MID' ||
+                upper === 'MIDFIELDER' || upper === 'CM' || upper === 'CDM' || upper === 'CAM' || 
+                upper === 'MEIA' || upper === 'VOLANTE') {
+                return 'MEI';
+            }
+            
+            // Atacante
+            if (upper === 'ATA' || upper === 'A' || upper === 'F' || upper === 'ATTACKER' ||
+                upper === 'PE' || upper === 'PD' || upper === 'SA' || upper === 'CF' || 
+                upper === 'FW' || upper === 'ST' || upper === 'LW' || upper === 'RW' ||
+                upper === 'ATACANTE' || upper === 'PONTA') {
+                return 'ATA';
+            }
+            
+            return 'MEI'; // Default
+        }
+        
         // Labels para exibição
         function getPositionLabel(pos) {
             const labels = {
                 'GOL': 'Goleiro',
                 'DEF': 'Defensor',
+                'ZAG': 'Zagueiro',
+                'LAT': 'Lateral',
                 'MEI': 'Meio-campo',
                 'ATA': 'Atacante'
             };
@@ -7028,20 +7519,40 @@
         }
         
         // Verifica se posição do jogador é compatível com o slot
-        function isPositionCompatible(playerPos, slotPos) {
+        function isPositionCompatible(playerPos, slotPos, player = null) {
             const normalizedPlayer = normalizePosition(playerPos);
+            const specificPlayer = player?.specificPosition || getSpecificPosition(playerPos);
+            
+            // Para slots de ZAG (titulares)
+            if (slotPos === 'ZAG') {
+                // Aceita zagueiros específicos ou defensores genéricos
+                return specificPlayer === 'ZAG' || specificPlayer === 'DEF';
+            }
+            
+            // Para slots de LAT (LD/LE titulares)
+            if (slotPos === 'LAT') {
+                // Aceita laterais específicos ou defensores genéricos
+                return specificPlayer === 'LAT' || specificPlayer === 'DEF';
+            }
+            
+            // Para slots de DEF (reservas), aceita qualquer defensor
+            if (slotPos === 'DEF') {
+                return specificPlayer === 'ZAG' || specificPlayer === 'LAT' || specificPlayer === 'DEF';
+            }
+            
+            // Para outros slots, usa a posição normalizada
             return normalizedPlayer === slotPos;
         }
         
-        // Posições dos titulares por formação
+        // Posições dos titulares por formação (específicas para ZAG/LAT)
         function getPositionForSlot(index) {
             if (state.formation === '4-4-2') {
-                // 4-4-2: 1 GOL, 4 DEF, 4 MEI, 2 ATA
-                const positions = ['GOL', 'DEF', 'DEF', 'DEF', 'DEF', 'MEI', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA'];
+                // 4-4-2: 1 GOL, 2 LAT (LD/LE), 2 ZAG, 4 MEI, 2 ATA
+                const positions = ['GOL', 'LAT', 'ZAG', 'ZAG', 'LAT', 'MEI', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA'];
                 return positions[index];
             }
-            // 4-3-3 (padrão): 1 GOL, 4 DEF, 3 MEI, 3 ATA
-            const positions = ['GOL', 'DEF', 'DEF', 'DEF', 'DEF', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA', 'ATA'];
+            // 4-3-3 (padrão): 1 GOL, 2 LAT (LD/LE), 2 ZAG, 3 MEI, 3 ATA
+            const positions = ['GOL', 'LAT', 'ZAG', 'ZAG', 'LAT', 'MEI', 'MEI', 'MEI', 'ATA', 'ATA', 'ATA'];
             return positions[index];
         }
         
@@ -7462,6 +7973,12 @@
         
         // Função para completar o login
         function completeLogin(nickname, userData) {
+            // Verificar se usuário está banido
+            if (userData.isBanned || (state.bannedUsers || []).includes(nickname)) {
+                alert('Sua conta foi BANIDA. Entre em contato com o administrador.');
+                return;
+            }
+            
             state.currentUser = nickname;
             state.isAdmin = false;
             state.teamName = userData.teamName || '';
@@ -8350,8 +8867,21 @@
         };
 
         window.selectPlayer = function(playerId) {
-            const player = state.players.find(p => p.id === playerId);
-            if (!player) return;
+            const originalPlayer = state.players.find(p => p.id === playerId);
+            if (!originalPlayer) return;
+            
+            // Criar cópia do jogador para não modificar o original
+            const player = { ...originalPlayer };
+            
+            // Se é um defensor genérico (DEF), definir posição específica baseado no slot
+            if (state.slotType === 'starter' && normalizePosition(player.position) === 'DEF') {
+                const slotPos = getPositionForSlot(state.slotIndex);
+                if (slotPos === 'ZAG') {
+                    player.specificPosition = 'ZAG';
+                } else if (slotPos === 'LAT') {
+                    player.specificPosition = 'LAT';
+                }
+            }
             
             if (state.slotType === 'starter') {
                 state.starters[state.slotIndex] = player;
@@ -8684,23 +9214,33 @@
             user.starters = ensureArray(user.starters, 11);
             user.reserves = ensureArray(user.reserves, 7);
             
-            const playerPos = normalizePosition(player.position);
+            const playerPos = getSpecificPosition(player.position);
+            const playerPosNorm = normalizePosition(player.position);
             
             // Se tem slot selecionado, usar ele
             if (state.draftSlotType && state.draftSlotIndex !== null) {
                 const slotPos = state.draftSlotType === 'starter' 
                     ? getPositionForSlot(state.draftSlotIndex)
                     : getReservePosition(state.draftSlotIndex);
-                    
-                if (playerPos !== slotPos) {
-                    alert(`Posição incompatível!\nJogador: ${playerPos}\nSlot: ${slotPos}`);
+                
+                // Verificar compatibilidade
+                if (!isPositionCompatible(player.position, slotPos, player)) {
+                    const posLabels = { 'GOL': 'Goleiro', 'ZAG': 'Zagueiro', 'LAT': 'Lateral', 'DEF': 'Defensor', 'MEI': 'Meia', 'ATA': 'Atacante' };
+                    alert(`Posição incompatível!\nJogador: ${posLabels[playerPos] || playerPos}\nSlot: ${posLabels[slotPos] || slotPos}`);
                     return;
                 }
                 
+                // Criar cópia do jogador e definir posição específica se necessário
+                const playerCopy = { ...player };
+                if (state.draftSlotType === 'starter' && playerPosNorm === 'DEF') {
+                    if (slotPos === 'ZAG') playerCopy.specificPosition = 'ZAG';
+                    else if (slotPos === 'LAT') playerCopy.specificPosition = 'LAT';
+                }
+                
                 if (state.draftSlotType === 'starter') {
-                    user.starters[state.draftSlotIndex] = player;
+                    user.starters[state.draftSlotIndex] = playerCopy;
                 } else {
-                    user.reserves[state.draftSlotIndex] = player;
+                    user.reserves[state.draftSlotIndex] = playerCopy;
                 }
                 
                 state.draftSlotType = null;
@@ -8711,8 +9251,15 @@
                 
                 // Tentar titulares primeiro
                 for (let i = 0; i < 11; i++) {
-                    if (!user.starters[i] && getPositionForSlot(i) === playerPos) {
-                        user.starters[i] = player;
+                    if (!user.starters[i] && isPositionCompatible(player.position, getPositionForSlot(i), player)) {
+                        // Criar cópia com posição específica
+                        const playerCopy = { ...player };
+                        const slotPos = getPositionForSlot(i);
+                        if (playerPosNorm === 'DEF') {
+                            if (slotPos === 'ZAG') playerCopy.specificPosition = 'ZAG';
+                            else if (slotPos === 'LAT') playerCopy.specificPosition = 'LAT';
+                        }
+                        user.starters[i] = playerCopy;
                         added = true;
                         break;
                     }
@@ -8721,8 +9268,8 @@
                 // Se não achou, tentar reservas
                 if (!added) {
                     for (let i = 0; i < 7; i++) {
-                        if (!user.reserves[i] && getReservePosition(i) === playerPos) {
-                            user.reserves[i] = player;
+                        if (!user.reserves[i] && isPositionCompatible(player.position, getReservePosition(i), player)) {
+                            user.reserves[i] = { ...player };
                             added = true;
                             break;
                         }
@@ -8730,7 +9277,8 @@
                 }
                 
                 if (!added) {
-                    alert(`Não há vagas para ${playerPos} no time!`);
+                    const posLabels = { 'GOL': 'Goleiro', 'ZAG': 'Zagueiro', 'LAT': 'Lateral', 'DEF': 'Defensor', 'MEI': 'Meia', 'ATA': 'Atacante' };
+                    alert(`Não há vagas para ${posLabels[playerPos] || playerPos} no time!`);
                     return;
                 }
             }
@@ -9394,6 +9942,314 @@
                 { name: 'Chapecoense', logo: 'https://media.api-sports.io/football/teams/1196.png' },
                 { name: 'Remo', logo: 'https://media.api-sports.io/football/teams/1186.png' }
             ];
+        }
+
+        // ==================== ADMIN FUNCTIONS ====================
+        
+        // Cancelar transferência
+        window.adminCancelTransfer = function(userNick, transferIndex) {
+            if (!confirm(`Cancelar esta transferência de ${userNick}?`)) return;
+            
+            const user = state.users[userNick];
+            if (!user || !user.scores?.market?.purchases) return;
+            
+            const transfer = user.scores.market.purchases[transferIndex];
+            if (!transfer) return;
+            
+            // Remover a transferência
+            user.scores.market.purchases.splice(transferIndex, 1);
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('users/' + userNick + '/scores/market/purchases').set(user.scores.market.purchases);
+            }
+            
+            alert('Transferência cancelada!');
+            render();
+        };
+        
+        // Cancelar troca pendente
+        window.adminCancelTrade = function(tradeId) {
+            if (!confirm('Cancelar esta troca pendente?')) return;
+            
+            if (db) {
+                db.ref('tradeOffers/' + tradeId).update({ 
+                    status: 'cancelled',
+                    cancelledBy: 'admin',
+                    cancelledAt: Date.now()
+                });
+            }
+            
+            alert('Troca cancelada!');
+        };
+        
+        // Reverter troca aceita
+        window.adminRevertTrade = function(tradeId) {
+            if (!confirm('ATENÇÃO: Isso vai reverter a troca e devolver os jogadores aos times originais. Continuar?')) return;
+            
+            const trade = state.tradeOffers.find(t => t.id === tradeId);
+            if (!trade || trade.status !== 'accepted') return;
+            
+            const fromUser = state.users[trade.from];
+            const toUser = state.users[trade.to];
+            
+            if (!fromUser || !toUser) {
+                alert('Usuários não encontrados!');
+                return;
+            }
+            
+            // Encontrar e trocar os jogadores de volta
+            // Em fromUser, remover theirPlayer e adicionar myPlayer
+            // Em toUser, remover myPlayer e adicionar theirPlayer
+            
+            // Simplificação: marcar como revertida
+            if (db) {
+                db.ref('tradeOffers/' + tradeId).update({ 
+                    status: 'reverted',
+                    revertedBy: 'admin',
+                    revertedAt: Date.now()
+                });
+            }
+            
+            alert('Troca marcada como revertida! Os jogadores precisam ser movidos manualmente.');
+        };
+        
+        // Remover usuário da liga
+        window.adminRemoveUser = function(userNick) {
+            if (!confirm(`Remover ${userNick} da liga? O time será desconfirmado.`)) return;
+            
+            const user = state.users[userNick];
+            if (!user) return;
+            
+            // Desconfirmar o time
+            user.isConfirmed = false;
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('users/' + userNick + '/isConfirmed').set(false);
+            }
+            
+            alert(`${userNick} foi removido da liga!`);
+            render();
+        };
+        
+        // Banir usuário
+        window.adminBanUser = function(userNick) {
+            if (!confirm(`BANIR ${userNick}? Ele não poderá mais participar.`)) return;
+            
+            if (!state.bannedUsers) state.bannedUsers = [];
+            if (!state.bannedUsers.includes(userNick)) {
+                state.bannedUsers.push(userNick);
+            }
+            
+            // Desconfirmar o time
+            const user = state.users[userNick];
+            if (user) {
+                user.isConfirmed = false;
+                user.isBanned = true;
+            }
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('bannedUsers').set(state.bannedUsers);
+                db.ref('users/' + userNick + '/isConfirmed').set(false);
+                db.ref('users/' + userNick + '/isBanned').set(true);
+            }
+            
+            alert(`${userNick} foi BANIDO!`);
+            render();
+        };
+        
+        // Desbanir usuário
+        window.adminUnbanUser = function(userNick) {
+            if (!confirm(`Desbanir ${userNick}?`)) return;
+            
+            state.bannedUsers = (state.bannedUsers || []).filter(u => u !== userNick);
+            
+            const user = state.users[userNick];
+            if (user) {
+                user.isBanned = false;
+            }
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('bannedUsers').set(state.bannedUsers);
+                db.ref('users/' + userNick + '/isBanned').set(false);
+            }
+            
+            alert(`${userNick} foi desbanido!`);
+            render();
+        };
+        
+        // Adicionar pontos a usuário
+        window.adminAddPoints = function() {
+            const userNick = document.getElementById('adminPointsUser')?.value;
+            const amount = parseInt(document.getElementById('adminPointsAmount')?.value) || 0;
+            const reason = document.getElementById('adminPointsReason')?.value || 'Ajuste admin';
+            
+            if (!userNick || amount === 0) {
+                alert('Selecione um usuário e digite a quantidade de pontos!');
+                return;
+            }
+            
+            const user = state.users[userNick];
+            if (!user) {
+                alert('Usuário não encontrado!');
+                return;
+            }
+            
+            // Adicionar como transação no mercado
+            if (!user.scores) user.scores = {};
+            if (!user.scores.market) user.scores.market = { players: {}, coach: 0, purchases: [] };
+            if (!user.scores.market.purchases) user.scores.market.purchases = [];
+            
+            user.scores.market.purchases.push({
+                type: amount > 0 ? 'bonus' : 'penalty',
+                playerId: 0,
+                playerName: reason,
+                price: amount,
+                date: new Date().toISOString(),
+                addedBy: 'admin'
+            });
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('users/' + userNick + '/scores/market/purchases').set(user.scores.market.purchases);
+            }
+            
+            alert(`${amount > 0 ? '+' : ''}${amount} pontos ${amount > 0 ? 'adicionados a' : 'removidos de'} ${userNick}!`);
+            
+            // Limpar campos
+            document.getElementById('adminPointsUser').value = '';
+            document.getElementById('adminPointsAmount').value = '';
+            document.getElementById('adminPointsReason').value = '';
+            
+            render();
+        };
+        
+        // Definir pontuação de jogador
+        window.adminSetPlayerPoints = function() {
+            const playerId = parseInt(document.getElementById('adminPlayerPoints')?.value) || 0;
+            const points = parseInt(document.getElementById('adminPlayerPointsAmount')?.value) || 0;
+            const round = parseInt(document.getElementById('adminPlayerRound')?.value) || 1;
+            
+            if (!playerId) {
+                alert('Selecione um jogador!');
+                return;
+            }
+            
+            const player = state.players.find(p => p.id === playerId);
+            if (!player) {
+                alert('Jogador não encontrado!');
+                return;
+            }
+            
+            // Atualizar pontuação no Firebase para todos os usuários que têm esse jogador
+            Object.entries(state.users).forEach(([nick, user]) => {
+                const hasPlayer = [...(user.starters || []), ...(user.reserves || [])].some(p => p && p.id === playerId);
+                if (hasPlayer) {
+                    if (!user.scores) user.scores = {};
+                    if (!user.scores[round]) user.scores[round] = { players: {}, coach: 0 };
+                    user.scores[round].players[playerId] = points;
+                    
+                    if (db) {
+                        db.ref('users/' + nick + '/scores/' + round + '/players/' + playerId).set(points);
+                    }
+                }
+            });
+            
+            alert(`Pontuação de ${player.name} na rodada ${round} definida como ${points} pts!`);
+            render();
+        };
+        
+        // Controle do mercado
+        window.adminSetMarket = function(mode) {
+            if (mode === 'open') {
+                state.adminMarketOpen = true;
+            } else if (mode === 'closed') {
+                state.adminMarketOpen = false;
+            } else {
+                state.adminMarketOpen = null; // automático
+            }
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('settings/marketOpen').set(state.adminMarketOpen);
+            }
+            
+            alert(`Mercado definido como: ${mode === 'open' ? 'ABERTO' : mode === 'closed' ? 'FECHADO' : 'AUTOMÁTICO'}`);
+            render();
+        };
+        
+        // Definir rodada atual
+        window.adminSetRound = function() {
+            const round = parseInt(document.getElementById('adminCurrentRound')?.value) || 1;
+            state.selectedRound = round;
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('settings/currentRound').set(round);
+            }
+            
+            alert(`Rodada atual definida como ${round}!`);
+            render();
+        };
+        
+        // Zerar todas as pontuações
+        window.adminResetAllScores = function() {
+            if (!confirm('ATENÇÃO: Isso vai ZERAR todas as pontuações de TODOS os usuários. Esta ação é IRREVERSÍVEL! Continuar?')) return;
+            if (!confirm('TEM CERTEZA ABSOLUTA? Digite "CONFIRMAR" para continuar.')) return;
+            
+            Object.entries(state.users).forEach(([nick, user]) => {
+                user.scores = {};
+                if (db) {
+                    db.ref('users/' + nick + '/scores').set({});
+                }
+            });
+            
+            alert('Todas as pontuações foram zeradas!');
+            render();
+        };
+        
+        // Limpar histórico de transferências
+        window.adminResetMarketHistory = function() {
+            if (!confirm('Limpar todo o histórico de transferências? Esta ação é IRREVERSÍVEL!')) return;
+            
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (user.scores?.market?.purchases) {
+                    user.scores.market.purchases = [];
+                    if (db) {
+                        db.ref('users/' + nick + '/scores/market/purchases').set([]);
+                    }
+                }
+            });
+            
+            alert('Histórico de transferências limpo!');
+            render();
+        };
+        
+        // Carregar configurações do admin do Firebase
+        function loadAdminSettings() {
+            if (!db) return;
+            
+            db.ref('settings/marketOpen').on('value', (snapshot) => {
+                state.adminMarketOpen = snapshot.val();
+            });
+            
+            db.ref('settings/currentRound').on('value', (snapshot) => {
+                if (snapshot.val()) {
+                    state.selectedRound = snapshot.val();
+                }
+            });
+            
+            db.ref('bannedUsers').on('value', (snapshot) => {
+                state.bannedUsers = snapshot.val() || [];
+            });
+        }
+        
+        // Chamar ao inicializar
+        if (db) {
+            loadAdminSettings();
         }
 
         window.logout = function() {
