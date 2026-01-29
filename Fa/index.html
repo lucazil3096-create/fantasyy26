@@ -7714,17 +7714,21 @@
             const { type, index, slotLabel } = state.draftPlayerModal;
             const slotPos = type === 'starter' ? getPositionForSlot(index) : getReservePosition(index);
             
-            // Pegar jogadores já escalados em todos os times
+            // Pegar jogadores já escalados em todos os times (incluindo o usuário atual)
             const usedPlayerIds = new Set();
             Object.values(state.users).forEach(user => {
-                (user.starters || []).forEach(p => { if (p) usedPlayerIds.add(p.id); });
-                (user.reserves || []).forEach(p => { if (p) usedPlayerIds.add(p.id); });
+                const starters = ensureArray(user.starters, 11);
+                const reserves = ensureArray(user.reserves, 7);
+                starters.forEach(p => { if (p && p.id) usedPlayerIds.add(String(p.id)); });
+                reserves.forEach(p => { if (p && p.id) usedPlayerIds.add(String(p.id)); });
             });
+            
+            console.log('Jogadores já escalados:', usedPlayerIds.size);
             
             // Filtrar jogadores compatíveis e disponíveis
             let compatiblePlayers = state.players.filter(player => {
-                // Não está escalado
-                if (usedPlayerIds.has(player.id)) return false;
+                // Não está escalado em nenhum time
+                if (usedPlayerIds.has(String(player.id))) return false;
                 // É compatível com a posição
                 return isPositionCompatible(player.position, slotPos, player);
             });
@@ -7813,11 +7817,17 @@
             if (!state.draftPlayerModal || !state.selectedDraftUser) return;
             
             const { type, index } = state.draftPlayerModal;
-            const player = state.players.find(p => p.id === playerId);
-            if (!player) return;
+            const player = state.players.find(p => p.id === playerId || String(p.id) === String(playerId));
+            if (!player) {
+                console.error('Jogador não encontrado:', playerId);
+                return;
+            }
             
             const user = state.users[state.selectedDraftUser];
-            if (!user) return;
+            if (!user) {
+                console.error('Usuário não encontrado:', state.selectedDraftUser);
+                return;
+            }
             
             // Garantir arrays
             user.starters = ensureArray(user.starters, 11);
@@ -7838,22 +7848,32 @@
             // Adicionar ao time
             if (type === 'starter') {
                 user.starters[index] = playerCopy;
+                console.log(`Jogador ${player.name} adicionado aos titulares[${index}]`);
             } else {
                 user.reserves[index] = playerCopy;
+                console.log(`Jogador ${player.name} adicionado aos reservas[${index}]`);
             }
             
-            // Fechar modal
-            state.draftPlayerModal = null;
-            state.draftPlayerSearch = '';
+            // Atualizar state.users
+            state.users[state.selectedDraftUser] = user;
             
             // Salvar no Firebase
             if (db) {
                 db.ref('users/' + state.selectedDraftUser).update({
                     starters: user.starters,
                     reserves: user.reserves
+                }).then(() => {
+                    console.log('Salvo no Firebase com sucesso');
+                }).catch(err => {
+                    console.error('Erro ao salvar no Firebase:', err);
                 });
             }
             
+            // Fechar modal DEPOIS de salvar
+            state.draftPlayerModal = null;
+            state.draftPlayerSearch = '';
+            
+            // Renderizar
             render();
         };
         
