@@ -9988,7 +9988,10 @@
             if (!confirm('ATENÇÃO: Isso vai reverter a troca e devolver os jogadores aos times originais. Continuar?')) return;
             
             const trade = state.tradeOffers.find(t => t.id === tradeId);
-            if (!trade || trade.status !== 'accepted') return;
+            if (!trade || trade.status !== 'accepted') {
+                alert('Troca não encontrada ou não está aceita!');
+                return;
+            }
             
             const fromUser = state.users[trade.from];
             const toUser = state.users[trade.to];
@@ -9998,12 +10001,112 @@
                 return;
             }
             
-            // Encontrar e trocar os jogadores de volta
-            // Em fromUser, remover theirPlayer e adicionar myPlayer
-            // Em toUser, remover myPlayer e adicionar theirPlayer
+            // Garantir arrays
+            fromUser.starters = ensureArray(fromUser.starters, 11);
+            fromUser.reserves = ensureArray(fromUser.reserves, 7);
+            toUser.starters = ensureArray(toUser.starters, 11);
+            toUser.reserves = ensureArray(toUser.reserves, 7);
             
-            // Simplificação: marcar como revertida
+            // Na troca original:
+            // - fromUser deu myPlayer e recebeu theirPlayer
+            // - toUser deu theirPlayer e recebeu myPlayer
+            
+            // Para reverter:
+            // - Em fromUser: encontrar theirPlayer, substituir por myPlayer
+            // - Em toUser: encontrar myPlayer, substituir por theirPlayer
+            
+            const myPlayerId = trade.myPlayer?.id;
+            const theirPlayerId = trade.theirPlayer?.id;
+            
+            if (!myPlayerId || !theirPlayerId) {
+                alert('Dados dos jogadores não encontrados na troca!');
+                return;
+            }
+            
+            // Buscar jogadores completos
+            const myPlayerFull = state.players.find(p => p.id === myPlayerId) || trade.myPlayer;
+            const theirPlayerFull = state.players.find(p => p.id === theirPlayerId) || trade.theirPlayer;
+            
+            let fromFixed = false;
+            let toFixed = false;
+            
+            // Em fromUser: encontrar theirPlayer e substituir por myPlayer
+            for (let i = 0; i < 11; i++) {
+                if (fromUser.starters[i]?.id === theirPlayerId) {
+                    fromUser.starters[i] = { ...myPlayerFull };
+                    fromFixed = true;
+                    break;
+                }
+            }
+            if (!fromFixed) {
+                for (let i = 0; i < 7; i++) {
+                    if (fromUser.reserves[i]?.id === theirPlayerId) {
+                        fromUser.reserves[i] = { ...myPlayerFull };
+                        fromFixed = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Em toUser: encontrar myPlayer e substituir por theirPlayer
+            for (let i = 0; i < 11; i++) {
+                if (toUser.starters[i]?.id === myPlayerId) {
+                    toUser.starters[i] = { ...theirPlayerFull };
+                    toFixed = true;
+                    break;
+                }
+            }
+            if (!toFixed) {
+                for (let i = 0; i < 7; i++) {
+                    if (toUser.reserves[i]?.id === myPlayerId) {
+                        toUser.reserves[i] = { ...theirPlayerFull };
+                        toFixed = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Reverter pontos se houver
+            if (trade.pointsOffered > 0) {
+                // fromUser tinha dado pontos, devolver
+                if (!fromUser.scores) fromUser.scores = {};
+                if (!fromUser.scores.market) fromUser.scores.market = { players: {}, coach: 0, purchases: [] };
+                if (!fromUser.scores.market.purchases) fromUser.scores.market.purchases = [];
+                fromUser.scores.market.purchases.push({
+                    type: 'refund',
+                    playerId: 0,
+                    playerName: 'Reversão de troca (pontos devolvidos)',
+                    price: trade.pointsOffered,
+                    date: new Date().toISOString(),
+                    addedBy: 'admin'
+                });
+                
+                // toUser tinha recebido pontos, remover
+                if (!toUser.scores) toUser.scores = {};
+                if (!toUser.scores.market) toUser.scores.market = { players: {}, coach: 0, purchases: [] };
+                if (!toUser.scores.market.purchases) toUser.scores.market.purchases = [];
+                toUser.scores.market.purchases.push({
+                    type: 'deduction',
+                    playerId: 0,
+                    playerName: 'Reversão de troca (pontos removidos)',
+                    price: -trade.pointsOffered,
+                    date: new Date().toISOString(),
+                    addedBy: 'admin'
+                });
+            }
+            
+            // Salvar no Firebase
             if (db) {
+                db.ref('users/' + trade.from).update({
+                    starters: fromUser.starters,
+                    reserves: fromUser.reserves,
+                    scores: fromUser.scores
+                });
+                db.ref('users/' + trade.to).update({
+                    starters: toUser.starters,
+                    reserves: toUser.reserves,
+                    scores: toUser.scores
+                });
                 db.ref('tradeOffers/' + tradeId).update({ 
                     status: 'reverted',
                     revertedBy: 'admin',
@@ -10011,7 +10114,15 @@
                 });
             }
             
-            alert('Troca marcada como revertida! Os jogadores precisam ser movidos manualmente.');
+            if (fromFixed && toFixed) {
+                alert('Troca REVERTIDA com sucesso!\n\n' + 
+                    `${trade.myPlayer.name} voltou para @${trade.from}\n` +
+                    `${trade.theirPlayer.name} voltou para @${trade.to}`);
+            } else {
+                alert('Troca marcada como revertida, mas alguns jogadores podem não ter sido encontrados nos times. Verifique manualmente.');
+            }
+            
+            render();
         };
         
         // Remover usuário da liga
