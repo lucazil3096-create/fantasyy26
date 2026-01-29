@@ -6333,22 +6333,22 @@
                 
                 // Outros participantes
                 participants.forEach(p => {
-                    html += '<div class="w-full p-4 border-b border-zinc-800/50 text-left hover:bg-zinc-800/50 transition flex items-center gap-4">';
+                    html += '<div onclick="state.viewingDraftUser=\'' + p.nick + '\';render()" class="w-full p-4 border-b border-zinc-800/50 text-left hover:bg-zinc-800/50 transition flex items-center gap-4 cursor-pointer">';
                     if (p.teamLogo) {
-                        html += '<img src="' + p.teamLogo + '" onclick="event.stopPropagation();viewProfile(\'' + p.nick + '\')" class="w-12 h-12 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-emerald-500 transition">';
+                        html += '<img src="' + p.teamLogo + '" onclick="event.stopPropagation();viewProfile(\'' + p.nick + '\')" class="w-12 h-12 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">';
                     } else {
-                        html += '<div onclick="event.stopPropagation();viewProfile(\'' + p.nick + '\')" class="w-12 h-12 rounded-full bg-zinc-700 flex items-center justify-center text-white font-bold text-lg cursor-pointer hover:ring-2 hover:ring-emerald-500 transition">' + p.nick[0].toUpperCase() + '</div>';
+                        html += '<div onclick="event.stopPropagation();viewProfile(\'' + p.nick + '\')" class="w-12 h-12 rounded-full bg-zinc-700 flex items-center justify-center text-white font-bold text-lg cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">' + p.nick[0].toUpperCase() + '</div>';
                     }
-                    html += '<div onclick="state.viewingDraftUser=\'' + p.nick + '\';render()" class="flex-1 min-w-0 cursor-pointer">';
+                    html += '<div class="flex-1 min-w-0">';
                     html += '<p class="text-white font-medium truncate text-lg">' + p.teamName + '</p>';
-                    html += '<p onclick="event.stopPropagation();viewProfile(\'' + p.nick + '\')" class="text-zinc-500 text-sm cursor-pointer hover:underline">@' + p.nick + '</p>';
+                    html += '<p class="text-zinc-500 text-sm">@' + p.nick + '</p>';
                     html += '</div>';
                     html += '<div class="text-right">';
                     html += '<p class="text-purple-400 font-bold text-xl">' + p.totalPlayers + '/18</p>';
                     html += '<p class="text-zinc-600 text-xs">' + p.startersCount + ' tit + ' + p.reservesCount + ' res' + (p.hasCoach ? ' + tec' : '') + '</p>';
                     if (p.isComplete) html += '<span class="text-emerald-400 text-xs"> Completo</span>';
                     html += '</div>';
-                    html += '<svg onclick="state.viewingDraftUser=\'' + p.nick + '\';render()" class="w-5 h-5 text-zinc-600 cursor-pointer" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
+                    html += '<svg class="w-5 h-5 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>';
                     html += '</div>';
                 });
                 
@@ -7258,15 +7258,15 @@
                                             const totalPlayers = (u.starters || []).filter(p => p).length + (u.reserves || []).filter(p => p).length;
                                             const isSelected = state.selectedDraftUser === u.nick;
                                             return `
-                                                <div class="w-full p-3 rounded-lg text-left transition ${isSelected ? 'bg-emerald-600/20 border-2 border-emerald-500' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'}">
+                                                <div onclick="selectDraftUser('${u.nick}')" class="w-full p-3 rounded-lg text-left transition cursor-pointer ${isSelected ? 'bg-emerald-600/20 border-2 border-emerald-500' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'}">
                                                     <div class="flex items-center gap-3">
                                                         ${u.teamLogo ? 
-                                                            `<img src="${u.teamLogo}" onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-emerald-500 transition">` :
-                                                            `<div onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-white font-bold cursor-pointer hover:ring-2 hover:ring-emerald-500 transition">${u.nick[0].toUpperCase()}</div>`
+                                                            `<img src="${u.teamLogo}" onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">` :
+                                                            `<div onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-white font-bold cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">${u.nick[0].toUpperCase()}</div>`
                                                         }
-                                                        <div onclick="selectDraftUser('${u.nick}')" class="flex-1 min-w-0 cursor-pointer">
+                                                        <div class="flex-1 min-w-0">
                                                             <p class="text-white font-medium truncate">${u.teamName}</p>
-                                                            <p onclick="event.stopPropagation();viewProfile('${u.nick}')" class="text-zinc-500 text-xs hover:underline cursor-pointer">@${u.nick}</p>
+                                                            <p class="text-zinc-500 text-xs">@${u.nick}</p>
                                                         </div>
                                                         <div class="text-right">
                                                             <span class="text-xs px-2 py-1 rounded ${totalPlayers === 18 ? 'bg-emerald-600/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'}">
@@ -7621,7 +7621,7 @@
                                             ${starters[i].name.split(' ').pop()}
                                         </p>
                                         <button onclick="event.stopPropagation();removePlayerFromDraft('starter', ${i})" 
-                                            class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-xs opacity-0 group-hover:opacity-100 transition">×</button>
+                                            class="absolute -top-1 -right-1 w-5 h-5 bg-red-500 hover:bg-red-400 rounded-full text-white text-xs flex items-center justify-center shadow-lg" title="Remover">×</button>
                                     </div>
                                 ` : `
                                     <div class="text-center">
@@ -7643,16 +7643,16 @@
                                 const hasPlayer = p;
                                 const clickAction = hasPlayer ? '' : `openDraftPlayerModal('reserve', ${i}, '${reserveLabels[i]}')`;
                                 return `
-                                <div class="cursor-pointer relative group" onclick="${clickAction}">
+                                <div class="cursor-pointer relative" onclick="${clickAction}">
                                     ${hasPlayer ? `
-                                        <div class="flex items-center gap-2 bg-zinc-700 rounded-lg p-2">
+                                        <div class="flex items-center gap-2 bg-zinc-700 rounded-lg p-2 pr-8 relative">
                                             <img src="${p.photo}" class="w-8 h-8 rounded-full object-cover">
                                             <div>
                                                 <p class="text-white text-xs">${p.name.split(' ').pop()}</p>
                                                 <p class="text-zinc-500 text-xs">${reserveLabels[i]}</p>
                                             </div>
                                             <button onclick="event.stopPropagation();removePlayerFromDraft('reserve', ${i})" 
-                                                class="w-4 h-4 bg-red-500 rounded-full text-white text-xs opacity-0 group-hover:opacity-100 transition">×</button>
+                                                class="absolute top-1 right-1 w-5 h-5 bg-red-500 hover:bg-red-400 rounded-full text-white text-xs flex items-center justify-center shadow-lg" title="Remover">×</button>
                                         </div>
                                     ` : `
                                         <div class="w-16 h-12 rounded-lg border-2 border-dashed border-zinc-600 flex items-center justify-center hover:border-emerald-400 hover:bg-emerald-500/10 transition">
