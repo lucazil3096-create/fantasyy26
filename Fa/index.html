@@ -1634,8 +1634,8 @@
             return statusMap[status] || { text: status, color: 'text-zinc-500', live: false };
         }
         
-        // CACHE_TIME: tempo em ms que os dados ficam válidos (2 minutos)
-        const FIXTURES_CACHE_TIME = 2 * 60 * 1000;
+        // CACHE_TIME: tempo em ms que os dados ficam válidos (6 horas - economiza API)
+        const FIXTURES_CACHE_TIME = 6 * 60 * 60 * 1000;
         
         // Detectar rodada atual/próxima do campeonato
         async function detectCurrentRound() {
@@ -1752,7 +1752,7 @@
         
         // Buscar jogos da rodada - COM CACHE NO FIREBASE
         async function fetchLiveFixtures() {
-            if (state.isLoadingFixtures) return;
+            // Não verificar isLoadingFixtures aqui - deixar o caller controlar
             state.isLoadingFixtures = true;
             
             const cacheKey = `fixtures_round_${state.selectedRound}`;
@@ -1765,21 +1765,26 @@
                 if (cacheData && cacheData.fixtures && cacheData.fixtures.length > 0 && cacheData.updatedAt) {
                     const cacheAge = Date.now() - cacheData.updatedAt;
                     
-                    // Se o cache é recente (< 2 min), usar ele
+                    // Se o cache é recente, usar ele
                     if (cacheAge < FIXTURES_CACHE_TIME) {
-                        console.log(` Usando cache do Firebase (${Math.round(cacheAge/1000)}s atrás)`);
-                        // Filtrar fixtures válidos (todos os campos necessários)
-                        state.liveFixtures = (cacheData.fixtures || []).filter(f => 
-                            f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away && f.goals !== undefined
-                        );
+                        console.log(`✅ Usando cache do Firebase (${Math.round(cacheAge/1000/60)} min atrás)`);
+                // Filtrar fixtures válidos (todos os campos necessários)
+                state.liveFixtures = (cacheData.fixtures || []).filter(f => 
+                    f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away
+                );
                         
                         // Se filtrou tudo, cache está corrompido - buscar da API
                         if (state.liveFixtures.length === 0 && cacheData.fixtures.length > 0) {
-                            console.log(' Cache corrompido, buscando da API...');
+                            console.log('⚠️ Cache corrompido, buscando da API...');
                         } else {
                             state.fixturesLastUpdate = cacheData.updatedAt;
                             state.isLoadingFixtures = false;
-                            render();
+                            
+                            // Verificar acertos automaticamente após carregar do cache
+                            if (typeof verificarAcertosAutomatico === 'function') {
+                                setTimeout(() => verificarAcertosAutomatico(), 500);
+                            }
+                            
                             return;
                         }
                     }
@@ -1845,9 +1850,15 @@
                 
                 // Filtrar fixtures válidos (todos os campos necessários)
                 state.liveFixtures = (fixtures || []).filter(f => 
-                    f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away && f.goals !== undefined
+                    f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away
                 );
                 state.fixturesLastUpdate = Date.now();
+                
+                // Verificar acertos automaticamente após carregar jogos
+                if (typeof verificarAcertosAutomatico === 'function') {
+                    setTimeout(() => verificarAcertosAutomatico(), 500);
+                }
+                
                 render();
                 
             } catch (e) {
@@ -1882,7 +1893,7 @@
             
             // Filtrar fixtures válidos e ordenar: ao vivo primeiro, depois por horário
             const validFixtures = (state.liveFixtures || []).filter(f => 
-                f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away && f.goals !== undefined
+                f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away
             );
             
             const sorted = validFixtures.sort((a, b) => {
@@ -1907,7 +1918,7 @@
                         </button>
                     </div>
                     <div class="space-y-2 max-h-64 overflow-y-auto">
-                        ${sorted.filter(f => f && f.fixture && f.teams && f.teams.home && f.teams.away && f.goals).map(f => {
+                        ${sorted.filter(f => f && f.fixture && f.teams && f.teams.home && f.teams.away).map(f => {
                             const status = getMatchStatus(f.fixture?.status?.short || 'NS');
                             const elapsed = f.fixture?.status?.elapsed;
                             const date = new Date(f.fixture?.date || Date.now());
@@ -2896,6 +2907,11 @@
                     
                     console.log('☁️ Usuários sincronizados:', Object.keys(cloudUsers).length);
                     state.firebaseSynced = true;
+                    
+                    // Verificar acertos automaticamente após sync
+                    if (state.currentUser && state.liveFixtures && state.liveFixtures.length > 0) {
+                        setTimeout(() => verificarAcertosAutomatico(), 1000);
+                    }
                     
                     // Salvar no localStorage SEM as fotos (economiza espaço)
                     try {
@@ -4586,8 +4602,11 @@
                                     <button onclick="state.screen='lineup';render()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'lineup' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
                                         ESCALACAO
                                     </button>
-                                    <button onclick="state.screen='userDraft';render()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'userDraft' ? 'text-purple-400 bg-purple-500/10 rounded-lg' : 'text-purple-400/70 hover:text-purple-300'} transition">
+                                    <button onclick="state.screen='userDraft';render()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'userDraft' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
                                         DRAFT
+                                    </button>
+                                    <button onclick="openCravarModal()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.modal === 'cravar' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                        CRAVAR
                                     </button>
                                     <button onclick="openMarketModal()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition flex items-center gap-2">
                                         MERCADO
@@ -4633,21 +4652,24 @@
                     <!-- Mobile Nav -->
                     <div class="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 z-50 safe-area-bottom">
                         <div class="flex justify-around items-center py-2">
-                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center p-3 rounded-xl ${state.screen === 'lineup' ? 'text-emerald-400 bg-emerald-500/10' : 'text-zinc-500'}">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'lineup' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                             </button>
-                            <button onclick="state.screen='userDraft';render()" class="flex flex-col items-center p-3 rounded-xl ${state.screen === 'userDraft' ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-500'}">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            <button onclick="state.screen='userDraft';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'userDraft' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
                             </button>
-                            <button onclick="openMarketModal()" class="flex flex-col items-center p-3 rounded-xl text-zinc-500 relative">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-                                ${isMarketOpen() ? '<span class="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full"></span>' : ''}
+                            <button onclick="openCravarModal()" class="flex flex-col items-center p-2 rounded-xl ${state.modal === 'cravar' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><circle cx="12" cy="12" r="6" stroke-width="1.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
                             </button>
-                            <button onclick="openTeamsModal()" class="flex flex-col items-center p-3 rounded-xl text-zinc-500">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                            <button onclick="openMarketModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500 relative">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                                ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full"></span>' : ''}
                             </button>
-                            <button onclick="goToRanking()" class="flex flex-col items-center p-3 rounded-xl ${state.screen === 'ranking' ? 'text-emerald-400 bg-emerald-500/10' : 'text-zinc-500'}">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                            <button onclick="openTeamsModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                            </button>
+                            <button onclick="goToRanking()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'ranking' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                             </button>
                         </div>
                     </div>
@@ -5178,6 +5200,9 @@
 
                 <!-- Modal Configurações -->
                 ${state.modal === 'settings' ? renderSettingsModal() : ''}
+
+                <!-- Modal Cravar Resultado -->
+                ${state.modal === 'cravar' ? renderCravarModal() : ''}
             `;
         }
 
@@ -5287,6 +5312,651 @@
                                 Salvar
                             </button>
                         </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ==================== CRAVAR RESULTADO ====================
+        
+        // Buscar jogos da rodada (usa os mesmos dados que já carregamos da API)
+        function getJogosDaRodada() {
+            // Se tiver jogos carregados da API, usar eles
+            if (state.liveFixtures && state.liveFixtures.length > 0) {
+                const jogos = state.liveFixtures.map(f => {
+                    const date = new Date(f.fixture?.date || Date.now());
+                    const diasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                    const hoje = new Date();
+                    const ehHoje = date.toDateString() === hoje.toDateString();
+                    const ehAmanha = date.toDateString() === new Date(hoje.getTime() + 86400000).toDateString();
+                    
+                    // Formato: "Qua 28/01 19:00"
+                    const diaSemana = diasSemana[date.getDay()];
+                    const dia = date.getDate().toString().padStart(2, '0');
+                    const mes = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const hora = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    
+                    let dataStr = `${diaSemana} ${dia}/${mes} ${hora}`;
+                    
+                    return {
+                        id: f.fixture?.id || Math.random(),
+                        casa: f.teams?.home?.name || 'Time A',
+                        fora: f.teams?.away?.name || 'Time B',
+                        casaLogo: f.teams?.home?.logo || '',
+                        foraLogo: f.teams?.away?.logo || '',
+                        data: dataStr,
+                        timestamp: date.getTime(), // Timestamp para ordenação e verificação
+                        status: f.fixture?.status?.short || 'NS',
+                        golsCasa: f.goals?.home,
+                        golsFora: f.goals?.away,
+                        fixtureData: f // Guardar dados originais
+                    };
+                });
+                
+                // Ordenar por data (primeiro os que vão acontecer, depois os finalizados)
+                return jogos.sort((a, b) => {
+                    // Jogos não iniciados primeiro, ordenados por horário
+                    const aIniciou = !['NS', 'TBD', 'PST'].includes(a.status);
+                    const bIniciou = !['NS', 'TBD', 'PST'].includes(b.status);
+                    
+                    if (!aIniciou && bIniciou) return -1;
+                    if (aIniciou && !bIniciou) return 1;
+                    
+                    return a.timestamp - b.timestamp;
+                });
+            }
+            
+            // Se admin definiu jogos customizados, usar eles
+            if (state.jogosDaRodada && state.jogosDaRodada.length > 0) {
+                return state.jogosDaRodada;
+            }
+            
+            // Retornar vazio se não tiver jogos
+            return [];
+        }
+        
+        // Abrir modal de cravar
+        window.openCravarModal = async function() {
+            state.modal = 'cravar';
+            
+            // Sincronizar rodada selecionada com rodada atual
+            state.selectedRound = state.currentRound;
+            
+            // Inicializar palpites se não existirem
+            if (!state.palpites) state.palpites = {};
+            if (!state.palpites[state.currentRound]) {
+                state.palpites[state.currentRound] = {};
+            }
+            
+            // Resetar flag de loading
+            state.isLoadingFixtures = false;
+            
+            // Mostrar modal primeiro
+            render();
+            
+            // Se não tiver jogos carregados, buscar da API
+            if (!state.liveFixtures || state.liveFixtures.length === 0) {
+                state.isLoadingFixtures = true;
+                render();
+                
+                try {
+                    await fetchLiveFixtures();
+                } catch(e) {
+                    console.error('Erro ao buscar jogos:', e);
+                }
+                
+                state.isLoadingFixtures = false;
+                render();
+            }
+            
+            // Verificar acertos automaticamente
+            verificarAcertosAutomatico();
+        };
+        
+        // Função para verificar acertos e dar pontos automaticamente (só quando rodada acabar)
+        function verificarAcertosAutomatico() {
+            if (!state.currentUser) return;
+            
+            const rodada = state.currentRound;
+            const jogos = getJogosDaRodada();
+            const userData = state.users?.[state.currentUser];
+            
+            if (!userData) return;
+            if (jogos.length === 0) return;
+            
+            // Verificar se o usuário cravou palpites
+            const palpites = userData.palpitesCravados?.[rodada];
+            if (!palpites) return;
+            
+            // Verificar se TODOS os jogos da rodada terminaram
+            const todosFinalizados = jogos.every(jogo => jogo.status === 'FT');
+            if (!todosFinalizados) {
+                console.log(`⏳ Rodada ${rodada} ainda não acabou - aguardando todos os jogos finalizarem`);
+                return;
+            }
+            
+            // Verificar se já recebeu bônus desta rodada
+            const jaRecebeuBonus = userData.scores?.market?.purchases?.some(p => 
+                p.type === 'cravar_bonus' && p.playerName && p.playerName.includes(`Rodada ${rodada}`)
+            );
+            
+            if (jaRecebeuBonus) return;
+            
+            // Contar acertos em jogos finalizados
+            let acertos = 0;
+            let jogosAcertados = [];
+            
+            jogos.forEach(jogo => {
+                if (jogo.golsCasa === null || jogo.golsFora === null) return;
+                
+                // Buscar palpite do usuário
+                const palpite = palpites[jogo.id] || palpites[String(jogo.id)];
+                if (!palpite || palpite.casa === '' || palpite.fora === '') return;
+                
+                // Comparar (converter para string)
+                const palpiteCasa = String(palpite.casa).trim();
+                const palpiteFora = String(palpite.fora).trim();
+                const resultadoCasa = String(jogo.golsCasa).trim();
+                const resultadoFora = String(jogo.golsFora).trim();
+                
+                if (palpiteCasa === resultadoCasa && palpiteFora === resultadoFora) {
+                    acertos++;
+                    jogosAcertados.push(`${jogo.casa} ${palpiteCasa}x${palpiteFora} ${jogo.fora}`);
+                }
+            });
+            
+            // Se teve acertos, dar pontos automaticamente
+            if (acertos > 0) {
+                const pontosGanhos = acertos * 5;
+                
+                console.log(`✓ Rodada ${rodada} encerrada! @${state.currentUser} acertou ${acertos} palpite(s) = +${pontosGanhos} pts`);
+                jogosAcertados.forEach(j => console.log(`  ✓ ${j}`));
+                
+                // Adicionar pontos ao usuário
+                if (!userData.scores) userData.scores = {};
+                if (!userData.scores.market) userData.scores.market = { purchases: [] };
+                if (!userData.scores.market.purchases) userData.scores.market.purchases = [];
+                if (!Array.isArray(userData.scores.market.purchases)) userData.scores.market.purchases = [];
+                
+                userData.scores.market.purchases.push({
+                    type: 'cravar_bonus',
+                    playerId: 0,
+                    playerName: `Cravar Rodada ${rodada} (${acertos} acerto${acertos > 1 ? 's' : ''})`,
+                    price: pontosGanhos,
+                    date: new Date().toISOString()
+                });
+                
+                // Atualizar state.scores também
+                if (!state.scores) state.scores = {};
+                if (!state.scores.market) state.scores.market = { purchases: [] };
+                state.scores.market = userData.scores.market;
+                
+                // Salvar no Firebase
+                if (db) {
+                    db.ref('users/' + state.currentUser + '/scores/market').set(userData.scores.market);
+                }
+                
+                // Mostrar notificação
+                setTimeout(() => {
+                    alert(`Rodada ${rodada} encerrada!\n\nVocê acertou ${acertos} palpite(s)!\n+${pontosGanhos} pontos adicionados!`);
+                }, 500);
+                
+                render();
+            } else if (todosFinalizados) {
+                // Rodada acabou mas não acertou nada - marcar como verificado
+                console.log(`✗ Rodada ${rodada} encerrada - @${state.currentUser} não acertou nenhum palpite`);
+            }
+        }
+        
+        // Atualizar palpite
+        window.updatePalpite = function(jogoId, tipo, valor) {
+            if (!state.palpites) state.palpites = {};
+            if (!state.palpites[state.currentRound]) {
+                state.palpites[state.currentRound] = {};
+            }
+            if (!state.palpites[state.currentRound][jogoId]) {
+                state.palpites[state.currentRound][jogoId] = { casa: '', fora: '' };
+            }
+            
+            // Só aceitar números
+            const numVal = valor.replace(/[^0-9]/g, '');
+            state.palpites[state.currentRound][jogoId][tipo] = numVal;
+            
+            // Atualizar input visualmente
+            const input = document.getElementById(`palpite-${jogoId}-${tipo}`);
+            if (input) input.value = numVal;
+        };
+        
+        // Verificar se pode fazer palpite (30 min antes do jogo)
+        function podeApostar(jogo) {
+            // Se o jogo já começou ou terminou, não pode
+            const statusNaoComeçou = ['NS', 'TBD', 'PST'];
+            if (!statusNaoComeçou.includes(jogo.status)) {
+                return false;
+            }
+            
+            // Verificar se falta mais de 30 minutos para o jogo
+            if (jogo.timestamp) {
+                const agora = Date.now();
+                const tempoAteJogo = jogo.timestamp - agora;
+                const trintaMinutos = 30 * 60 * 1000; // 30 min em ms
+                
+                // Pode apostar se falta mais de 30 min
+                return tempoAteJogo > trintaMinutos;
+            }
+            
+            // Se não tem timestamp, verificar só o status
+            return statusNaoComeçou.includes(jogo.status);
+        }
+        
+        // Calcular tempo restante para apostar
+        function getTempoRestante(jogo) {
+            if (!jogo.timestamp) return null;
+            
+            const agora = Date.now();
+            const trintaMinutos = 30 * 60 * 1000;
+            const tempoAteFechar = jogo.timestamp - trintaMinutos - agora;
+            
+            if (tempoAteFechar <= 0) return null;
+            
+            const horas = Math.floor(tempoAteFechar / (60 * 60 * 1000));
+            const minutos = Math.floor((tempoAteFechar % (60 * 60 * 1000)) / (60 * 1000));
+            
+            if (horas > 24) {
+                const dias = Math.floor(horas / 24);
+                return `${dias}d ${horas % 24}h`;
+            } else if (horas > 0) {
+                return `${horas}h ${minutos}min`;
+            } else {
+                return `${minutos}min`;
+            }
+        }
+        
+        // Cravar resultados
+        window.cravarResultados = function() {
+            if (!state.currentUser) return;
+            
+            const rodada = state.currentRound;
+            const palpitesRodada = state.palpites?.[rodada] || {};
+            const jogos = getJogosDaRodada();
+            
+            // Verificar se todos os palpites foram preenchidos
+            let palpitesCompletos = 0;
+            let palpitesIncompletos = 0;
+            let jogosBloqueados = 0;
+            
+            jogos.forEach(jogo => {
+                const p = palpitesRodada[jogo.id];
+                if (!podeApostar(jogo)) {
+                    jogosBloqueados++;
+                    return;
+                }
+                if (p && p.casa !== '' && p.fora !== '') {
+                    palpitesCompletos++;
+                } else {
+                    palpitesIncompletos++;
+                }
+            });
+            
+            if (palpitesCompletos === 0) {
+                alert('❌ Preencha pelo menos um palpite!\n\nJogos que já começaram não podem receber palpites.');
+                return;
+            }
+            
+            // Verificar se já cravou nesta rodada
+            const userData = state.users[state.currentUser];
+            if (userData?.palpitesCravados?.[rodada]) {
+                alert('⚠️ Você já cravou seus palpites para esta rodada!');
+                return;
+            }
+            
+            // Confirmar
+            let msg = `Cravar ${palpitesCompletos} palpite(s) para a Rodada ${rodada}?\n\n`;
+            if (palpitesIncompletos > 0) msg += `⚠️ ${palpitesIncompletos} jogo(s) sem palpite.\n`;
+            if (jogosBloqueados > 0) msg += `🔒 ${jogosBloqueados} jogo(s) já começaram.\n`;
+            
+            if (!confirm(msg)) return;
+            
+            // Filtrar apenas jogos que podem receber palpite
+            const palpitesValidos = {};
+            jogos.forEach(jogo => {
+                if (podeApostar(jogo) && palpitesRodada[jogo.id]) {
+                    palpitesValidos[jogo.id] = palpitesRodada[jogo.id];
+                }
+            });
+            
+            // Salvar palpites cravados
+            if (!userData.palpitesCravados) userData.palpitesCravados = {};
+            userData.palpitesCravados[rodada] = {
+                ...palpitesValidos,
+                cravadoEm: Date.now()
+            };
+            
+            // Salvar no Firebase
+            if (db) {
+                db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(userData.palpitesCravados[rodada]);
+            }
+            
+            alert(`${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
+            
+            closeModalDirect();
+        };
+        
+        // Renderizar modal de cravar
+        function renderCravarModal() {
+            const jogos = getJogosDaRodada();
+            const rodada = state.currentRound;
+            const palpitesRodada = state.palpites?.[rodada] || {};
+            
+            // Verificar se já cravou - pegar dados salvos
+            const userData = state.users?.[state.currentUser] || {};
+            const dadosCravados = userData.palpitesCravados?.[rodada] || null;
+            const jaCravou = !!dadosCravados;
+            
+            // Se está carregando
+            if (state.isLoadingFixtures) {
+                return `
+                    <div class="fixed inset-0 bg-black/95 flex items-center justify-center p-4" style="z-index: 99999;" onclick="closeModal(event)">
+                        <div class="card rounded-2xl p-8 text-center" onclick="event.stopPropagation()">
+                            <div class="animate-spin w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+                            <p class="text-white mb-4">Carregando jogos da rodada...</p>
+                            <button onclick="state.isLoadingFixtures=false;closeModalDirect()" class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm">
+                                Cancelar
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Se não tem jogos
+            if (jogos.length === 0) {
+                return `
+                    <div class="fixed inset-0 bg-black/95 flex items-center justify-center p-4" style="z-index: 99999;" onclick="closeModal(event)">
+                        <div class="card rounded-2xl p-8 text-center max-w-md" onclick="event.stopPropagation()">
+                            <span class="text-5xl mb-4 block">⚽</span>
+                            <h2 class="text-xl font-bold text-white mb-2">Nenhum jogo encontrado</h2>
+                            <p class="text-zinc-400 mb-4">Os jogos da Rodada ${rodada} ainda não estão disponíveis na API.</p>
+                            <div class="flex gap-2 justify-center">
+                                <button onclick="state.selectedRound=${rodada};fetchLiveFixtures().then(() => render())" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg">
+                                    🔄 Tentar novamente
+                                </button>
+                                <button onclick="closeModalDirect()" class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg">
+                                    Fechar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Contar jogos disponíveis para palpite
+            const jogosDisponiveis = jogos.filter(j => podeApostar(j)).length;
+            const todosFinalizados = jogos.every(j => j.status === 'FT');
+            
+            // Gerar HTML dos jogos
+            const jogosHtml = jogos.map(jogo => {
+                // Buscar palpite salvo (garantir que nunca seja undefined)
+                let palpiteCasa = '';
+                let palpiteFora = '';
+                
+                // Se já cravou, buscar do Firebase
+                if (jaCravou && dadosCravados) {
+                    const palpiteSalvo = dadosCravados[jogo.id] || dadosCravados[String(jogo.id)] || null;
+                    if (palpiteSalvo && typeof palpiteSalvo === 'object') {
+                        palpiteCasa = palpiteSalvo.casa ?? '';
+                        palpiteFora = palpiteSalvo.fora ?? '';
+                    }
+                } else {
+                    // Palpite ainda não cravado (em edição)
+                    const palpiteAtual = palpitesRodada[jogo.id] || palpitesRodada[String(jogo.id)] || null;
+                    if (palpiteAtual && typeof palpiteAtual === 'object') {
+                        palpiteCasa = palpiteAtual.casa ?? '';
+                        palpiteFora = palpiteAtual.fora ?? '';
+                    }
+                }
+                
+                const podeApostarJogo = podeApostar(jogo);
+                const jogoFinalizado = jogo.status === 'FT';
+                const jogoAoVivo = ['1H', '2H', 'HT', 'LIVE', 'ET', 'P'].includes(jogo.status);
+                const tempoRestante = getTempoRestante(jogo);
+                
+                // Verificar se acertou (só se já cravou e jogo finalizou)
+                let acertou = false;
+                const temPalpite = palpiteCasa !== '' && palpiteFora !== '';
+                if (jaCravou && jogoFinalizado && temPalpite) {
+                    acertou = String(palpiteCasa) === String(jogo.golsCasa) && 
+                              String(palpiteFora) === String(jogo.golsFora);
+                }
+                
+                // Status do jogo (data/hora + estado)
+                let statusText = jogo.data || '';
+                let statusClass = 'text-zinc-500';
+                let statusExtra = '';
+                
+                if (jogoFinalizado) {
+                    statusExtra = ' · Encerrado';
+                    statusClass = 'text-emerald-400';
+                } else if (jogoAoVivo) {
+                    statusExtra = ' · Ao vivo';
+                    statusClass = 'text-red-400';
+                } else if (!podeApostarJogo) {
+                    statusExtra = ' · Fechado';
+                    statusClass = 'text-amber-400';
+                } else if (tempoRestante) {
+                    statusText = tempoRestante + ' para apostar';
+                    statusClass = 'text-blue-400';
+                }
+                
+                // Estilo do card baseado no estado
+                let cardClass = 'bg-zinc-800/30 border-zinc-700/30';
+                if (jogoFinalizado) {
+                    cardClass = acertou ? 'bg-emerald-500/10 border-emerald-500/50' : 'bg-zinc-900/50 border-zinc-700/50';
+                } else if (!podeApostarJogo) {
+                    cardClass = 'bg-zinc-900/50 border-zinc-700/30 opacity-70';
+                }
+                
+                return `
+                    <div class="p-4 rounded-xl ${cardClass} border transition relative">
+                        <!-- Indicador de acerto/erro no canto -->
+                        ${jogoFinalizado && jaCravou ? `
+                            <div class="absolute top-2 right-2 text-xs font-bold px-2 py-1 rounded ${acertou ? 'text-emerald-400 bg-emerald-500/20' : temPalpite ? 'text-red-400 bg-red-500/20' : 'text-zinc-500 bg-zinc-700/50'}">
+                                ${acertou ? '+5 pts' : temPalpite ? 'Errou' : '—'}
+                            </div>
+                        ` : ''}
+                        
+                        <div class="flex items-center justify-between gap-2">
+                            <!-- Time Casa -->
+                            <div class="flex-1 flex items-center gap-2 justify-end">
+                                <span class="text-white font-medium text-sm text-right truncate">${jogo.casa || 'Time A'}</span>
+                                ${jogo.casaLogo ? `<img src="${jogo.casaLogo}" class="w-8 h-8 object-contain">` : `<div class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs">${(jogo.casa || 'A').charAt(0)}</div>`}
+                            </div>
+                            
+                            <!-- Placar Central -->
+                            <div class="flex flex-col items-center gap-1 px-2">
+                                ${(jogoFinalizado || jogoAoVivo || !podeApostarJogo) && jaCravou ? `
+                                    <!-- Sem palpite - texto vermelho -->
+                                    ${!temPalpite ? `
+                                        <p class="text-red-400 text-xs font-medium mb-1">Sem palpite</p>
+                                        <div class="flex items-center gap-1">
+                                            <span class="w-11 h-11 flex items-center justify-center text-xl font-bold text-zinc-600 bg-zinc-800 rounded-lg border-2 border-zinc-700">-</span>
+                                            <span class="text-zinc-600 font-bold text-lg">×</span>
+                                            <span class="w-11 h-11 flex items-center justify-center text-xl font-bold text-zinc-600 bg-zinc-800 rounded-lg border-2 border-zinc-700">-</span>
+                                        </div>
+                                    ` : `
+                                        <!-- Com palpite - mostrar palpite nos quadrados grandes -->
+                                        <p class="text-zinc-400 text-xs mb-1">Seu palpite</p>
+                                        <div class="flex items-center gap-1">
+                                            <span class="w-11 h-11 flex items-center justify-center text-xl font-bold ${acertou ? 'text-emerald-400 bg-emerald-600/30 border-emerald-500' : 'text-white bg-zinc-800 border-zinc-600'} rounded-lg border-2">${palpiteCasa}</span>
+                                            <span class="text-zinc-500 font-bold text-lg">×</span>
+                                            <span class="w-11 h-11 flex items-center justify-center text-xl font-bold ${acertou ? 'text-emerald-400 bg-emerald-600/30 border-emerald-500' : 'text-white bg-zinc-800 border-zinc-600'} rounded-lg border-2">${palpiteFora}</span>
+                                        </div>
+                                    `}
+                                    
+                                    <!-- Resultado real embaixo -->
+                                    ${jogoFinalizado ? `
+                                        <p class="text-emerald-400 text-xs mt-2">Resultado: <span class="font-bold">${jogo.golsCasa ?? 0} x ${jogo.golsFora ?? 0}</span></p>
+                                    ` : jogoAoVivo ? `
+                                        <p class="text-red-400 text-xs mt-2 animate-pulse">Parcial: <span class="font-bold">${jogo.golsCasa ?? 0} x ${jogo.golsFora ?? 0}</span></p>
+                                    ` : ''}
+                                ` : (jogoFinalizado || jogoAoVivo) && !jaCravou ? `
+                                    <!-- Usuário não cravou nesta rodada - mostrar só resultado -->
+                                    <p class="text-red-400 text-xs font-medium mb-1">Sem palpite</p>
+                                    <div class="flex items-center gap-1">
+                                        <span class="w-11 h-11 flex items-center justify-center text-xl font-bold ${jogoFinalizado ? 'text-emerald-400 bg-emerald-600/30' : 'text-red-400 bg-red-500/20 animate-pulse'} rounded-lg">${jogo.golsCasa ?? 0}</span>
+                                        <span class="text-zinc-500 font-bold text-lg">×</span>
+                                        <span class="w-11 h-11 flex items-center justify-center text-xl font-bold ${jogoFinalizado ? 'text-emerald-400 bg-emerald-600/30' : 'text-red-400 bg-red-500/20 animate-pulse'} rounded-lg">${jogo.golsFora ?? 0}</span>
+                                    </div>
+                                    <p class="text-zinc-500 text-xs mt-1">${jogoFinalizado ? 'Resultado final' : 'Placar parcial'}</p>
+                                ` : `
+                                    <!-- Input para palpite -->
+                                    <div class="flex items-center gap-1">
+                                        <input type="text" 
+                                            id="palpite-${jogo.id}-casa"
+                                            value="${palpiteCasa}"
+                                            maxlength="2"
+                                            ${jaCravou || !podeApostarJogo ? 'disabled' : ''}
+                                            onchange="updatePalpite('${jogo.id}', 'casa', this.value)"
+                                            oninput="this.value = this.value.replace(/[^0-9]/g, '')"
+                                            class="w-12 h-12 text-center text-xl font-bold bg-zinc-900 border-2 ${jaCravou ? 'border-emerald-500/50 text-emerald-400' : !podeApostarJogo ? 'border-zinc-700 text-zinc-600' : 'border-zinc-600 text-white focus:border-emerald-500'} rounded-lg outline-none transition"
+                                            placeholder="-">
+                                        <span class="text-zinc-500 font-bold text-lg">×</span>
+                                        <input type="text" 
+                                            id="palpite-${jogo.id}-fora"
+                                            value="${palpiteFora}"
+                                            maxlength="2"
+                                            ${jaCravou || !podeApostarJogo ? 'disabled' : ''}
+                                            onchange="updatePalpite('${jogo.id}', 'fora', this.value)"
+                                            oninput="this.value = this.value.replace(/[^0-9]/g, '')"
+                                            class="w-12 h-12 text-center text-xl font-bold bg-zinc-900 border-2 ${jaCravou ? 'border-emerald-500/50 text-emerald-400' : !podeApostarJogo ? 'border-zinc-700 text-zinc-600' : 'border-zinc-600 text-white focus:border-emerald-500'} rounded-lg outline-none transition"
+                                            placeholder="-">
+                                    </div>
+                                `}
+                            </div>
+                            
+                            <!-- Time Fora -->
+                            <div class="flex-1 flex items-center gap-2">
+                                ${jogo.foraLogo ? `<img src="${jogo.foraLogo}" class="w-8 h-8 object-contain">` : `<div class="w-8 h-8 rounded-full bg-zinc-700 flex items-center justify-center text-xs">${(jogo.fora || 'B').charAt(0)}</div>`}
+                                <span class="text-white font-medium text-sm truncate">${jogo.fora || 'Time B'}</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Data/hora e status -->
+                        <p class="${statusClass} text-xs text-center mt-3">${statusText}${statusExtra}</p>
+                    </div>
+                `;
+            }).join('');
+            
+            // Calcular acertos para mostrar contador
+            let totalAcertos = 0;
+            let totalPontos = 0;
+            if (jaCravou && dadosCravados) {
+                jogos.forEach(jogo => {
+                    if (jogo.status !== 'FT') return;
+                    const palpite = dadosCravados[jogo.id] || dadosCravados[String(jogo.id)];
+                    if (!palpite || palpite.casa === '' || palpite.fora === '') return;
+                    if (String(palpite.casa) === String(jogo.golsCasa) && String(palpite.fora) === String(jogo.golsFora)) {
+                        totalAcertos++;
+                        totalPontos += 5;
+                    }
+                });
+            }
+            
+            // Contar jogos finalizados
+            const jogosFinalizados = jogos.filter(j => j.status === 'FT').length;
+            
+            return `
+                <div class="fixed inset-0 bg-black/95 flex items-center justify-center p-4" style="z-index: 99999;" onclick="closeModal(event)">
+                    <div class="card rounded-2xl w-full max-w-2xl overflow-hidden max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+                        <!-- Header -->
+                        <div class="relative p-6 border-b border-zinc-800 bg-gradient-to-r from-emerald-500/10 via-green-500/5 to-emerald-500/10">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-400 to-green-600 flex items-center justify-center shadow-lg shadow-emerald-500/30">
+                                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/><circle cx="12" cy="12" r="6" stroke-width="2"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
+                                    </div>
+                                    <div>
+                                        <h2 class="font-display text-2xl tracking-wider text-white">CRAVAR RESULTADO</h2>
+                                        <p class="text-zinc-400 text-sm">
+                                            Rodada ${rodada} · 
+                                            ${jaCravou ? 'Palpites cravados' : 
+                                              todosFinalizados ? 'Rodada encerrada' :
+                                              jogosDisponiveis > 0 ? jogosDisponiveis + ' jogo(s) aberto(s)' : 'Todos fechados'}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button onclick="closeModalDirect()" class="text-white/60 hover:text-white p-2 hover:bg-white/10 rounded-lg transition">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                            </div>
+                            
+                            <!-- Contador de pontos (se já cravou e tem jogos finalizados) -->
+                            ${jaCravou && jogosFinalizados > 0 ? `
+                                <div class="mt-4 p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-3">
+                                            <div class="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center">
+                                                <span class="text-emerald-400 font-bold text-lg">${totalAcertos}</span>
+                                            </div>
+                                            <div>
+                                                <p class="text-white font-medium">Acerto${totalAcertos !== 1 ? 's' : ''}</p>
+                                                <p class="text-zinc-500 text-xs">${jogosFinalizados}/${jogos.length} jogos encerrados</p>
+                                            </div>
+                                        </div>
+                                        <div class="text-right">
+                                            <p class="text-emerald-400 font-display text-2xl tracking-wider">+${totalPontos}</p>
+                                            <p class="text-zinc-500 text-xs">pontos${todosFinalizados ? '' : ' (parcial)'}</p>
+                                        </div>
+                                    </div>
+                                    ${!todosFinalizados ? `
+                                        <p class="text-amber-400 text-xs mt-2 text-center">Pontos serão creditados quando a rodada encerrar</p>
+                                    ` : ''}
+                                </div>
+                            ` : `
+                                <!-- Info de pontos -->
+                                <div class="mt-4 p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                                    <p class="text-emerald-400 text-sm">
+                                        Acerte o placar exato e ganhe <strong>5 pontos</strong> por jogo!
+                                    </p>
+                                </div>
+                            `}
+                        </div>
+                        
+                        <!-- Lista de jogos -->
+                        <div class="p-4 space-y-3">
+                            ${jogosHtml}
+                        </div>
+                        
+                        <!-- Botão Cravar -->
+                        ${!jaCravou && jogosDisponiveis > 0 ? `
+                            <div class="p-4 border-t border-zinc-800">
+                                <button onclick="cravarResultados()" 
+                                    class="w-full py-4 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-white font-display text-xl tracking-widest rounded-xl transition-all transform hover:scale-[1.02] shadow-lg shadow-emerald-500/30">
+                                    CRAVAR
+                                </button>
+                                <p class="text-zinc-500 text-xs text-center mt-2">Palpites fecham 30 min antes de cada jogo</p>
+                            </div>
+                        ` : jaCravou ? `
+                            <div class="p-4 border-t border-zinc-800">
+                                ${todosFinalizados && totalPontos > 0 ? `
+                                    <div class="w-full py-4 bg-gradient-to-r from-emerald-500/20 to-green-600/20 text-emerald-400 font-display text-lg tracking-wider rounded-xl flex items-center justify-center gap-2 border border-emerald-500/30">
+                                        <span>TOTAL: +${totalPontos} PONTOS</span>
+                                    </div>
+                                ` : `
+                                    <div class="w-full py-4 bg-zinc-800 text-zinc-400 font-display text-lg tracking-wider rounded-xl flex items-center justify-center">
+                                        ${todosFinalizados ? 'RODADA ENCERRADA' : 'AGUARDANDO JOGOS'}
+                                    </div>
+                                `}
+                                <p class="text-zinc-500 text-xs text-center mt-2">
+                                    Cravado em ${dadosCravados.cravadoEm ? new Date(dadosCravados.cravadoEm).toLocaleString('pt-BR') : 'N/A'}
+                                </p>
+                            </div>
+                        ` : `
+                            <div class="p-4 border-t border-zinc-800">
+                                <div class="w-full py-4 bg-zinc-800 text-zinc-500 font-display text-lg tracking-wider rounded-xl flex items-center justify-center">
+                                    ${todosFinalizados ? 'RODADA ENCERRADA' : 'TODOS OS JOGOS FECHADOS'}
+                                </div>
+                            </div>
+                        `}
                     </div>
                 </div>
             `;
@@ -8188,6 +8858,104 @@
                                                 Criar
                                             </button>
                                         </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Cravar Resultado - Jogos da Rodada -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border border-emerald-500/30">
+                                    <h4 class="text-emerald-400 font-medium mb-4">Cravar Resultado - Rodada ${state.currentRound}</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Os jogos são carregados automaticamente da API-Football</p>
+                                    
+                                    <!-- Botão carregar da API -->
+                                    <div class="mb-4">
+                                        <button onclick="adminCarregarResultadosAPI()" 
+                                            class="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2">
+                                            🔄 Carregar Resultados da API
+                                        </button>
+                                        <p class="text-zinc-600 text-xs mt-1 text-center">Carrega automaticamente os placares dos jogos finalizados</p>
+                                    </div>
+                                    
+                                    <!-- Lista de Jogos -->
+                                    <div class="mb-4">
+                                        <p class="text-zinc-400 text-sm mb-2">Jogos da Rodada:</p>
+                                        <div class="space-y-2 max-h-72 overflow-y-auto">
+                                            ${getJogosDaRodada().length === 0 ? `
+                                                <p class="text-zinc-600 text-sm text-center py-4">
+                                                    Nenhum jogo carregado.<br>
+                                                    <button onclick="fetchLiveFixtures().then(() => render())" class="text-emerald-400 hover:underline mt-2">Clique para buscar</button>
+                                                </p>
+                                            ` : getJogosDaRodada().map(jogo => {
+                                                const resultado = state.resultadosReais?.[state.currentRound]?.[jogo.id] || { casa: '', fora: '' };
+                                                const statusFinalizado = jogo.status === 'FT';
+                                                const statusAoVivo = ['1H', '2H', 'HT', 'LIVE'].includes(jogo.status);
+                                                
+                                                return `
+                                                    <div class="flex items-center gap-2 bg-zinc-800 p-2 rounded-lg ${statusFinalizado ? 'border border-emerald-500/30' : statusAoVivo ? 'border border-red-500/30' : ''}">
+                                                        <!-- Time Casa -->
+                                                        <div class="flex-1 flex items-center gap-1 justify-end">
+                                                            <span class="text-white text-xs truncate">${jogo.casa}</span>
+                                                            ${jogo.casaLogo ? `<img src="${jogo.casaLogo}" class="w-5 h-5 object-contain">` : ''}
+                                                        </div>
+                                                        
+                                                        <!-- Placar API -->
+                                                        ${statusFinalizado || statusAoVivo ? `
+                                                            <div class="px-2 py-1 bg-zinc-900 rounded text-center">
+                                                                <span class="${statusFinalizado ? 'text-emerald-400' : 'text-red-400'} font-bold text-sm">
+                                                                    ${jogo.golsCasa ?? '-'} - ${jogo.golsFora ?? '-'}
+                                                                </span>
+                                                            </div>
+                                                        ` : `
+                                                            <!-- Inputs manuais -->
+                                                            <input type="number" min="0" max="20" 
+                                                                value="${resultado.casa}"
+                                                                onchange="adminSetResultado('${jogo.id}', 'casa', this.value)"
+                                                                class="w-10 h-7 text-center bg-zinc-900 border border-zinc-700 text-white rounded text-xs">
+                                                            <span class="text-zinc-500 text-xs">×</span>
+                                                            <input type="number" min="0" max="20" 
+                                                                value="${resultado.fora}"
+                                                                onchange="adminSetResultado('${jogo.id}', 'fora', this.value)"
+                                                                class="w-10 h-7 text-center bg-zinc-900 border border-zinc-700 text-white rounded text-xs">
+                                                        `}
+                                                        
+                                                        <!-- Time Fora -->
+                                                        <div class="flex-1 flex items-center gap-1">
+                                                            ${jogo.foraLogo ? `<img src="${jogo.foraLogo}" class="w-5 h-5 object-contain">` : ''}
+                                                            <span class="text-white text-xs truncate">${jogo.fora}</span>
+                                                        </div>
+                                                        
+                                                        <!-- Status -->
+                                                        <span class="text-xs ${statusFinalizado ? 'text-emerald-400' : statusAoVivo ? 'text-red-400' : 'text-zinc-500'}">
+                                                            ${statusFinalizado ? '✓' : statusAoVivo ? '🔴' : jogo.data}
+                                                        </span>
+                                                    </div>
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Botões de Ação -->
+                                    <div class="flex gap-2 flex-wrap">
+                                        <button onclick="adminConferirPalpites()" 
+                                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium">
+                                            ✅ Conferir e Dar Pontos
+                                        </button>
+                                        <button onclick="adminVerPalpites()" 
+                                            class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm font-medium">
+                                            👁️ Ver Palpites
+                                        </button>
+                                        <button onclick="adminSaveResultados()" 
+                                            class="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm font-medium">
+                                            💾 Salvar Manual
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Status -->
+                                    <div class="mt-4 p-3 bg-zinc-800 rounded-lg">
+                                        <p class="text-zinc-400 text-xs">
+                                            ${state.resultadosConferidos?.[state.currentRound] 
+                                                ? `✅ Rodada ${state.currentRound} já conferida` 
+                                                : `⏳ Rodada ${state.currentRound} aguardando conferência`}
+                                        </p>
                                     </div>
                                 </div>
                                 
@@ -12647,6 +13415,263 @@
             render();
         };
         
+        // ==================== ADMIN - CRAVAR RESULTADO ====================
+        
+        // Carregar resultados da API automaticamente
+        window.adminCarregarResultadosAPI = async function() {
+            const jogos = getJogosDaRodada();
+            
+            if (jogos.length === 0) {
+                // Buscar da API
+                await fetchLiveFixtures();
+            }
+            
+            const jogosAtualizados = getJogosDaRodada();
+            let carregados = 0;
+            
+            jogosAtualizados.forEach(jogo => {
+                // Se o jogo terminou (FT = Full Time)
+                if (jogo.status === 'FT' && jogo.golsCasa !== null && jogo.golsFora !== null) {
+                    if (!state.resultadosReais) state.resultadosReais = {};
+                    if (!state.resultadosReais[state.currentRound]) {
+                        state.resultadosReais[state.currentRound] = {};
+                    }
+                    state.resultadosReais[state.currentRound][jogo.id] = {
+                        casa: String(jogo.golsCasa),
+                        fora: String(jogo.golsFora)
+                    };
+                    carregados++;
+                }
+            });
+            
+            if (carregados > 0) {
+                alert(`✅ ${carregados} resultado(s) carregado(s) da API!\n\nClique em "Salvar Resultados" para confirmar.`);
+                render();
+            } else {
+                alert('⚠️ Nenhum jogo finalizado encontrado.\n\nAguarde os jogos terminarem ou insira manualmente.');
+            }
+        };
+        
+        // Definir resultado real de um jogo (manual)
+        window.adminSetResultado = function(jogoId, tipo, valor) {
+            if (!state.resultadosReais) state.resultadosReais = {};
+            if (!state.resultadosReais[state.currentRound]) {
+                state.resultadosReais[state.currentRound] = {};
+            }
+            if (!state.resultadosReais[state.currentRound][jogoId]) {
+                state.resultadosReais[state.currentRound][jogoId] = { casa: '', fora: '' };
+            }
+            
+            state.resultadosReais[state.currentRound][jogoId][tipo] = valor;
+        };
+        
+        // Salvar resultados no Firebase
+        window.adminSaveResultados = function() {
+            const rodada = state.currentRound;
+            const resultados = state.resultadosReais?.[rodada] || {};
+            
+            if (Object.keys(resultados).length === 0) {
+                return alert('❌ Nenhum resultado definido!');
+            }
+            
+            if (db) {
+                db.ref('resultadosReais/' + rodada).set(resultados)
+                    .then(() => {
+                        alert('✅ Resultados salvos!');
+                    })
+                    .catch(err => alert('❌ Erro: ' + err.message));
+            }
+        };
+        
+        // Conferir palpites e dar pontos
+        window.adminConferirPalpites = function() {
+            const rodada = state.currentRound;
+            let resultados = state.resultadosReais?.[rodada] || {};
+            const jogos = getJogosDaRodada();
+            
+            // Se não tem resultados manuais, tentar usar da API
+            if (Object.keys(resultados).length === 0) {
+                jogos.forEach(jogo => {
+                    if (jogo.status === 'FT' && jogo.golsCasa !== null && jogo.golsFora !== null) {
+                        if (!resultados[jogo.id]) resultados[jogo.id] = {};
+                        resultados[jogo.id] = {
+                            casa: String(jogo.golsCasa),
+                            fora: String(jogo.golsFora)
+                        };
+                    }
+                });
+            }
+            
+            // Verificar se todos os resultados foram preenchidos
+            let jogosFinalizados = 0;
+            let jogosPendentes = 0;
+            
+            jogos.forEach(jogo => {
+                const r = resultados[jogo.id];
+                if (r && r.casa !== '' && r.fora !== '') {
+                    jogosFinalizados++;
+                } else {
+                    jogosPendentes++;
+                }
+            });
+            
+            if (jogosFinalizados === 0) {
+                return alert('❌ Nenhum resultado disponível!\n\nClique em "Carregar da API" ou insira manualmente.');
+            }
+            
+            if (state.resultadosConferidos?.[rodada]) {
+                return alert('⚠️ Esta rodada já foi conferida!');
+            }
+            
+            let msg = `Conferir palpites da Rodada ${rodada}?\n\n`;
+            msg += `✅ ${jogosFinalizados} jogo(s) com resultado\n`;
+            if (jogosPendentes > 0) msg += `⏳ ${jogosPendentes} jogo(s) ainda sem resultado\n`;
+            msg += `\nIsso não pode ser desfeito.`;
+            
+            if (!confirm(msg)) return;
+            
+            // Conferir cada usuário
+            let totalAcertos = 0;
+            let usuariosComAcertos = [];
+            
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (nick === 'admin') return;
+                
+                const palpites = user.palpitesCravados?.[rodada];
+                if (!palpites) return;
+                
+                let acertosUsuario = 0;
+                
+                jogos.forEach(jogo => {
+                    // Buscar palpite - tentar tanto ID numérico quanto string
+                    const palpite = palpites[jogo.id] || palpites[String(jogo.id)];
+                    const resultado = resultados[jogo.id] || resultados[String(jogo.id)];
+                    
+                    if (!palpite || !resultado) return;
+                    
+                    // Verificar acerto exato (converter para string para comparação segura)
+                    const palpiteCasa = String(palpite.casa).trim();
+                    const palpiteFora = String(palpite.fora).trim();
+                    const resultadoCasa = String(resultado.casa).trim();
+                    const resultadoFora = String(resultado.fora).trim();
+                    
+                    if (palpiteCasa === resultadoCasa && palpiteFora === resultadoFora) {
+                        acertosUsuario++;
+                        totalAcertos++;
+                        console.log(`✓ @${nick} acertou ${jogo.casa} ${palpiteCasa}x${palpiteFora} ${jogo.fora}`);
+                    }
+                });
+                
+                // Dar pontos (5 por acerto)
+                if (acertosUsuario > 0) {
+                    const pontosGanhos = acertosUsuario * 5;
+                    usuariosComAcertos.push({ nick, acertos: acertosUsuario, pontos: pontosGanhos });
+                    
+                    // Adicionar pontos - garantir que não sobrescreva purchases anteriores
+                    if (!user.scores) user.scores = {};
+                    if (!user.scores.market) user.scores.market = { purchases: [] };
+                    if (!user.scores.market.purchases) user.scores.market.purchases = [];
+                    if (!Array.isArray(user.scores.market.purchases)) user.scores.market.purchases = [];
+                    
+                    // Verificar se já não ganhou bônus desta rodada
+                    const jaGanhouBonus = user.scores.market.purchases.some(p => 
+                        p.type === 'cravar_bonus' && p.playerName && p.playerName.includes(`Rodada ${rodada}`)
+                    );
+                    
+                    if (!jaGanhouBonus) {
+                        user.scores.market.purchases.push({
+                            type: 'cravar_bonus',
+                            playerId: 0,
+                            playerName: `Cravar Rodada ${rodada} (${acertosUsuario} acerto${acertosUsuario > 1 ? 's' : ''})`,
+                            price: pontosGanhos,
+                            date: new Date().toISOString()
+                        });
+                        
+                        // Salvar no Firebase - usar o array completo
+                        if (db) {
+                            db.ref('users/' + nick + '/scores/market').set(user.scores.market);
+                        }
+                        
+                        // Se for o usuário atual, atualizar state.scores também
+                        if (nick === state.currentUser) {
+                            if (!state.scores) state.scores = {};
+                            if (!state.scores.market) state.scores.market = { purchases: [] };
+                            state.scores.market = user.scores.market;
+                        }
+                    }
+                }
+            });
+            
+            // Marcar rodada como conferida
+            if (!state.resultadosConferidos) state.resultadosConferidos = {};
+            state.resultadosConferidos[rodada] = {
+                conferidoEm: Date.now(),
+                totalAcertos
+            };
+            
+            if (db) {
+                db.ref('resultadosConferidos/' + rodada).set(state.resultadosConferidos[rodada]);
+            }
+            
+            // Mostrar resumo
+            let resumo = `✅ Rodada ${rodada} conferida!\n\n`;
+            resumo += `Total de acertos: ${totalAcertos}\n\n`;
+            
+            if (usuariosComAcertos.length > 0) {
+                resumo += '🏆 Usuários que acertaram:\n';
+                usuariosComAcertos.forEach(u => {
+                    resumo += `• @${u.nick}: ${u.acertos} acerto(s) = +${u.pontos} pts\n`;
+                });
+            } else {
+                resumo += 'Ninguém acertou nenhum resultado.';
+            }
+            
+            alert(resumo);
+            render();
+        };
+        
+        // Ver palpites dos usuários
+        window.adminVerPalpites = function() {
+            const rodada = state.currentRound;
+            const jogos = getJogosDaRodada();
+            
+            let html = `<h3>Palpites da Rodada ${rodada}</h3>`;
+            
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (nick === 'admin') return;
+                
+                const palpites = user.palpitesCravados?.[rodada];
+                if (!palpites) return;
+                
+                html += `<div style="margin:10px 0;padding:10px;background:#333;border-radius:8px;">`;
+                html += `<strong style="color:#10b981;">@${nick}</strong><br>`;
+                
+                jogos.forEach(jogo => {
+                    const p = palpites[jogo.id];
+                    if (p && p.casa !== '' && p.fora !== '') {
+                        html += `${jogo.casa} ${p.casa} x ${p.fora} ${jogo.fora}<br>`;
+                    }
+                });
+                
+                html += `</div>`;
+            });
+            
+            // Criar modal temporário
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black/90 flex items-center justify-center p-4 z-[99999]';
+            modal.onclick = () => modal.remove();
+            modal.innerHTML = `
+                <div class="bg-zinc-900 rounded-2xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto" onclick="event.stopPropagation()">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold text-white">👁️ Palpites - Rodada ${rodada}</h2>
+                        <button onclick="this.closest('.fixed').remove()" class="text-zinc-400 hover:text-white">✕</button>
+                    </div>
+                    <div class="text-white text-sm">${html}</div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        };
+        
         // Dar título a um usuário
         window.adminGiveTitle = function(nick) {
             const allTitles = { ...TITLES_AVAILABLE, ...(state.customTitles || {}) };
@@ -13571,6 +14596,16 @@
             // Carregar títulos customizados
             db.ref('customTitles').on('value', (snapshot) => {
                 state.customTitles = snapshot.val() || {};
+            });
+            
+            // Carregar resultados reais (Cravar)
+            db.ref('resultadosReais').on('value', (snapshot) => {
+                state.resultadosReais = snapshot.val() || {};
+            });
+            
+            // Carregar status de conferência (Cravar)
+            db.ref('resultadosConferidos').on('value', (snapshot) => {
+                state.resultadosConferidos = snapshot.val() || {};
             });
             
             // Carregar e escutar jogadores manuais do Firebase EM TEMPO REAL
