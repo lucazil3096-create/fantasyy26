@@ -1781,11 +1781,29 @@
             // Transferir pontos
             const points = offer.pointsOffered || 0;
             
+            console.log('=== TROCA ACEITA ===');
+            console.log('De:', offer.from, '→ Para:', offer.to);
+            console.log('Pontos oferecidos:', points);
+            
+            // Garantir que scores existam
+            if (!fromUser.scores) fromUser.scores = {};
+            if (!fromUser.scores.market) fromUser.scores.market = { purchases: [] };
+            if (!fromUser.scores.market.purchases) fromUser.scores.market.purchases = [];
+            
+            if (!toUser.scores) toUser.scores = {};
+            if (!toUser.scores.market) toUser.scores.market = { purchases: [] };
+            if (!toUser.scores.market.purchases) toUser.scores.market.purchases = [];
+            
             // Preparar transações de pontos
-            let fromPurchases = fromUser.scores?.market?.purchases || [];
-            let toPurchases = toUser.scores?.market?.purchases || [];
-            fromPurchases = Array.isArray(fromPurchases) ? [...fromPurchases] : [];
-            toPurchases = Array.isArray(toPurchases) ? [...toPurchases] : [];
+            let fromPurchases = Array.isArray(fromUser.scores.market.purchases) 
+                ? [...fromUser.scores.market.purchases] 
+                : [];
+            let toPurchases = Array.isArray(toUser.scores.market.purchases) 
+                ? [...toUser.scores.market.purchases] 
+                : [];
+            
+            console.log('fromPurchases antes:', fromPurchases.length);
+            console.log('toPurchases antes:', toPurchases.length);
             
             // Registrar transação de pontos (quem ofereceu PERDE pontos, quem aceitou GANHA)
             if (points > 0) {
@@ -1806,6 +1824,9 @@
                     price: points,
                     date: new Date().toISOString()
                 });
+                
+                console.log('fromPurchases depois:', fromPurchases);
+                console.log('toPurchases depois:', toPurchases);
             }
             
             // Salvar no Firebase
@@ -1815,11 +1836,11 @@
             updates['users/' + offer.to + '/starters'] = toStarters;
             updates['users/' + offer.to + '/reserves'] = toReserves;
             
-            // Salvar transações de pontos
-            if (points > 0) {
-                updates['users/' + offer.from + '/scores/market/purchases'] = fromPurchases;
-                updates['users/' + offer.to + '/scores/market/purchases'] = toPurchases;
-            }
+            // SEMPRE salvar os scores/market/purchases para garantir que existam
+            updates['users/' + offer.from + '/scores/market/purchases'] = fromPurchases;
+            updates['users/' + offer.to + '/scores/market/purchases'] = toPurchases;
+            
+            console.log('Updates a enviar:', updates);
             
             // Incrementar contador de trocas
             const month = getCurrentMonth();
@@ -1833,10 +1854,44 @@
             db.ref().update(updates).then(() => {
                 // Atualizar state local se for o usuário atual
                 if (offer.to === state.currentUser) {
+                    // Atualizar jogador
                     if (toSlot.type === 'starters') {
                         state.starters[toSlot.index] = myPlayerObj;
                     } else {
                         state.reserves[toSlot.index] = myPlayerObj;
+                    }
+                    // Atualizar pontos (quem aceitou GANHA pontos)
+                    if (points > 0) {
+                        if (!state.scores.market) state.scores.market = { purchases: [] };
+                        if (!state.scores.market.purchases) state.scores.market.purchases = [];
+                        state.scores.market.purchases.push({
+                            type: 'trade_in',
+                            playerId: 0,
+                            playerName: `Troca: ${theirPlayerObj.name} por ${myPlayerObj.name} (bonus recebido)`,
+                            price: points,
+                            date: new Date().toISOString()
+                        });
+                    }
+                }
+                
+                if (offer.from === state.currentUser) {
+                    // Atualizar jogador
+                    if (fromSlot.type === 'starters') {
+                        state.starters[fromSlot.index] = theirPlayerObj;
+                    } else {
+                        state.reserves[fromSlot.index] = theirPlayerObj;
+                    }
+                    // Atualizar pontos (quem ofereceu PERDE pontos)
+                    if (points > 0) {
+                        if (!state.scores.market) state.scores.market = { purchases: [] };
+                        if (!state.scores.market.purchases) state.scores.market.purchases = [];
+                        state.scores.market.purchases.push({
+                            type: 'trade_out',
+                            playerId: 0,
+                            playerName: `Troca: ${myPlayerObj.name} por ${theirPlayerObj.name} (bonus enviado)`,
+                            price: -points,
+                            date: new Date().toISOString()
+                        });
                     }
                 }
                 
