@@ -1781,6 +1781,33 @@
             // Transferir pontos
             const points = offer.pointsOffered || 0;
             
+            // Preparar transações de pontos
+            let fromPurchases = fromUser.scores?.market?.purchases || [];
+            let toPurchases = toUser.scores?.market?.purchases || [];
+            fromPurchases = Array.isArray(fromPurchases) ? [...fromPurchases] : [];
+            toPurchases = Array.isArray(toPurchases) ? [...toPurchases] : [];
+            
+            // Registrar transação de pontos (quem ofereceu PERDE pontos, quem aceitou GANHA)
+            if (points > 0) {
+                // Quem ofereceu (from) perde os pontos
+                fromPurchases.push({
+                    type: 'trade_out',
+                    playerId: 0,
+                    playerName: `Troca: ${myPlayerObj.name} por ${theirPlayerObj.name} (bonus enviado)`,
+                    price: -points,
+                    date: new Date().toISOString()
+                });
+                
+                // Quem aceitou (to) ganha os pontos
+                toPurchases.push({
+                    type: 'trade_in',
+                    playerId: 0,
+                    playerName: `Troca: ${theirPlayerObj.name} por ${myPlayerObj.name} (bonus recebido)`,
+                    price: points,
+                    date: new Date().toISOString()
+                });
+            }
+            
             // Salvar no Firebase
             const updates = {};
             updates['users/' + offer.from + '/starters'] = fromStarters;
@@ -1788,11 +1815,10 @@
             updates['users/' + offer.to + '/starters'] = toStarters;
             updates['users/' + offer.to + '/reserves'] = toReserves;
             
-            // Registrar transação de pontos
+            // Salvar transações de pontos
             if (points > 0) {
-                const month = getCurrentMonth();
-                updates['users/' + offer.from + '/scores/market/trades'] = firebase.database.ServerValue.increment(-points);
-                updates['users/' + offer.to + '/scores/market/trades'] = firebase.database.ServerValue.increment(points);
+                updates['users/' + offer.from + '/scores/market/purchases'] = fromPurchases;
+                updates['users/' + offer.to + '/scores/market/purchases'] = toPurchases;
             }
             
             // Incrementar contador de trocas
