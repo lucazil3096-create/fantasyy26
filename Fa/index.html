@@ -6274,23 +6274,68 @@
                 logoInput.onchange = (e) => {
                     const file = e.target.files[0];
                     if (file) {
+                        // Verificar tamanho do arquivo (max 1MB)
+                        if (file.size > 1024 * 1024) {
+                            alert('⚠️ Imagem muito grande!\n\nO tamanho máximo é 1MB. Por favor, escolha uma imagem menor.');
+                            return;
+                        }
+                        
                         const reader = new FileReader();
                         reader.onload = (ev) => {
-                            state.teamLogo = ev.target.result;
-                            
-                            // Atualizar também no objeto do usuário
-                            if (state.users[state.currentUser]) {
-                                state.users[state.currentUser].teamLogo = state.teamLogo;
-                            }
-                            
-                            // Salvar no Firebase
-                            if (db && state.currentUser) {
-                                db.ref('users/' + state.currentUser + '/teamLogo').set(state.teamLogo);
-                                console.log('☁️ Foto de perfil salva no Firebase');
-                            }
-                            
-                            saveState();
-                            render();
+                            // Comprimir imagem usando canvas
+                            const img = new Image();
+                            img.onload = function() {
+                                const canvas = document.createElement('canvas');
+                                const ctx = canvas.getContext('2d');
+                                
+                                // Redimensionar para max 200x200
+                                const maxSize = 200;
+                                let width = img.width;
+                                let height = img.height;
+                                
+                                if (width > height) {
+                                    if (width > maxSize) {
+                                        height *= maxSize / width;
+                                        width = maxSize;
+                                    }
+                                } else {
+                                    if (height > maxSize) {
+                                        width *= maxSize / height;
+                                        height = maxSize;
+                                    }
+                                }
+                                
+                                canvas.width = width;
+                                canvas.height = height;
+                                ctx.drawImage(img, 0, 0, width, height);
+                                
+                                // Converter para JPEG com qualidade 0.7
+                                const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                                
+                                state.teamLogo = compressedBase64;
+                                
+                                // Atualizar também no objeto do usuário
+                                if (state.users[state.currentUser]) {
+                                    state.users[state.currentUser].teamLogo = state.teamLogo;
+                                }
+                                
+                                // Salvar no Firebase
+                                if (db && state.currentUser) {
+                                    db.ref('users/' + state.currentUser + '/teamLogo').set(state.teamLogo)
+                                        .then(() => {
+                                            console.log('☁️ Foto de perfil salva no Firebase');
+                                            alert('✅ Foto salva com sucesso!');
+                                        })
+                                        .catch(err => {
+                                            console.error('❌ Erro ao salvar foto:', err);
+                                            alert('❌ Erro ao salvar foto. Tente novamente.');
+                                        });
+                                }
+                                
+                                saveState();
+                                render();
+                            };
+                            img.src = ev.target.result;
                         };
                         reader.readAsDataURL(file);
                     }
@@ -6694,16 +6739,70 @@
         window.handleSettingsLogoUpload = function(event) {
             const file = event.target.files[0];
             if (file) {
+                // Verificar tamanho do arquivo (max 1MB)
+                if (file.size > 1024 * 1024) {
+                    alert('⚠️ Imagem muito grande!\n\nO tamanho máximo é 1MB. Por favor, escolha uma imagem menor.');
+                    return;
+                }
+                
                 const reader = new FileReader();
                 reader.onload = function(ev) {
-                    state.teamLogo = ev.target.result;
-                    
-                    // Atualizar também no objeto do usuário
-                    if (state.users[state.currentUser]) {
-                        state.users[state.currentUser].teamLogo = state.teamLogo;
-                    }
-                    
-                    render();
+                    // Comprimir imagem usando canvas
+                    const img = new Image();
+                    img.onload = function() {
+                        const canvas = document.createElement('canvas');
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Redimensionar para max 200x200
+                        const maxSize = 200;
+                        let width = img.width;
+                        let height = img.height;
+                        
+                        if (width > height) {
+                            if (width > maxSize) {
+                                height *= maxSize / width;
+                                width = maxSize;
+                            }
+                        } else {
+                            if (height > maxSize) {
+                                width *= maxSize / height;
+                                height = maxSize;
+                            }
+                        }
+                        
+                        canvas.width = width;
+                        canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // Converter para JPEG com qualidade 0.7
+                        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+                        
+                        state.teamLogo = compressedBase64;
+                        
+                        // Atualizar também no objeto do usuário
+                        if (state.users[state.currentUser]) {
+                            state.users[state.currentUser].teamLogo = state.teamLogo;
+                        }
+                        
+                        // Salvar no localStorage imediatamente
+                        saveState();
+                        
+                        // Salvar no Firebase imediatamente
+                        if (db && state.currentUser) {
+                            db.ref('users/' + state.currentUser + '/teamLogo').set(state.teamLogo)
+                                .then(() => {
+                                    console.log('☁️ Foto de perfil salva no Firebase');
+                                    alert('✅ Foto salva com sucesso!');
+                                })
+                                .catch(err => {
+                                    console.error('❌ Erro ao salvar foto:', err);
+                                    alert('❌ Erro ao salvar foto. Tente novamente.');
+                                });
+                        }
+                        
+                        render();
+                    };
+                    img.src = ev.target.result;
                 };
                 reader.readAsDataURL(file);
             }
@@ -6714,6 +6813,23 @@
             if (state.users[state.currentUser]) {
                 state.users[state.currentUser].teamLogo = null;
             }
+            
+            // Salvar no localStorage
+            saveState();
+            
+            // Salvar no Firebase
+            if (db && state.currentUser) {
+                db.ref('users/' + state.currentUser + '/teamLogo').set(null)
+                    .then(() => {
+                        console.log('☁️ Foto removida do Firebase');
+                        alert('✅ Foto removida!');
+                    })
+                    .catch(err => {
+                        console.error('❌ Erro ao remover foto:', err);
+                        alert('❌ Erro ao remover foto. Tente novamente.');
+                    });
+            }
+            
             render();
         };
         
