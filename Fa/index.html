@@ -374,6 +374,96 @@
             to { opacity: 1; transform: translateY(0); }
         }
         .animate-fade-in-up { animation: fadeInUp 0.3s ease-out; }
+        
+        /* Drag and Drop styles */
+        .drag-compatible {
+            position: relative;
+            border-color: #10b981 !important;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.6), 0 0 20px rgba(16, 185, 129, 0.4) !important;
+            animation: pulse-green 0.8s infinite;
+        }
+        .drag-compatible::after {
+            content: '✓';
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            width: 18px;
+            height: 18px;
+            background: #10b981;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            color: white;
+            font-weight: bold;
+            z-index: 100;
+        }
+        .drag-invalid {
+            opacity: 0.25 !important;
+            filter: grayscale(100%) !important;
+            pointer-events: none;
+        }
+        .drag-invalid::after {
+            content: '✕';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 24px;
+            height: 24px;
+            background: rgba(239, 68, 68, 0.9);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            color: white;
+            font-weight: bold;
+            z-index: 100;
+        }
+        .drag-hover {
+            transform: scale(1.15) !important;
+            border-color: #10b981 !important;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.9), 0 0 30px rgba(16, 185, 129, 0.6) !important;
+        }
+        @keyframes pulse-green {
+            0%, 100% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.6), 0 0 20px rgba(16, 185, 129, 0.4); }
+            50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.4), 0 0 30px rgba(16, 185, 129, 0.3); }
+        }
+        .starter-slot, .reserve-slot {
+            transition: all 0.2s ease;
+            position: relative;
+        }
+        .starter-slot img[draggable="true"]:hover,
+        .reserve-slot img[draggable="true"]:hover {
+            cursor: grab;
+        }
+        .starter-slot img[draggable="true"]:active,
+        .reserve-slot img[draggable="true"]:active {
+            cursor: grabbing;
+        }
+        @keyframes fade-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in { animation: fade-in 0.3s ease-out; }
+        
+        /* Drag indicator tooltip */
+        .drag-indicator {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, #18181b 0%, #27272a 100%);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            padding: 12px 20px;
+            border-radius: 12px;
+            z-index: 9999;
+            display: none;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .drag-indicator.active { display: flex; align-items: center; gap: 12px; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -865,7 +955,87 @@
         // Função para obter logo do time
         function getTeamLogo(teamName) {
             if (!teamName) return null;
-            return TEAM_LOGOS[teamName] || null;
+            return TEAM_LOGOS[teamName] || TEAM_LOGOS[capitalizeTeamName(teamName)] || null;
+        }
+        
+        // Função para capitalizar corretamente nomes de times do Brasileirão
+        function capitalizeTeamName(teamName) {
+            if (!teamName) return '';
+            
+            // Lista de nomes oficiais dos times (para normalização)
+            const OFFICIAL_TEAM_NAMES = {
+                'flamengo': 'Flamengo',
+                'palmeiras': 'Palmeiras',
+                'são paulo': 'São Paulo',
+                'sao paulo': 'São Paulo',
+                'corinthians': 'Corinthians',
+                'fluminense': 'Fluminense',
+                'botafogo': 'Botafogo',
+                'vasco': 'Vasco',
+                'grêmio': 'Grêmio',
+                'gremio': 'Grêmio',
+                'internacional': 'Internacional',
+                'atlético-mg': 'Atlético-MG',
+                'atletico-mg': 'Atlético-MG',
+                'atlético mg': 'Atlético-MG',
+                'atletico mg': 'Atlético-MG',
+                'galo': 'Atlético-MG',
+                'cruzeiro': 'Cruzeiro',
+                'santos': 'Santos',
+                'bahia': 'Bahia',
+                'vitória': 'Vitória',
+                'vitoria': 'Vitória',
+                'athletico-pr': 'Athletico-PR',
+                'athletico pr': 'Athletico-PR',
+                'athletico': 'Athletico-PR',
+                'coritiba': 'Coritiba',
+                'bragantino': 'Bragantino',
+                'red bull bragantino': 'Bragantino',
+                'fortaleza': 'Fortaleza',
+                'ceará': 'Ceará',
+                'ceara': 'Ceará',
+                'sport': 'Sport',
+                'juventude': 'Juventude',
+                'cuiabá': 'Cuiabá',
+                'cuiaba': 'Cuiabá',
+                'américa-mg': 'América-MG',
+                'america-mg': 'América-MG',
+                'goiás': 'Goiás',
+                'goias': 'Goiás',
+                'avaí': 'Avaí',
+                'avai': 'Avaí',
+                'mirassol': 'Mirassol',
+                'chapecoense': 'Chapecoense',
+                'remo': 'Remo'
+            };
+            
+            // Normalizar para busca
+            const normalized = teamName.toLowerCase().trim();
+            
+            // Se encontrar na lista oficial, retornar o nome correto
+            if (OFFICIAL_TEAM_NAMES[normalized]) {
+                return OFFICIAL_TEAM_NAMES[normalized];
+            }
+            
+            // Caso contrário, capitalizar cada palavra corretamente
+            return teamName.split(/[\s-]/).map((word, index, arr) => {
+                if (word.toUpperCase() === word && word.length <= 3) {
+                    return word.toUpperCase(); // Manter siglas como MG, PR, SP
+                }
+                return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+            }).join(teamName.includes('-') ? '-' : ' ');
+        }
+        
+        // Normalizar nome de time em um jogador
+        function normalizePlayerTeamName(player) {
+            if (player && player.team) {
+                player.team = capitalizeTeamName(player.team);
+                // Atualizar logo também
+                if (!player.teamLogo || player.teamLogo === '') {
+                    player.teamLogo = TEAM_LOGOS[player.team] || '';
+                }
+            }
+            return player;
         }
         
         // ==================== SISTEMA DE CONQUISTAS ====================
@@ -1861,19 +2031,23 @@
         let FIXTURES_CACHE_TIME = CACHE_SETTINGS.DEFAULT;
         
         // Detectar rodada atual/próxima do campeonato
+        // Sincroniza automaticamente com a API
         async function detectCurrentRound() {
             try {
                 // Primeiro tentar cache do Firebase
                 const cacheRes = await fetch(`${FIREBASE_URL}/cache/current_round.json`);
                 const cacheData = await cacheRes.json();
                 
-                // Cache válido por 30 minutos
+                // Cache válido por 15 minutos (mais frequente para detectar mudanças)
                 if (cacheData && cacheData.round && cacheData.updatedAt) {
                     const cacheAge = Date.now() - cacheData.updatedAt;
-                    if (cacheAge < 30 * 60 * 1000) { // 30 minutos
+                    if (cacheAge < 15 * 60 * 1000) { // 15 minutos
                         state.currentRound = cacheData.round;
                         state.selectedRound = cacheData.round;
-                        console.log(` Rodada atual: ${cacheData.round} (cache)`);
+                        console.log(`✅ Rodada atual: ${cacheData.round} (cache)`);
+                        
+                        // Verificar se precisa avançar rodada
+                        await checkRoundTransition(cacheData.round);
                         return;
                     }
                 }
@@ -1893,7 +2067,7 @@
                         if (match) {
                             currentRound = parseInt(match[1]);
                             foundRound = true;
-                            console.log(` Jogo ao vivo! Rodada ${currentRound}`);
+                            console.log(`🔴 Jogo ao vivo! Rodada ${currentRound}`);
                         }
                     }
                 } catch (e) {
@@ -1910,7 +2084,7 @@
                             if (match) {
                                 currentRound = parseInt(match[1]);
                                 foundRound = true;
-                                console.log(` Jogos hoje! Rodada ${currentRound}`);
+                                console.log(`📅 Jogos hoje! Rodada ${currentRound}`);
                             }
                         }
                     } catch (e) {
@@ -1945,7 +2119,10 @@
                             const match = roundStr.match(/Regular Season - (\d+)/);
                             if (match) {
                                 currentRound = parseInt(match[1]);
-                                console.log(` Última rodada jogada: ${currentRound}`);
+                                console.log(`🏁 Última rodada jogada: ${currentRound}`);
+                                
+                                // Verificar se a rodada terminou e precisa avançar
+                                await checkRoundTransition(currentRound);
                             }
                         }
                     } catch (e) {
@@ -1964,7 +2141,7 @@
                 
                 state.currentRound = currentRound;
                 state.selectedRound = currentRound;
-                console.log(` Rodada definida: ${currentRound}`);
+                console.log(`✅ Rodada definida: ${currentRound}`);
                 
             } catch (e) {
                 console.error('Erro ao detectar rodada:', e);
@@ -1972,6 +2149,69 @@
                 state.selectedRound = 1;
             }
         }
+        
+        // Verificar se a rodada terminou e precisa avançar
+        async function checkRoundTransition(currentRound) {
+            if (!state.liveFixtures || state.liveFixtures.length === 0) return;
+            
+            const now = Date.now();
+            const oneHour = 60 * 60 * 1000;
+            
+            let allGamesFinished = true;
+            let lastGameEndTime = 0;
+            
+            for (const fixture of state.liveFixtures) {
+                const status = fixture.fixture?.status?.short;
+                const matchTime = new Date(fixture.fixture?.date).getTime();
+                
+                // Se tem jogo não finalizado
+                if (!['FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO'].includes(status)) {
+                    allGamesFinished = false;
+                    break;
+                }
+                
+                // Estimar hora de término
+                const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
+                if (estimatedEndTime > lastGameEndTime) {
+                    lastGameEndTime = estimatedEndTime;
+                }
+            }
+            
+            // Se todos os jogos terminaram há mais de 1 hora, avançar para próxima rodada
+            if (allGamesFinished && lastGameEndTime > 0 && (now - lastGameEndTime) >= oneHour) {
+                const nextRound = currentRound + 1;
+                if (nextRound <= 38) {
+                    console.log(`🔄 Rodada ${currentRound} encerrada! Avançando para rodada ${nextRound}...`);
+                    
+                    // Atualizar state
+                    state.currentRound = nextRound;
+                    state.selectedRound = nextRound;
+                    
+                    // Atualizar cache no Firebase
+                    await fetch(`${FIREBASE_URL}/cache/current_round.json`, {
+                        method: 'PUT',
+                        body: JSON.stringify({
+                            round: nextRound,
+                            updatedAt: Date.now(),
+                            previousRoundEndedAt: lastGameEndTime
+                        })
+                    });
+                    
+                    // Recarregar jogos da nova rodada
+                    await fetchLiveFixtures(true);
+                    
+                    render();
+                }
+            }
+        }
+        
+        // Verificação periódica de transição de rodada (a cada 10 minutos)
+        setInterval(async () => {
+            if (state.isConfirmed && state.liveFixtures && state.liveFixtures.length > 0) {
+                console.log('🔄 Verificando transição de rodada...');
+                await detectCurrentRound();
+            }
+        }, 10 * 60 * 1000); // A cada 10 minutos
         
         // Buscar jogos da rodada - COM CACHE NO FIREBASE
         async function fetchLiveFixtures(forceRefresh = false) {
@@ -3160,40 +3400,163 @@
         }
         
         // Verifica se pode EDITAR ESCALAÇÃO (trocar titulares/reservas, mudar formação)
-        // Liberado quando não tem jogos ao vivo ou próximos
+        // Liberado 1 hora após todos os jogos da rodada terminarem
+        // Travado 30 minutos antes do primeiro jogo da próxima rodada
         function canEditTeam() {
-            // TEMPORÁRIO: Travado para teste
-            return false;
-            
-            /*
-            // Se tem jogos ao vivo, não pode editar
-            if (state.hasLiveGames) {
+            // Se não tem fixtures carregadas, não pode editar
+            if (!state.liveFixtures || state.liveFixtures.length === 0) {
                 return false;
             }
             
-            // Verificar se tem jogo começando em menos de 2 horas
-            if (state.liveFixtures && state.liveFixtures.length > 0) {
-                const now = Date.now();
-                const twoHours = 2 * 60 * 60 * 1000;
+            const now = Date.now();
+            const oneHour = 60 * 60 * 1000; // 1 hora em ms
+            const thirtyMinutes = 30 * 60 * 1000; // 30 minutos em ms
+            
+            // Verificar status dos jogos da rodada atual
+            let hasLiveGames = false;
+            let allGamesFinished = true;
+            let lastGameEndTime = 0;
+            let firstUpcomingGameTime = Infinity;
+            
+            for (const fixture of state.liveFixtures) {
+                const status = fixture.fixture?.status?.short;
+                const matchTime = new Date(fixture.fixture?.date).getTime();
                 
-                for (const fixture of state.liveFixtures) {
-                    const matchTime = new Date(fixture.fixture.date).getTime();
-                    const status = fixture.fixture.status.short;
-                    
-                    // Se o jogo ainda não começou e falta menos de 2 horas
-                    if (status === 'NS' && (matchTime - now) < twoHours && (matchTime - now) > 0) {
-                        return false;
+                // Verificar se tem jogo ao vivo
+                if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
+                    hasLiveGames = true;
+                    allGamesFinished = false;
+                }
+                
+                // Verificar se ainda tem jogo não iniciado
+                if (['NS', 'TBD', 'PST'].includes(status)) {
+                    allGamesFinished = false;
+                    // Encontrar o primeiro jogo a começar
+                    if (matchTime < firstUpcomingGameTime) {
+                        firstUpcomingGameTime = matchTime;
                     }
-                    
-                    // Se o jogo está em andamento
-                    if (['1H', '2H', 'HT', 'ET', 'P', 'LIVE'].includes(status)) {
-                        return false;
+                }
+                
+                // Rastrear quando o último jogo terminou
+                if (['FT', 'AET', 'PEN'].includes(status)) {
+                    // Estimar hora de término: hora do jogo + 2 horas (duração média)
+                    const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
+                    if (estimatedEndTime > lastGameEndTime) {
+                        lastGameEndTime = estimatedEndTime;
                     }
                 }
             }
             
-            return true; // Pode editar escalação
-            */
+            // Se tem jogos ao vivo, não pode editar
+            if (hasLiveGames) {
+                return false;
+            }
+            
+            // Se nem todos os jogos terminaram, não pode editar
+            if (!allGamesFinished) {
+                // Mas se o primeiro jogo ainda não começou, verificar se falta mais de 30 minutos
+                if (firstUpcomingGameTime !== Infinity) {
+                    const timeUntilFirstGame = firstUpcomingGameTime - now;
+                    // Se falta mais de 30 minutos para o primeiro jogo, pode editar
+                    if (timeUntilFirstGame > thirtyMinutes) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            
+            // Todos os jogos terminaram - verificar se passou 1 hora
+            if (lastGameEndTime > 0 && (now - lastGameEndTime) < oneHour) {
+                return false; // Ainda não passou 1 hora desde o fim
+            }
+            
+            // Verificar se a próxima rodada está para começar (usando nextRoundDate do Firebase)
+            if (state.nextRoundDate) {
+                const nextRoundTime = new Date(state.nextRoundDate).getTime();
+                const timeUntilNextRound = nextRoundTime - now;
+                
+                // Se falta menos de 30 minutos para a próxima rodada, travar
+                if (timeUntilNextRound > 0 && timeUntilNextRound < thirtyMinutes) {
+                    return false;
+                }
+            }
+            
+            // Pode editar escalação
+            return true;
+        }
+        
+        // Função auxiliar para verificar status de edição do time
+        function getEditTeamStatus() {
+            if (!state.liveFixtures || state.liveFixtures.length === 0) {
+                return { canEdit: false, reason: 'Carregando jogos...' };
+            }
+            
+            const now = Date.now();
+            const oneHour = 60 * 60 * 1000;
+            const thirtyMinutes = 30 * 60 * 1000;
+            
+            let hasLiveGames = false;
+            let allGamesFinished = true;
+            let lastGameEndTime = 0;
+            let firstUpcomingGameTime = Infinity;
+            
+            for (const fixture of state.liveFixtures) {
+                const status = fixture.fixture?.status?.short;
+                const matchTime = new Date(fixture.fixture?.date).getTime();
+                
+                if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
+                    hasLiveGames = true;
+                    allGamesFinished = false;
+                }
+                
+                if (['NS', 'TBD', 'PST'].includes(status)) {
+                    allGamesFinished = false;
+                    if (matchTime < firstUpcomingGameTime) {
+                        firstUpcomingGameTime = matchTime;
+                    }
+                }
+                
+                if (['FT', 'AET', 'PEN'].includes(status)) {
+                    const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
+                    if (estimatedEndTime > lastGameEndTime) {
+                        lastGameEndTime = estimatedEndTime;
+                    }
+                }
+            }
+            
+            if (hasLiveGames) {
+                return { canEdit: false, reason: 'Jogos em andamento' };
+            }
+            
+            if (!allGamesFinished) {
+                if (firstUpcomingGameTime !== Infinity) {
+                    const timeUntilFirstGame = firstUpcomingGameTime - now;
+                    if (timeUntilFirstGame > thirtyMinutes) {
+                        const mins = Math.floor(timeUntilFirstGame / 60000);
+                        return { canEdit: true, reason: `Liberado (${mins} min até o jogo)` };
+                    }
+                    const mins = Math.floor(timeUntilFirstGame / 60000);
+                    return { canEdit: false, reason: `Trava em ${mins} min` };
+                }
+                return { canEdit: false, reason: 'Rodada em andamento' };
+            }
+            
+            if (lastGameEndTime > 0 && (now - lastGameEndTime) < oneHour) {
+                const remaining = Math.ceil((oneHour - (now - lastGameEndTime)) / 60000);
+                return { canEdit: false, reason: `Aguarde ${remaining} min` };
+            }
+            
+            if (state.nextRoundDate) {
+                const nextRoundTime = new Date(state.nextRoundDate).getTime();
+                const timeUntilNextRound = nextRoundTime - now;
+                
+                if (timeUntilNextRound > 0 && timeUntilNextRound < thirtyMinutes) {
+                    const mins = Math.floor(timeUntilNextRound / 60000);
+                    return { canEdit: false, reason: `Trava em ${mins} min` };
+                }
+            }
+            
+            return { canEdit: true, reason: 'Liberado' };
         }
 
         // Tempo até o mercado abrir
@@ -3355,6 +3718,10 @@
         }
 
         // Escutar mudanças em tempo real (para ranking)
+        // Flag para controlar render durante digitação
+        let isUserTyping = false;
+        let renderDebounceTimer = null;
+        
         function listenToUsers() {
             if (!db) return;
             db.ref('users').on('value', (snapshot) => {
@@ -3415,6 +3782,10 @@
                             if (fotoParaUsar) {
                                 state.teamLogo = fotoParaUsar;
                             }
+                            // Atualizar teamName do Firebase (se existir)
+                            if (cloudUsers[nick].teamName && cloudUsers[nick].teamName.trim()) {
+                                state.teamName = cloudUsers[nick].teamName;
+                            }
                             if (cloudUsers[nick].starters) {
                                 state.starters = ensureArray(cloudUsers[nick].starters, 11);
                             }
@@ -3457,9 +3828,12 @@
                         console.error('Erro ao salvar localStorage:', e);
                     }
                     
-                    // Atualizar tela
-                    if (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup') {
-                        render();
+                    // Atualizar tela COM DEBOUNCE (evita re-render excessivo durante digitação)
+                    if (!isUserTyping && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
+                        if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
+                        renderDebounceTimer = setTimeout(() => {
+                            render();
+                        }, 500); // Aguarda 500ms para evitar re-render em sequência
                     }
                 }
             });
@@ -3720,33 +4094,28 @@
             }
         }
         
-        // Escutar mudanças nos jogadores (Firebase)
+        // Escutar mudanças nos jogadores (Firebase) - FONTE DE VERDADE
         function listenToPlayers() {
             if (!db) return;
             db.ref('gameData/players').on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data && data.players && data.players.length > 0) {
-                    // Só atualiza se tiver mais jogadores ou for mais recente
-                    const localLastSync = localStorage.getItem('fantasy_players_sync') || '2000-01-01';
-                    const firebaseLastSync = data.lastSync || '2000-01-01';
+                    // Sempre usar dados do Firebase se tiver jogadores
+                    state.players = data.players;
+                    state.teams = data.teams || [];
                     
-                    if (data.players.length >= state.players.length || firebaseLastSync > localLastSync) {
-                        state.players = data.players;
-                        state.teams = data.teams || [];
-                        
-                        // Mesclar jogadores manuais
-                        mergeManualPlayers();
-                        
-                        // Atualizar cache local
-                        localStorage.setItem('fantasyPlayers2026', JSON.stringify(data));
-                        localStorage.setItem('fantasy_players_sync', firebaseLastSync);
-                        
-                        console.log('☁️ Jogadores atualizados do Firebase:', state.players.length);
-                        
-                        // Re-renderizar se estiver na tela certa
-                        if (state.screen === 'draft' || state.screen === 'lineup') {
-                            render();
-                        }
+                    // Mesclar jogadores manuais
+                    mergeManualPlayers();
+                    
+                    // Atualizar cache local para uso offline
+                    localStorage.setItem('fantasyPlayers2026', JSON.stringify(data));
+                    localStorage.setItem('fantasy_players_sync', data.lastSync || new Date().toISOString());
+                    
+                    console.log('✓ Jogadores do Firebase:', state.players.length);
+                    
+                    // Re-renderizar se estiver na tela certa
+                    if (state.screen === 'draft' || state.screen === 'lineup' || state.screen === 'market') {
+                        render();
                     }
                 }
             });
@@ -5148,7 +5517,8 @@
                 }
                 
                 // Renderizar indicador de sync em background
-                if (state.isSyncingBackground && state.syncProgress) {
+                // Renderizar indicador de sync APENAS quando logado e fora da tela de auth
+                if (state.isSyncingBackground && state.syncProgress && state.currentUser && state.screen !== 'auth') {
                     root.innerHTML += `
                         <div class="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in">
                             <div class="bg-zinc-900/95 backdrop-blur-xl border border-emerald-500/30 rounded-2xl px-6 py-3 shadow-2xl flex items-center gap-3">
@@ -5231,6 +5601,8 @@
                                 <label class="block text-zinc-400 text-sm mb-2 font-medium tracking-wide">Nickname</label>
                                 <input type="text" id="nickname" placeholder="Seu apelido" 
                                     class="w-full px-5 py-4 input-dark rounded-xl text-white text-base placeholder:text-zinc-600"
+                                    onfocus="isUserTyping=true" 
+                                    onblur="isUserTyping=false"
                                     onkeypress="if(event.key==='Enter')document.getElementById('password').focus()">
                             </div>
                             
@@ -5239,6 +5611,8 @@
                                 <div class="relative">
                                     <input type="password" id="password" placeholder="Sua senha" 
                                         class="w-full px-5 py-4 pr-14 input-dark rounded-xl text-white text-base placeholder:text-zinc-600"
+                                        onfocus="isUserTyping=true" 
+                                        onblur="isUserTyping=false"
                                         onkeypress="if(event.key==='Enter'){${state.authMode === 'register' ? "document.getElementById('accessCode').focus()" : 'handleAuth()'}}">
                                     <button type="button" onclick="togglePasswordVisibility('password')" 
                                         class="absolute right-4 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition p-1">
@@ -5255,10 +5629,23 @@
                             
                             ${state.authMode === 'register' ? `
                                 <div>
-                                    <label class="block text-zinc-400 text-sm mb-2 font-medium tracking-wide">Codigo de Acesso</label>
-                                    <input type="text" id="accessCode" placeholder="Codigo para entrar" 
+                                    <label class="block text-zinc-400 text-sm mb-2 font-medium tracking-wide">Código de Acesso</label>
+                                    <input type="text" id="accessCode" placeholder="Código para entrar" 
                                         class="w-full px-5 py-4 input-dark rounded-xl text-white text-base placeholder:text-zinc-600"
+                                        onfocus="isUserTyping=true" 
+                                        onblur="isUserTyping=false"
                                         onkeypress="if(event.key==='Enter')handleAuth()">
+                                </div>
+                            ` : ''}
+                            
+                            ${state.authMode === 'login' ? `
+                                <div class="flex items-center gap-3 mt-2">
+                                    <input type="checkbox" id="rememberDevice" 
+                                        class="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 cursor-pointer"
+                                        ${localStorage.getItem('fantasyRememberDevice') === 'true' ? 'checked' : ''}>
+                                    <label for="rememberDevice" class="text-zinc-400 text-sm cursor-pointer select-none">
+                                        Lembrar dispositivo (manter conectado)
+                                    </label>
                                 </div>
                             ` : ''}
                             
@@ -5276,8 +5663,8 @@
                             
                             ${state.authMode === 'recover' ? `
                                 <div class="mt-4 p-5 bg-zinc-800/30 rounded-xl border border-zinc-700/50">
-                                    <p class="text-zinc-400 text-sm mb-4">Digite o codigo de acesso para resetar sua senha:</p>
-                                    <input type="text" id="recoverCode" placeholder="Codigo de acesso" 
+                                    <p class="text-zinc-400 text-sm mb-4">Digite o código de acesso para resetar sua senha:</p>
+                                    <input type="text" id="recoverCode" placeholder="Código de acesso" 
                                         class="w-full px-5 py-3 input-dark rounded-xl text-white text-base mb-4 placeholder:text-zinc-600">
                                     <button onclick="recoverPassword()" 
                                         class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl text-base transition font-display tracking-wider">
@@ -5304,6 +5691,8 @@
                             <div>
                                 <label class="block text-zinc-400 text-sm mb-2">Nome do Time</label>
                                 <input type="text" id="teamName" placeholder="Ex: Os Craques FC" 
+                                    onfocus="isUserTyping=true" 
+                                    onblur="isUserTyping=false"
                                     class="w-full px-4 py-3 input-dark rounded-lg text-white text-sm">
                             </div>
                             
@@ -5452,7 +5841,7 @@
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <!-- Campo -->
                         <div class="lg:col-span-2">
-                            <div class="card rounded-xl p-3 relative" style="min-height: 420px;">
+                            <div class="card rounded-xl p-3 relative" style="min-height: 520px;">
                                 <!-- Seletor de Formação -->
                                 <div class="absolute top-2 right-2 z-10">
                                     ${!canEditTeam() || state.isConfirmed ? `
@@ -5468,7 +5857,7 @@
                                         </select>
                                     `}
                                 </div>
-                                <div class="campo-bg rounded-xl relative" style="min-height: 480px;">
+                                <div class="campo-bg rounded-xl relative" style="min-height: 560px;">
                                 
                                 <!-- Linhas do campo -->
                                 <div class="campo-linhas"></div>
@@ -5482,32 +5871,40 @@
                                 
                                 <!-- Jogadores no campo -->
                                 ${fieldPositions.map((pos, i) => `
-                                    <div class="player-slot absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer"
+                                    <div class="player-slot absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer starter-slot"
                                         style="top: ${pos.top}; left: ${pos.left};"
-                                        onclick="openPlayerModal(${i}, 'starter')">
+                                        data-type="starter"
+                                        data-index="${i}"
+                                        data-position="${getPositionForSlot(i)}"
+                                        ondrop="handleDropOnSlot(event, 'starter', ${i})"
+                                        ondragover="handleDragOverSlot(event)"
+                                        ondragleave="handleDragLeaveSlot(event)">
                                         ${state.starters[i] ? `
                                             <div class="relative text-center">
                                                 <img src="${state.starters[i].photo}" 
+                                                    draggable="${canEditTeam() ? 'true' : 'false'}"
+                                                    ondragstart="handleDragStartPlayer(event, 'starter', ${i})"
+                                                    ondragend="handleDragEndPlayer(event)"
                                                     onclick="event.stopPropagation();viewPlayer(state.starters[${i}])"
-                                                    class="w-12 h-12 sm:w-14 sm:h-14 rounded-full border-2 border-white/80 object-cover mx-auto hover:border-green-400 transition cursor-pointer"
-                                                    onerror="this.src='https://via.placeholder.com/56/1a1a1a/ffffff?text=${state.starters[i].name.charAt(0)}'">
+                                                    class="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-white/80 object-cover mx-auto hover:border-green-400 transition ${canEditTeam() ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}"
+                                                    onerror="this.src='https://via.placeholder.com/80/1a1a1a/ffffff?text=${state.starters[i].name.charAt(0)}'">
                                                 ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? `
-                                                    <div class="absolute -top-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold
+                                                    <div class="absolute -top-1 -right-1 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold
                                                         ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-amber-400 text-black' : 'bg-red-500 text-white'}
                                                         ${state.scores[state.selectedRound]?.live ? ' ring-2 ring-white/50' : ''}">
                                                         ${state.scores[state.selectedRound].players[state.starters[i].id]}
                                                     </div>
                                                 ` : ''}
-                                                <p class="text-white text-[10px] font-medium mt-0.5 bg-black/70 rounded px-1.5 py-0.5">
+                                                <p class="text-white text-xs font-medium mt-1 bg-black/70 rounded px-2 py-0.5">
                                                     ${state.starters[i].name.split(' ').pop()}
                                                 </p>
                                             </div>
                                         ` : `
-                                            <div class="text-center">
-                                                <div class="w-12 h-12 sm:w-14 sm:h-14 mx-auto rounded-full border-2 border-dashed border-white/30 flex items-center justify-center bg-black/20 hover:bg-black/40 transition">
-                                                    <svg class="w-5 h-5 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                                            <div class="text-center" onclick="openPlayerModal(${i}, 'starter')">
+                                                <div class="w-16 h-16 sm:w-20 sm:h-20 mx-auto rounded-full border-2 border-dashed border-white/30 flex items-center justify-center bg-black/20 hover:bg-black/40 transition">
+                                                    <svg class="w-7 h-7 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                                 </div>
-                                                <p class="text-white/50 text-[10px] mt-0.5">${getSlotLabel(i)}</p>
+                                                <p class="text-white/50 text-xs mt-1">${getSlotLabel(i)}</p>
                                             </div>
                                         `}
                                     </div>
@@ -5558,7 +5955,12 @@
                                             } else if (playersPlayed > 0) {
                                                 return `<span class="text-amber-400 text-xs">${allPlayers.length - playersPlayed} restantes</span>`;
                                             }
-                                            return `<span class="text-zinc-500 text-xs">${canEditTeam() ? 'Liberada' : 'Travada'}</span>`;
+                                            return `<span class="text-zinc-500 text-xs">${(() => {
+                                                const status = getEditTeamStatus();
+                                                return status.canEdit ? 
+                                                    '<span class="text-emerald-400">Liberada</span>' : 
+                                                    '<span class="text-red-400">' + status.reason + '</span>';
+                                            })()}</span>`;
                                         })()}
                                     </div>
                                     <button onclick="syncRoundScores()" 
@@ -5586,44 +5988,82 @@
                                         <div class="w-10 h-10 rounded-lg border border-dashed border-zinc-700 flex items-center justify-center">
                                             <span class="text-zinc-600 text-lg">+</span>
                                         </div>
-                                        <span class="text-zinc-500 text-sm">Selecionar tecnico</span>
+                                        <span class="text-zinc-500 text-sm">Selecionar técnico</span>
                                     `}
                                 </div>
                             </div>
 
-                            <!-- Reservas (grid compacto com nomes) -->
+                            <!-- Reservas (grid compacto com nomes) + DRAG AND DROP -->
                             <div class="card rounded-xl p-3">
                                 <div class="flex items-center justify-between mb-2">
                                     <span class="text-zinc-400 text-xs font-display tracking-wider">RESERVAS</span>
                                     <span class="text-orange-400 text-[10px]">${ensureArray(state.reserves, 7).filter(r => r).length}/7 (50% pts)</span>
                                 </div>
-                                <div class="grid grid-cols-4 gap-1.5">
+                                <div class="grid grid-cols-4 gap-2">
                                     ${[0,1,2,3,4,5,6].map(i => {
-                                        const posLabels = ['G','D','D','M','M','A','A'];
+                                        const posLabels = ['GOL','DEF','DEF','MEI','MEI','ATA','ATA'];
+                                        const posColors = ['text-yellow-400','text-blue-400','text-blue-400','text-green-400','text-green-400','text-red-400','text-red-400'];
+                                        const bgColors = ['bg-yellow-400/10','bg-blue-400/10','bg-blue-400/10','bg-green-400/10','bg-green-400/10','bg-red-400/10','bg-red-400/10'];
                                         const reserve = state.reserves[i];
                                         const score = state.scores[state.selectedRound]?.players?.[reserve?.id];
                                         return `
-                                            <div onclick="openPlayerModal(${i}, 'reserve')" class="cursor-pointer text-center">
+                                            <div class="cursor-pointer text-center reserve-slot"
+                                                data-type="reserve" 
+                                                data-index="${i}"
+                                                data-position="${posLabels[i]}"
+                                                ondrop="handleDropOnSlot(event, 'reserve', ${i})"
+                                                ondragover="handleDragOverSlot(event)"
+                                                ondragleave="handleDragLeaveSlot(event)">
                                                 ${reserve ? `
                                                     <div class="relative">
                                                         <img src="${reserve.photo}" 
-                                                            class="w-full aspect-square rounded-lg object-cover border border-zinc-700 hover:border-emerald-500 transition"
+                                                            draggable="${canEditTeam() ? 'true' : 'false'}"
+                                                            ondragstart="handleDragStartPlayer(event, 'reserve', ${i})"
+                                                            ondragend="handleDragEndPlayer(event)"
+                                                            onclick="viewPlayer(state.reserves[${i}])"
+                                                            class="w-12 h-12 rounded-lg object-cover border-2 border-zinc-700 hover:border-emerald-500 transition mx-auto ${canEditTeam() ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}"
                                                             onerror="this.src='https://via.placeholder.com/48/1a1a1a/ffffff?text=${reserve.name.charAt(0)}'">
                                                         ${score !== undefined ? `
-                                                            <span class="absolute -top-1 -right-1 w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center bg-orange-500/80 text-white">${score}</span>
+                                                            <span class="absolute -top-1 -right-0 w-5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center bg-orange-500/90 text-white">${score}</span>
                                                         ` : ''}
                                                     </div>
-                                                    <p class="text-[9px] text-zinc-400 mt-0.5 truncate">${reserve.name.split(' ').pop()}</p>
+                                                    <p class="text-[8px] ${posColors[i]} font-bold mt-0.5">${reserve.position || posLabels[i]}</p>
+                                                    <p class="text-[9px] text-zinc-400 truncate leading-tight">${reserve.name.split(' ').pop()}</p>
                                                 ` : `
-                                                    <div class="w-full aspect-square rounded-lg border border-dashed border-zinc-700 flex items-center justify-center hover:border-zinc-500 transition">
-                                                        <span class="text-zinc-600 text-[10px]">${posLabels[i]}</span>
+                                                    <div class="w-12 h-12 mx-auto rounded-lg border-2 border-dashed border-zinc-700 flex flex-col items-center justify-center hover:border-zinc-500 transition ${bgColors[i]}"
+                                                        onclick="openPlayerModal(${i}, 'reserve')">
+                                                        <span class="text-[10px] font-bold ${posColors[i]}">${posLabels[i]}</span>
                                                     </div>
-                                                    <p class="text-[9px] text-zinc-600 mt-0.5">${posLabels[i]}</p>
+                                                    <p class="text-[8px] ${posColors[i]} mt-0.5 font-medium">${posLabels[i]}</p>
                                                 `}
                                             </div>
                                         `;
                                     }).join('')}
                                 </div>
+                                
+                                <!-- Botão de Substituição - COMPACTO -->
+                                <button onclick="openSubstitutionModal()" 
+                                    class="w-full mt-2 py-2 px-3 rounded-lg text-xs font-medium transition flex items-center justify-center gap-1.5
+                                    ${canEditTeam() 
+                                        ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-500/20' 
+                                        : 'bg-zinc-800 text-zinc-500 cursor-not-allowed'}">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+                                    </svg>
+                                    Substituir
+                                </button>
+                                
+                                <!-- Legenda de Posições (compacta) -->
+                                <div class="mt-2 flex justify-center gap-1.5 flex-wrap">
+                                    <span class="text-yellow-400 text-[8px] bg-yellow-400/10 px-1 py-0.5 rounded">GOL</span>
+                                    <span class="text-blue-400 text-[8px] bg-blue-400/10 px-1 py-0.5 rounded">DEF</span>
+                                    <span class="text-green-400 text-[8px] bg-green-400/10 px-1 py-0.5 rounded">MEI</span>
+                                    <span class="text-red-400 text-[8px] bg-red-400/10 px-1 py-0.5 rounded">ATA</span>
+                                </div>
+                                
+                                <p class="text-center text-zinc-600 text-[9px] mt-1">
+                                    ${canEditTeam() ? '💡 Arraste para trocar' : '🔒 ' + getEditTeamStatus().reason}
+                                </p>
                             </div>
 
                             <!-- Jogos do seu time (compacto) -->
@@ -5734,7 +6174,9 @@
                                 <label class="block text-zinc-400 text-sm mb-2">Nome do Time</label>
                                 <input type="text" id="settingsTeamName" value="${state.teamName || ''}" 
                                     class="w-full px-4 py-3 input-dark rounded-lg text-white" 
-                                    placeholder="Nome do seu time">
+                                    placeholder="Nome do seu time"
+                                    onfocus="isUserTyping=true" 
+                                    onblur="isUserTyping=false">
                             </div>
                             
                             <!-- Time que Torce -->
@@ -5774,6 +6216,36 @@
                                     Minhas Conquistas
                                     <span class="px-2 py-0.5 bg-purple-500/30 rounded text-xs">${(state.users[state.currentUser]?.achievements || []).length}</span>
                                 </button>
+                            </div>
+                            
+                            <!-- Sessão / Dispositivo -->
+                            <div class="pt-4 border-t border-zinc-800/50">
+                                <p class="text-zinc-500 text-xs mb-3 uppercase tracking-wider">Sessão</p>
+                                <div class="space-y-2">
+                                    ${localStorage.getItem('fantasyRememberDevice') === 'true' ? `
+                                        <div class="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-emerald-400">🔐</span>
+                                                <span class="text-emerald-400 text-sm">Dispositivo lembrado</span>
+                                            </div>
+                                            <button onclick="logoutAndForget()" class="text-xs text-red-400 hover:text-red-300">
+                                                Esquecer
+                                            </button>
+                                        </div>
+                                    ` : `
+                                        <div class="p-3 bg-zinc-800/50 rounded-lg">
+                                            <p class="text-zinc-500 text-sm">Dispositivo não lembrado</p>
+                                            <p class="text-zinc-600 text-xs">Ative "Lembrar dispositivo" no login</p>
+                                        </div>
+                                    `}
+                                    <button onclick="logout(); closeModalDirect();" 
+                                        class="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm transition flex items-center justify-center gap-2">
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+                                        </svg>
+                                        Sair da conta
+                                    </button>
+                                </div>
                             </div>
                         </div>
                         
@@ -6993,6 +7465,8 @@
                                     <input type="text" placeholder="Buscar jogador ou time..." 
                                         id="marketSearchInput"
                                         value="${state.marketSearch || ''}"
+                                        onfocus="isUserTyping=true" 
+                                        onblur="isUserTyping=false"
                                         oninput="updateMarketSearch(this.value)"
                                         class="flex-1 min-w-[200px] px-4 py-3 bg-zinc-800 rounded-xl text-white text-sm border border-zinc-700 focus:border-emerald-500 outline-none">
                                     <div class="flex gap-1">
@@ -7277,6 +7751,8 @@
                                 <input type="text" placeholder="Buscar jogador..." 
                                     id="searchPlayerInput"
                                     value="${state.searchName}"
+                                    onfocus="isUserTyping=true" 
+                                    onblur="isUserTyping=false"
                                     oninput="state.searchName=this.value;renderPlayerList()"
                                     class="px-4 py-3 input-dark rounded-xl text-white text-sm placeholder-white/30">
                                 
@@ -7290,7 +7766,7 @@
                                 
                                 <select onchange="state.filterPosition=this.value;render()"
                                     class="px-4 py-3 input-dark text-white rounded-xl text-sm">
-                                    <option value="" ${state.filterPosition === '' ? 'selected' : ''}>Todas posicoes</option>
+                                    <option value="" ${state.filterPosition === '' ? 'selected' : ''}>Todas posições</option>
                                     <option value="GOL" ${state.filterPosition === 'GOL' ? 'selected' : ''}>Goleiro</option>
                                     <option value="ZAG" ${state.filterPosition === 'ZAG' ? 'selected' : ''}>Zagueiro</option>
                                     <option value="LAT" ${state.filterPosition === 'LAT' ? 'selected' : ''}>Lateral</option>
@@ -9172,6 +9648,8 @@
                                         <div class="flex gap-2">
                                             <input type="text" id="chatInput" placeholder="Digite sua mensagem..."
                                                 class="flex-1 px-3 py-2 input-dark rounded-lg text-sm text-white"
+                                                onfocus="isUserTyping=true" 
+                                                onblur="isUserTyping=false"
                                                 onkeypress="if(event.key==='Enter')sendChatMessage(this.value)">
                                             <button onclick="sendChatMessage(document.getElementById('chatInput').value)" 
                                                 class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-lg text-white text-sm transition">
@@ -9872,6 +10350,8 @@
                                     
                                     <div class="flex gap-3 mb-4">
                                         <input type="text" id="pricePlayerSearch" placeholder="Buscar jogador..." 
+                                            onfocus="isUserTyping=true" 
+                                            onblur="isUserTyping=false"
                                             oninput="adminSearchPlayerForPrice(this.value)"
                                             class="flex-1 px-4 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700">
                                     </div>
@@ -10620,6 +11100,8 @@
                                     <div class="space-y-2 mb-3">
                                         <input type="text" placeholder="Buscar jogador..." 
                                             id="draftSearchInput"
+                                            onfocus="isUserTyping=true" 
+                                            onblur="isUserTyping=false"
                                             oninput="updateDraftSearchAdmin(this.value)"
                                             value="${state.draftSearch || ''}"
                                             class="w-full px-3 py-2 input-dark rounded-lg text-white text-sm">
@@ -11113,6 +11595,8 @@
                                     placeholder="Buscar jogador..." 
                                     value="${state.draftPlayerSearch}"
                                     id="draftPlayerSearchInput"
+                                    onfocus="isUserTyping=true" 
+                                    onblur="isUserTyping=false"
                                     oninput="state.draftPlayerSearch=this.value;updateDraftPlayerList()"
                                     class="flex-1 px-3 py-2 bg-white/20 text-white placeholder-white/60 rounded-lg border-0 focus:ring-2 focus:ring-white/50 text-sm">
                                 
@@ -11949,6 +12433,23 @@
                 return;
             }
             
+            // Verificar se deve lembrar dispositivo
+            const rememberCheckbox = document.getElementById('rememberDevice');
+            const shouldRemember = rememberCheckbox ? rememberCheckbox.checked : false;
+            
+            if (shouldRemember) {
+                // Salvar credenciais para login automático
+                localStorage.setItem('fantasyRememberDevice', 'true');
+                localStorage.setItem('fantasyRememberUser', nickname);
+                localStorage.setItem('fantasyRememberPass', btoa(userData.password || '')); // Encode básico
+                console.log('🔐 Dispositivo será lembrado');
+            } else {
+                // Limpar credenciais salvas
+                localStorage.removeItem('fantasyRememberDevice');
+                localStorage.removeItem('fantasyRememberUser');
+                localStorage.removeItem('fantasyRememberPass');
+            }
+            
             state.currentUser = nickname;
             state.isAdmin = false;
             state.teamName = userData.teamName || '';
@@ -12049,7 +12550,8 @@
             
             // Verificar se pode editar (entre rodadas)
             if (!canEditTeam()) {
-                alert('Escalação Travada!\n\nA rodada está em andamento. Você poderá trocar jogadores quando a rodada terminar.\n\nUse "Fazer Substituição" para trocar titular por reserva da mesma posição.');
+                const status = getEditTeamStatus();
+                alert('Escalação Travada!\n\nStatus: ' + status.reason + '\n\nVocê poderá trocar jogadores:\n• 1 hora depois que todos os jogos terminarem\n• Até 30 minutos antes da próxima rodada\n\nUse "Fazer Substituição" para trocar titular por reserva.');
                 return;
             }
             
@@ -12075,7 +12577,8 @@
             
             // Verificar se pode editar (entre rodadas)
             if (!canEditTeam()) {
-                alert('Escalação Travada!\n\nA rodada está em andamento. Você poderá trocar o técnico quando a rodada terminar.');
+                const status = getEditTeamStatus();
+                alert('Escalação Travada!\n\nStatus: ' + status.reason + '\n\nVocê poderá trocar o técnico:\n• 1 hora depois que todos os jogos terminarem\n• Até 30 minutos antes da próxima rodada');
                 return;
             }
             
@@ -12823,7 +13326,8 @@
         window.openSubstitutionModal = function() {
             // Bloquear se rodada em andamento
             if (!canEditTeam()) {
-                alert('Substituições Travadas!\n\nA rodada está em andamento. Você poderá fazer substituições quando todos os jogos terminarem.');
+                const status = getEditTeamStatus();
+                alert('Substituições Travadas!\n\nA rodada está em andamento.\n\nStatus: ' + status.reason + '\n\nVocê poderá fazer substituições:\n• 1 hora depois que todos os jogos terminarem\n• Até 30 minutos antes da próxima rodada começar');
                 return;
             }
             
@@ -12837,40 +13341,186 @@
             render();
         };
 
-        // Drag and drop handlers
+        // ==================== DRAG AND DROP SYSTEM ====================
         let dragData = null;
         
-        window.handleDragStart = function(event, type, index) {
-            // Bloquear se rodada em andamento
+        // Mapeamento de posições dos jogadores para categorias
+        // Jogadores da API podem vir como: GOL, DEF, ZAG, LAT, LD, LE, VOL, MEI, MC, ATA, PTA, SA, PE, PD
+        function getPositionCategory(playerPosition) {
+            if (!playerPosition) return 'ANY';
+            const pos = playerPosition.toUpperCase();
+            
+            if (pos === 'GOL' || pos === 'G') return 'GOL';
+            if (['DEF', 'ZAG', 'LAT', 'LD', 'LE', 'RB', 'LB', 'CB'].includes(pos)) return 'DEF';
+            if (['MEI', 'VOL', 'MC', 'MO', 'MD', 'ME', 'M'].includes(pos)) return 'MEI';
+            if (['ATA', 'PTA', 'SA', 'PE', 'PD', 'CF', 'SS', 'RW', 'LW', 'ST', 'A'].includes(pos)) return 'ATA';
+            
+            return 'ANY'; // Posição desconhecida = compatível com tudo
+        }
+        
+        // Mapeamento de slots titulares para categorias
+        function getSlotCategory(slotIndex) {
+            // Slots: 0=GOL, 1-4=DEF, 5-8=MEI, 9-10=ATA
+            if (slotIndex === 0) return 'GOL';
+            if (slotIndex >= 1 && slotIndex <= 4) return 'DEF';
+            if (slotIndex >= 5 && slotIndex <= 8) return 'MEI';
+            if (slotIndex >= 9 && slotIndex <= 10) return 'ATA';
+            return 'ANY';
+        }
+        
+        // Mapeamento de slots reservas para categorias
+        // Reservas: 0=GOL, 1=DEF, 2=DEF, 3=MEI, 4=MEI, 5=ATA, 6=ATA
+        function getReserveSlotCategory(slotIndex) {
+            if (slotIndex === 0) return 'GOL';
+            if (slotIndex === 1 || slotIndex === 2) return 'DEF';
+            if (slotIndex === 3 || slotIndex === 4) return 'MEI';
+            if (slotIndex === 5 || slotIndex === 6) return 'ATA';
+            return 'ANY';
+        }
+        
+        // Verificar se posição do jogador é compatível com slot
+        function isPositionCompatible(playerPosition, slotType, slotIndex) {
+            const playerCategory = getPositionCategory(playerPosition);
+            
+            // Posição desconhecida = compatível com tudo
+            if (playerCategory === 'ANY') return true;
+            
+            let slotCategory;
+            if (slotType === 'starter') {
+                slotCategory = getSlotCategory(slotIndex);
+            } else {
+                slotCategory = getReserveSlotCategory(slotIndex);
+            }
+            
+            // Slot genérico = compatível com tudo
+            if (slotCategory === 'ANY') return true;
+            
+            // Verificar se categorias são iguais
+            return playerCategory === slotCategory;
+        }
+        
+        // Começar drag de jogador
+        window.handleDragStartPlayer = function(event, type, index) {
+            // Bloquear se não pode editar
             if (!canEditTeam()) {
                 event.preventDefault();
                 return;
             }
-            dragData = { type, index };
-            event.dataTransfer.effectAllowed = 'move';
-            event.target.style.opacity = '0.5';
-        };
-        
-        window.handleDragOver = function(event) {
-            if (!canEditTeam()) return;
-            event.preventDefault();
-            event.dataTransfer.dropEffect = 'move';
-        };
-        
-        window.handleDrop = function(event, targetType, targetIndex) {
-            // Bloquear se rodada em andamento
-            if (!canEditTeam()) {
-                alert('Substituições Travadas!\n\nA rodada está em andamento.');
+            
+            const player = type === 'starter' ? state.starters[index] : state.reserves[index];
+            if (!player) {
+                event.preventDefault();
                 return;
             }
             
-            event.preventDefault();
+            dragData = { 
+                type, 
+                index, 
+                player,
+                position: player.position || ''
+            };
+            
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', player.name);
+            event.target.style.opacity = '0.4';
+            event.target.style.transform = 'scale(0.95)';
+            
+            // Destacar slots compatíveis
+            highlightCompatibleSlots(player.position, type);
+            
+            console.log('🔄 Arrastando:', player.name, '(' + player.position + ')');
+        };
+        
+        // Fim do drag
+        window.handleDragEndPlayer = function(event) {
             event.target.style.opacity = '1';
+            event.target.style.transform = '';
+            removeAllHighlights();
+            dragData = null;
+        };
+        
+        // Quando passa sobre um slot
+        window.handleDragOverSlot = function(event) {
+            if (!canEditTeam() || !dragData) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            
+            // Adicionar visual de hover
+            const slot = event.currentTarget;
+            if (slot && !slot.classList.contains('drag-invalid')) {
+                slot.classList.add('drag-hover');
+            }
+        };
+        
+        // Quando sai de um slot
+        window.handleDragLeaveSlot = function(event) {
+            const slot = event.currentTarget;
+            if (slot) {
+                slot.classList.remove('drag-hover');
+            }
+        };
+        
+        // Drop em um slot
+        window.handleDropOnSlot = function(event, targetType, targetIndex) {
+            event.preventDefault();
+            event.stopPropagation();
+            
+            const slot = event.currentTarget;
+            if (slot) {
+                slot.classList.remove('drag-hover');
+            }
+            
+            if (!canEditTeam()) {
+                const status = getEditTeamStatus();
+                alert('Substituições Travadas!\n\nStatus: ' + status.reason);
+                removeAllHighlights();
+                dragData = null;
+                return;
+            }
             
             if (!dragData) return;
             
-            // Se arrastou de titular para reserva ou vice-versa, fazer a troca
-            if (dragData.type !== targetType) {
+            // Não pode soltar no mesmo lugar
+            if (dragData.type === targetType && dragData.index === targetIndex) {
+                removeAllHighlights();
+                dragData = null;
+                return;
+            }
+            
+            // Pegar jogador de origem e destino
+            const sourcePlayer = dragData.type === 'starter' ? state.starters[dragData.index] : state.reserves[dragData.index];
+            const targetPlayer = targetType === 'starter' ? state.starters[targetIndex] : state.reserves[targetIndex];
+            
+            // Verificar compatibilidade de posições
+            // O jogador de origem deve ser compatível com o slot de destino
+            if (sourcePlayer && !isPositionCompatible(sourcePlayer.position, targetType, targetIndex)) {
+                alert('⚠️ Posição Incompatível!\n\n' + sourcePlayer.name + ' (' + sourcePlayer.position + ') não pode jogar nessa posição.\n\nVerifique as posições compatíveis.');
+                removeAllHighlights();
+                dragData = null;
+                return;
+            }
+            
+            // Se tem jogador no destino, verificar se ele é compatível com a origem
+            if (targetPlayer && !isPositionCompatible(targetPlayer.position, dragData.type, dragData.index)) {
+                alert('⚠️ Posição Incompatível!\n\n' + targetPlayer.name + ' (' + targetPlayer.position + ') não pode ir para a posição de ' + sourcePlayer.name + '.\n\nEscolha jogadores com posições compatíveis.');
+                removeAllHighlights();
+                dragData = null;
+                return;
+            }
+            
+            // Fazer a troca
+            if (dragData.type === 'starter' && targetType === 'starter') {
+                // Troca entre titulares
+                const temp = state.starters[dragData.index];
+                state.starters[dragData.index] = state.starters[targetIndex];
+                state.starters[targetIndex] = temp;
+            } else if (dragData.type === 'reserve' && targetType === 'reserve') {
+                // Troca entre reservas
+                const temp = state.reserves[dragData.index];
+                state.reserves[dragData.index] = state.reserves[targetIndex];
+                state.reserves[targetIndex] = temp;
+            } else {
+                // Troca entre titular e reserva
                 let starterIndex, reserveIndex;
                 
                 if (dragData.type === 'starter') {
@@ -12881,18 +13531,165 @@
                     reserveIndex = dragData.index;
                 }
                 
-                // Trocar
                 const temp = state.starters[starterIndex];
                 state.starters[starterIndex] = state.reserves[reserveIndex];
                 state.reserves[reserveIndex] = temp;
-                
-                saveState();
-                dragData = null;
-                alert('Substituição realizada!');
-                render();
             }
             
+            // Mostrar mensagem de sucesso
+            const fromName = sourcePlayer?.name?.split(' ').pop() || 'Vazio';
+            const toName = targetPlayer?.name?.split(' ').pop() || 'Vazio';
+            console.log('✅ Substituição:', fromName, '↔', toName);
+            
+            // Salvar e atualizar
+            saveState();
+            removeAllHighlights();
             dragData = null;
+            render();
+            
+            // Toast de sucesso
+            showToast('✅ Substituição realizada: ' + fromName + ' ↔ ' + toName);
+        };
+        
+        // Destacar slots compatíveis
+        function highlightCompatibleSlots(playerPosition, sourceType) {
+            // Mostrar indicador de drag
+            showDragIndicator(playerPosition);
+            
+            console.log('🎯 Destacando slots para posição:', playerPosition, '| Categoria:', getPositionCategory(playerPosition));
+            
+            // Destacar titulares
+            document.querySelectorAll('.starter-slot').forEach((slot) => {
+                const slotIndex = parseInt(slot.dataset.index);
+                if (sourceType === 'starter' && slotIndex === dragData.index) return;
+                
+                const isCompatible = isPositionCompatible(playerPosition, 'starter', slotIndex);
+                console.log('  Titular slot', slotIndex, '(', getSlotCategory(slotIndex), ') =', isCompatible ? '✓' : '✕');
+                
+                if (isCompatible) {
+                    slot.classList.add('drag-compatible');
+                } else {
+                    slot.classList.add('drag-invalid');
+                }
+            });
+            
+            // Destacar reservas
+            document.querySelectorAll('.reserve-slot').forEach((slot) => {
+                const slotIndex = parseInt(slot.dataset.index);
+                if (sourceType === 'reserve' && slotIndex === dragData.index) return;
+                
+                const isCompatible = isPositionCompatible(playerPosition, 'reserve', slotIndex);
+                console.log('  Reserva slot', slotIndex, '(', getReserveSlotCategory(slotIndex), ') =', isCompatible ? '✓' : '✕');
+                
+                if (isCompatible) {
+                    slot.classList.add('drag-compatible');
+                } else {
+                    slot.classList.add('drag-invalid');
+                }
+            });
+        }
+        
+        // Mostrar indicador de drag com posições compatíveis
+        function showDragIndicator(playerPosition) {
+            // Remover existente
+            const existing = document.getElementById('drag-indicator');
+            if (existing) existing.remove();
+            
+            // Determinar categoria da posição
+            const category = getPositionCategory(playerPosition);
+            
+            let compatText = '';
+            let compatColor = '';
+            let slotsText = '';
+            
+            if (category === 'GOL') {
+                compatText = 'Goleiro';
+                compatColor = 'text-yellow-400';
+                slotsText = 'Slot 0 (GOL) + Reserva GOL';
+            } else if (category === 'DEF') {
+                compatText = 'Defensor';
+                compatColor = 'text-blue-400';
+                slotsText = 'Slots 1-4 (LD/ZAG/LE) + Reservas DEF';
+            } else if (category === 'MEI') {
+                compatText = 'Meio-campo';
+                compatColor = 'text-green-400';
+                slotsText = 'Slots 5-8 (MC/MEI) + Reservas MEI';
+            } else if (category === 'ATA') {
+                compatText = 'Atacante';
+                compatColor = 'text-red-400';
+                slotsText = 'Slots 9-10 (PE/ATA/PD) + Reservas ATA';
+            } else {
+                compatText = 'Qualquer';
+                compatColor = 'text-white';
+                slotsText = 'Todos os slots';
+            }
+            
+            const indicator = document.createElement('div');
+            indicator.id = 'drag-indicator';
+            indicator.className = 'drag-indicator active';
+            indicator.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <img src="${dragData.player.photo}" class="w-10 h-10 rounded-full border-2 border-emerald-500" onerror="this.style.display='none'">
+                    <div>
+                        <p class="text-white font-medium text-sm">${dragData.player.name}</p>
+                        <p class="text-zinc-400 text-xs">Posição: <span class="${compatColor} font-bold">${(playerPosition || '?').toUpperCase()}</span></p>
+                    </div>
+                </div>
+                <div class="border-l border-zinc-700 pl-3 ml-1">
+                    <p class="text-zinc-500 text-[10px] uppercase">Categoria</p>
+                    <p class="${compatColor} font-bold text-sm">${compatText}</p>
+                </div>
+                <div class="flex items-center gap-1">
+                    <span class="w-3 h-3 rounded-full ${compatColor.replace('text-', 'bg-')} animate-pulse"></span>
+                    <span class="text-emerald-400 text-xs">Solte nos slots verdes</span>
+                </div>
+            `;
+            document.body.appendChild(indicator);
+        }
+        
+        // Esconder indicador de drag
+        function hideDragIndicator() {
+            const indicator = document.getElementById('drag-indicator');
+            if (indicator) indicator.remove();
+        }
+        
+        // Remover todos os highlights
+        function removeAllHighlights() {
+            document.querySelectorAll('.drag-compatible, .drag-invalid, .drag-hover').forEach(el => {
+                el.classList.remove('drag-compatible', 'drag-invalid', 'drag-hover');
+            });
+            hideDragIndicator();
+        }
+        
+        // Toast de notificação
+        function showToast(message) {
+            const existing = document.getElementById('toast-notification');
+            if (existing) existing.remove();
+            
+            const toast = document.createElement('div');
+            toast.id = 'toast-notification';
+            toast.className = 'fixed bottom-24 left-1/2 transform -translate-x-1/2 bg-zinc-800 text-white px-4 py-2 rounded-lg shadow-lg z-50 animate-fade-in';
+            toast.innerHTML = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transition = 'opacity 0.3s';
+                setTimeout(() => toast.remove(), 300);
+            }, 2500);
+        }
+        
+        // Funções antigas de drag (mantidas para compatibilidade)
+        window.handleDragStart = function(event, type, index) {
+            handleDragStartPlayer(event, type, index);
+        };
+        
+        window.handleDragOver = function(event) {
+            handleDragOverSlot(event);
+        };
+        
+        window.handleDrop = function(event, targetType, targetIndex) {
+            handleDropOnSlot(event, targetType, targetIndex);
         };
 
         window.selectForSubstitution = function(type, index) {
@@ -13064,7 +13861,8 @@
             }
             
             if (!canEditTeam()) {
-                alert('Formação Travada!\n\nA rodada está em andamento. Você poderá mudar a formação quando todos os jogos terminarem.');
+                const status = getEditTeamStatus();
+                alert('Formação Travada!\n\nStatus: ' + status.reason + '\n\nVocê poderá mudar a formação:\n• 1 hora depois que todos os jogos terminarem\n• Até 30 minutos antes da próxima rodada');
                 return;
             }
             
@@ -15586,17 +16384,18 @@
             }
             
             // Verificar se já existe
+            const normalizedTeam = capitalizeTeamName(team);
             const exists = state.players.find(p => 
-                p.name.toLowerCase() === name.toLowerCase() && p.team === team
+                p.name.toLowerCase() === name.toLowerCase() && (p.team === team || p.team === normalizedTeam)
             );
             
             if (exists) {
-                alert(`Jogador "${name}" já existe no ${team}!`);
+                alert(`Jogador "${name}" já existe no ${normalizedTeam}!`);
                 return;
             }
             
             // Pegar o teamId do time
-            const teamData = state.teams.find(t => t.name === team);
+            const teamData = state.teams.find(t => t.name === normalizedTeam || capitalizeTeamName(t.name) === normalizedTeam);
             
             // Gerar ID único (negativo para não conflitar com IDs da API)
             const newId = -Date.now();
@@ -15604,9 +16403,9 @@
             const newPlayer = {
                 id: newId,
                 name: name,
-                team: team,
+                team: normalizedTeam,
                 teamId: teamData?.id || 0,
-                teamLogo: TEAM_LOGOS[team] || teamData?.logo || '',
+                teamLogo: TEAM_LOGOS[normalizedTeam] || teamData?.logo || '',
                 position: position,
                 number: number ? parseInt(number) : null,
                 photo: `https://via.placeholder.com/150/1a1a1a/ffffff?text=${name.split(' ').map(n => n.charAt(0)).join('')}`,
@@ -15620,7 +16419,7 @@
                     document.getElementById('addPlayerName').value = '';
                     document.getElementById('addPlayerNumber').value = '';
                     
-                    alert(`✅ Jogador "${name}" adicionado ao ${team}!\n\nTodos os dispositivos serão atualizados automaticamente.`);
+                    alert(`✅ Jogador "${name}" adicionado ao ${normalizedTeam}!\n\nTodos os dispositivos serão atualizados automaticamente.`);
                 }).catch(err => {
                     alert('Erro ao salvar: ' + err.message);
                 });
@@ -15811,6 +16610,10 @@
                     
                     // Adicionar os novos do Firebase
                     Object.values(manualPlayers).forEach(player => {
+                        // Normalizar nome do time
+                        player.team = capitalizeTeamName(player.team);
+                        player.teamLogo = TEAM_LOGOS[player.team] || player.teamLogo || '';
+                        
                         const exists = state.players.find(p => 
                             p.id === player.id || 
                             (p.name.toLowerCase() === player.name.toLowerCase() && p.team === player.team)
@@ -15818,8 +16621,7 @@
                         if (!exists) {
                             state.players.push({
                                 ...player,
-                                manual: true,
-                                teamLogo: TEAM_LOGOS[player.team] || ''
+                                manual: true
                             });
                         }
                     });
@@ -15839,7 +16641,15 @@
             loadAdminSettings();
         }
 
-        window.logout = function() {
+        window.logout = function(forgetDevice = false) {
+            // Se forgetDevice é true ou se confirmar, limpa credenciais
+            if (forgetDevice) {
+                localStorage.removeItem('fantasyRememberDevice');
+                localStorage.removeItem('fantasyRememberUser');
+                localStorage.removeItem('fantasyRememberPass');
+                console.log('🔓 Credenciais removidas');
+            }
+            
             saveState();
             state.currentUser = null;
             state.teamName = '';
@@ -15852,20 +16662,107 @@
             state.screen = 'auth';
             render();
         };
+        
+        // Função para desconectar e esquecer dispositivo
+        window.logoutAndForget = function() {
+            if (confirm('Deseja sair E desconectar este dispositivo?\n\nVocê precisará fazer login novamente na próxima vez.')) {
+                logout(true);
+            }
+        };
 
         window.syncAllData = syncAllData;
 
         // ==================== INIT ====================
-        try {
-            loadState();
-            if (!state.currentUser) {
-                state.screen = 'auth';
+        
+        // Função para tentar login automático
+        async function tryAutoLogin() {
+            const shouldRemember = localStorage.getItem('fantasyRememberDevice') === 'true';
+            const savedUser = localStorage.getItem('fantasyRememberUser');
+            const savedPass = localStorage.getItem('fantasyRememberPass');
+            
+            if (!shouldRemember || !savedUser || !savedPass) {
+                return false;
             }
-            render();
-        } catch(e) {
-            console.error('Erro na inicialização:', e);
-            document.getElementById('root').innerHTML = '<div style="color:white;padding:20px;"><h1>Erro ao carregar</h1><p>' + e.message + '</p><button onclick="localStorage.clear();location.reload()">Limpar dados e recarregar</button></div>';
+            
+            console.log('🔐 Tentando login automático para:', savedUser);
+            
+            const password = atob(savedPass); // Decode
+            
+            // Buscar do Firebase
+            if (db) {
+                try {
+                    const snapshot = await db.ref('users/' + savedUser).once('value');
+                    const userData = snapshot.val();
+                    
+                    if (userData && userData.password === password) {
+                        // Atualizar state.users
+                        if (!state.users[savedUser]) {
+                            state.users[savedUser] = userData;
+                        }
+                        
+                        // Completar login sem passar pelo formulário
+                        state.currentUser = savedUser;
+                        state.isAdmin = false;
+                        state.teamName = userData.teamName || '';
+                        state.teamLogo = userData.teamLogo || null;
+                        state.formation = userData.formation || '4-3-3';
+                        state.starters = ensureArray(userData.starters, 11);
+                        state.reserves = ensureArray(userData.reserves, 7);
+                        state.coach = userData.coach || null;
+                        state.isConfirmed = userData.isConfirmed || false;
+                        state.scores = userData.scores || {};
+                        state.favoriteTeam = userData.favoriteTeam || null;
+                        state.userBio = userData.userBio || '';
+                        state.screen = userData.teamName ? 'lineup' : 'createTeam';
+                        
+                        console.log('✅ Login automático bem sucedido!');
+                        
+                        // Iniciar listeners
+                        listenToDraftChat();
+                        listenToDraftStatus();
+                        listenToNextRound();
+                        listenToPrivateMessages();
+                        
+                        return true;
+                    } else {
+                        console.log('⚠️ Senha alterada ou usuário não encontrado, limpando credenciais salvas');
+                        localStorage.removeItem('fantasyRememberDevice');
+                        localStorage.removeItem('fantasyRememberUser');
+                        localStorage.removeItem('fantasyRememberPass');
+                        return false;
+                    }
+                } catch (e) {
+                    console.error('Erro no login automático:', e);
+                    return false;
+                }
+            }
+            
+            return false;
         }
+        
+        // Inicialização principal
+        (async function init() {
+            try {
+                // Limpar flags de sync que podem ter ficado presas
+                state.isSyncingBackground = false;
+                state.syncProgress = '';
+                
+                loadState();
+                
+                // Se não tem usuário logado, tentar login automático
+                if (!state.currentUser) {
+                    const autoLogged = await tryAutoLogin();
+                    if (!autoLogged) {
+                        state.screen = 'auth';
+                    }
+                }
+                
+                render();
+            } catch(e) {
+                console.error('Erro na inicialização:', e);
+                document.getElementById('root').innerHTML = '<div style="color:white;padding:20px;"><h1>Erro ao carregar</h1><p>' + e.message + '</p><button onclick="localStorage.clear();location.reload()">Limpar dados e recarregar</button></div>';
+            }
+        })();
 
         // Escutar ofertas do Firebase
         try {
@@ -15937,6 +16834,10 @@
         async function autoSyncPlayers(forceSync = false) {
             console.log('🔄 Iniciando sincronização...');
             
+            // Se já tiver jogadores em cache, fazer sync silencioso (sem mostrar mensagem)
+            const hasCachedPlayers = state.players && state.players.length > 100;
+            const silentSync = !forceSync && hasCachedPlayers;
+            
             // Se não é forçado, verificar se precisa sincronizar
             const needsSync = await shouldAutoSync();
             if (!forceSync && !needsSync && state.players.length > 0) {
@@ -15944,14 +16845,20 @@
                 return;
             }
             
-            console.log('🚀 Sincronizando dados...');
-            state.isSyncingBackground = true;
-            state.syncProgress = 'Iniciando...';
-            render();
+            console.log(silentSync ? '🔄 Sync silencioso em background...' : '🚀 Sincronizando dados...');
+            
+            // Só mostrar indicador se NÃO for silencioso
+            if (!silentSync) {
+                state.isSyncingBackground = true;
+                state.syncProgress = 'Iniciando...';
+                render();
+            }
             
             try {
-                state.syncProgress = '📡 API-Football...';
-                render();
+                if (!silentSync) {
+                    state.syncProgress = '📡 API-Football...';
+                    render();
+                }
                 
                 const allPlayers = await autoSyncViaApiFootball();
                 
@@ -15971,35 +16878,48 @@
                     localStorage.setItem('fantasy_last_sync', new Date().toISOString());
                     localStorage.setItem('fantasy_api_source', 'api-football');
                     
-                    state.syncProgress = `✅ ${state.players.length} jogadores!`;
-                    console.log(`🎉 Auto-sync completo! ${state.players.length} jogadores salvos no Firebase`);
+                    if (!silentSync) {
+                        state.syncProgress = `✅ ${state.players.length} jogadores!`;
+                    }
+                    console.log(`🎉 Auto-sync completo! ${state.players.length} jogadores`);
                 }
                 
             } catch (e) {
                 console.log('❌ Auto-sync erro:', e.message);
-                state.syncProgress = '❌ Erro na sincronização';
+                if (!silentSync) {
+                    state.syncProgress = '❌ Erro';
+                }
             }
             
-            // Esconder indicador após 3 segundos
-            setTimeout(() => {
+            // Esconder indicador
+            if (!silentSync) {
+                setTimeout(() => {
+                    state.isSyncingBackground = false;
+                    state.syncProgress = '';
+                    render();
+                }, 3000);
+                render();
+            } else {
+                // Silencioso - limpar flags sem mostrar nada
                 state.isSyncingBackground = false;
                 state.syncProgress = '';
-                render();
-            }, 3000);
-            
-            render();
+            }
         }
         
         // Auto-sync via SofaScore (sem modal)
         async function autoSyncViaSofascore() {
-            state.syncProgress = '📡 Buscando temporada...';
-            render();
+            if (state.isSyncingBackground) {
+                state.syncProgress = '📡 Buscando temporada...';
+                render();
+            }
             
             const seasonId = await getSofascoreCurrentSeason();
             if (!seasonId) throw new Error('Temporada não encontrada');
             
-            state.syncProgress = '📋 Carregando times...';
-            render();
+            if (state.isSyncingBackground) {
+                state.syncProgress = '📋 Carregando times...';
+                render();
+            }
             
             const teams = await getSofascoreTeams(seasonId);
             if (teams.length === 0) throw new Error('Times não encontrados');
@@ -16009,8 +16929,10 @@
             
             for (let i = 0; i < teams.length; i++) {
                 const team = teams[i];
-                state.syncProgress = `⚽ ${team.name} (${i + 1}/${teams.length})`;
-                render();
+                if (state.isSyncingBackground) {
+                    state.syncProgress = `⚽ ${team.name} (${i + 1}/${teams.length})`;
+                    render();
+                }
                 console.log(`   [${i + 1}/${teams.length}] ${team.name}...`);
                 
                 const players = await getSofascoreTeamPlayers(team.id, team.name, team.logo);
@@ -16028,8 +16950,11 @@
         
         // Auto-sync via API-Football (sem modal)
         async function autoSyncViaApiFootball() {
-            state.syncProgress = '📡 Conectando API-Football...';
-            render();
+            // Só mostrar progresso se estiver em modo não-silencioso
+            if (state.isSyncingBackground) {
+                state.syncProgress = '📡 Conectando API-Football...';
+                render();
+            }
             
             let teamsData;
             let usedSeason = SEASON;
@@ -16059,8 +16984,12 @@
             
             for (let i = 0; i < state.teams.length; i++) {
                 const team = state.teams[i];
-                state.syncProgress = `⚽ ${team.name} (${i + 1}/${state.teams.length})`;
-                render();
+                
+                // Só mostrar progresso se estiver em modo não-silencioso
+                if (state.isSyncingBackground) {
+                    state.syncProgress = `⚽ ${team.name} (${i + 1}/${state.teams.length})`;
+                    render();
+                }
                 console.log(`   [${i + 1}/${state.teams.length}] ${team.name}...`);
                 
                 try {
@@ -16092,10 +17021,12 @@
             return allPlayers;
         }
 
-        // Sincronizar jogadores AUTOMATICAMENTE ao abrir
+        // Carregar jogadores do Firebase (FONTE DE VERDADE)
+        // Sync da API APENAS se Firebase estiver completamente vazio (primeira vez)
+        // NUNCA sincronizar automaticamente - isso é tarefa do ADMIN
         (async function autoInit() {
+            // 1. Verificar cache local
             const cachedPlayers = localStorage.getItem('fantasyPlayers2026');
-            let hasValidCache = false;
             
             if (cachedPlayers) {
                 try {
@@ -16104,37 +17035,25 @@
                         state.players = parsed.players;
                         state.teams = parsed.teams || [];
                         mergeManualPlayers();
-                        hasValidCache = true;
-                        console.log('✓ Cache carregado:', state.players.length, 'jogadores');
-                        render();
+                        console.log('✓ Cache local:', state.players.length, 'jogadores');
+                        return; // ✅ Tem cache, não fazer mais nada!
                     }
                 } catch (e) {
                     console.log('⚠️ Cache inválido');
                 }
             }
             
-            // Se não tem cache válido - FORÇAR sincronização
-            if (!hasValidCache) {
-                console.log('🚀 Sem dados - sincronizando automaticamente...');
-                localStorage.removeItem('fantasyPlayers2026');
-                localStorage.removeItem('fantasy_last_sync');
-                
-                // Sincronizar imediatamente (forçado)
-                setTimeout(() => autoSyncPlayers(true), 500);
-            } 
-            // Se tem cache, verificar se precisa atualizar (1x por dia)
-            else {
-                // Verificar de forma async se precisa sync
-                setTimeout(async () => {
-                    const needsSync = await shouldAutoSync();
-                    if (needsSync) {
-                        console.log('📅 Atualização diária - sincronizando em background...');
-                        autoSyncPlayers(false);
-                    } else {
-                        console.log('✓ Dados atualizados!');
-                    }
-                }, 2000);
-            }
+            // 2. Sem cache local - aguardar Firebase carregar (via listenToPlayers)
+            // O Firebase vai carregar automaticamente e salvar no cache
+            console.log('⏳ Aguardando Firebase...');
+            
+            // Se após 15 segundos ainda não tiver dados, significa que Firebase está vazio
+            // Nesse caso, admin precisa sincronizar manualmente
+            setTimeout(() => {
+                if (state.players.length === 0) {
+                    console.log('⚠️ Firebase vazio - Admin precisa sincronizar jogadores');
+                }
+            }, 15000);
         })();
 
         // ==================== ATUALIZAÇÃO INTELIGENTE DE PONTOS ====================
