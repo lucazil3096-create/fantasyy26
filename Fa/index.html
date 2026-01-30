@@ -833,6 +833,7 @@
             roundEndedAt: null, // Timestamp quando todos jogos terminaram
             substitutionsOpen: true, // Se substituições estão liberadas
             autoConfirmedAt: null, // Quando foi confirmado automaticamente
+            delayedGamesRounds: [], // Rodadas com jogos atrasados acontecendo
             
             // Sistema de Sync
             isSyncingBackground: false, // Se está sincronizando em background
@@ -1204,6 +1205,7 @@
                                 db.ref('users/' + userNick + '/achievementsShown').set(alreadyShown);
                             }
                             
+                            // Mostrar notificação de conquista (só aparece 1x por usuário)
                             setTimeout(() => {
                                 showAchievementNotification(ach);
                             }, notifyIndex * 4500);
@@ -1361,7 +1363,7 @@
                         newSeen.push(id);
                     }
                     
-                    // Mostrar notificação com delay
+                    // Mostrar notificação (só aparece 1x por usuário)
                     setTimeout(() => {
                         if (notif.type === 'title') {
                             showTitleNotification(notif.data);
@@ -1581,7 +1583,7 @@
                         }
                     }
                     
-                    // Mostrar notificação
+                    // Mostrar notificação de desafio completado
                     showChallengeNotification(challenge);
                 }
             });
@@ -2048,86 +2050,136 @@
         // Variável para compatibilidade (será substituída dinamicamente)
         let FIXTURES_CACHE_TIME = CACHE_SETTINGS.DEFAULT;
         
-        // Detectar rodada atual/próxima do campeonato
-        // Sincroniza automaticamente com Firebase (fonte de verdade)
+        // ==================== SISTEMA DE CACHE COMPARTILHADO (ECONOMIA DE API) ====================
+        // Um usuário busca da API → salva no Firebase → outros usuários leem do Firebase
+        // Isso economiza MUITO as requisições da API!
+        
+        const CACHE_24H = 24 * 60 * 60 * 1000; // 24 horas
+        const CACHE_5MIN = 5 * 60 * 1000; // 5 minutos (para jogos ao vivo)
+        
+        // ==================== SISTEMA INTELIGENTE DE RODADAS ====================
+        // Rodada do Fantasy = Próxima rodada com maioria dos jogos não iniciados
+        // Jogos atrasados de rodadas anteriores = contam para rodada ATUAL do Fantasy
+        // Isso evita que um jogo atrasado "volte" a rodada
+        
         async function detectCurrentRound() {
+            console.log('🔍 Verificando rodada...');
+            
             try {
-                // Firebase é a FONTE DE VERDADE para a rodada atual
+                // 1. PRIMEIRO: Verificar se Firebase já tem dados recentes (< 24h)
                 const firebaseRes = await fetch(`${FIREBASE_URL}/gameState.json`);
                 const gameState = await firebaseRes.json();
                 
-                if (gameState && gameState.currentRound) {
-                    // Usar helper para garantir número
-                    const roundNum = toRoundNumber(gameState.currentRound);
+                if (gameState && gameState.currentRound && gameState.lastApiSync) {
+                    const timeSinceSync = Date.now() - gameState.lastApiSync;
+                    const hoursAgo = Math.round(timeSinceSync / 1000 / 60 / 60);
                     
-                    state.currentRound = roundNum;
-                    state.selectedRound = roundNum;
-                    state.substitutionsOpen = gameState.substitutionsOpen !== false;
-                    state.roundStatus = gameState.roundStatus || 'waiting';
-                    console.log(`✅ Rodada atual do Firebase: ${roundNum} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}`);
-                    return;
+                    if (timeSinceSync < CACHE_24H) {
+                        // Cache válido! Usar dados do Firebase
+                        const roundNum = toRoundNumber(gameState.currentRound);
+                        state.currentRound = roundNum;
+                        state.selectedRound = roundNum;
+                        state.substitutionsOpen = gameState.substitutionsOpen !== false;
+                        state.roundStatus = gameState.roundStatus || 'waiting';
+                        state.delayedGamesRounds = gameState.delayedGamesRounds || []; // Rodadas com jogos atrasados
+                        console.log(`✅ Usando cache Firebase (${hoursAgo}h atrás): Rodada ${roundNum}`);
+                        return;
+                    } else {
+                        console.log(`⏰ Cache expirado (${hoursAgo}h), buscando na API...`);
+                    }
                 }
                 
-                // Se não tem no Firebase, detectar via API e salvar
-                console.log('🔍 Detectando rodada via API...');
+                // 2. Cache expirado ou não existe: Buscar na API
+                console.log('🌐 Buscando rodada na API-Football...');
                 
-                const today = new Date().toISOString().split('T')[0];
-                let currentRound = 1;
+                let currentRound = null;
                 let foundRound = false;
+                let detectionMethod = '';
+                let delayedGamesRounds = []; // Rodadas de jogos atrasados acontecendo agora
+                const today = new Date().toISOString().split('T')[0];
                 
-                // 1. Verificar se tem jogo AO VIVO agora
+                // ========== PASSO 1: BUSCAR PRÓXIMO JOGO (DEFINE A RODADA DO FANTASY) ==========
+                // Esta é a rodada "oficial" do Fantasy - independente de jogos atrasados
                 try {
-                    const liveRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&live=all`);
-                    if (liveRes.response && liveRes.response.length > 0) {
-                        const roundStr = liveRes.response[0].league.round;
+                    const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&next=1`);
+                    if (nextRes.response && nextRes.response.length > 0) {
+                        const roundStr = nextRes.response[0].league.round;
                         const match = roundStr.match(/Regular Season - (\d+)/);
                         if (match) {
                             currentRound = parseInt(match[1]);
                             foundRound = true;
-                            console.log(`🔴 Jogo ao vivo! Rodada ${currentRound}`);
+                            const nextDate = new Date(nextRes.response[0].fixture.date);
+                            const dayName = nextDate.toLocaleDateString('pt-BR', { weekday: 'long' });
+                            detectionMethod = `⏭️ Próxima rodada (${dayName})`;
+                            console.log(`📌 Rodada do Fantasy: ${currentRound} (${detectionMethod})`);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Erro ao buscar próximo jogo');
+                }
+                
+                // ========== PASSO 2: VERIFICAR JOGOS AO VIVO (podem ser atrasados) ==========
+                try {
+                    const liveRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&live=all`);
+                    if (liveRes.response && liveRes.response.length > 0) {
+                        for (const fixture of liveRes.response) {
+                            const roundStr = fixture.league.round;
+                            const match = roundStr.match(/Regular Season - (\d+)/);
+                            if (match) {
+                                const liveRound = parseInt(match[1]);
+                                
+                                if (foundRound && liveRound < currentRound) {
+                                    // Jogo de rodada ANTERIOR ao vivo = jogo atrasado!
+                                    if (!delayedGamesRounds.includes(liveRound)) {
+                                        delayedGamesRounds.push(liveRound);
+                                    }
+                                    console.log(`🔴 Jogo ATRASADO ao vivo! Rodada ${liveRound} (${fixture.teams.home.name} x ${fixture.teams.away.name})`);
+                                } else if (!foundRound) {
+                                    // Se não achou próximo jogo, usar o ao vivo
+                                    currentRound = liveRound;
+                                    foundRound = true;
+                                    detectionMethod = '🔴 Jogo AO VIVO';
+                                }
+                            }
                         }
                     }
                 } catch (e) {
                     console.log('Sem jogos ao vivo');
                 }
                 
-                // 2. Se não tem ao vivo, buscar jogos de HOJE
-                if (!foundRound) {
-                    try {
-                        const todayRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`);
-                        if (todayRes.response && todayRes.response.length > 0) {
-                            const roundStr = todayRes.response[0].league.round;
-                            const match = roundStr.match(/Regular Season - (\d+)/);
-                            if (match) {
-                                currentRound = parseInt(match[1]);
-                                foundRound = true;
-                                console.log(`📅 Jogos hoje! Rodada ${currentRound}`);
+                // ========== PASSO 3: VERIFICAR JOGOS DE HOJE (podem ser atrasados) ==========
+                try {
+                    const todayRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`);
+                    if (todayRes.response && todayRes.response.length > 0) {
+                        for (const fixture of todayRes.response) {
+                            const status = fixture.fixture?.status?.short;
+                            // Só jogos não finalizados
+                            if (['NS', 'TBD', '1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
+                                const roundStr = fixture.league.round;
+                                const match = roundStr.match(/Regular Season - (\d+)/);
+                                if (match) {
+                                    const todayRound = parseInt(match[1]);
+                                    
+                                    if (foundRound && todayRound < currentRound) {
+                                        // Jogo de rodada ANTERIOR hoje = jogo atrasado!
+                                        if (!delayedGamesRounds.includes(todayRound)) {
+                                            delayedGamesRounds.push(todayRound);
+                                        }
+                                        console.log(`📅 Jogo ATRASADO hoje! Rodada ${todayRound}`);
+                                    } else if (!foundRound) {
+                                        currentRound = todayRound;
+                                        foundRound = true;
+                                        detectionMethod = '📅 Jogos HOJE';
+                                    }
+                                }
                             }
                         }
-                    } catch (e) {
-                        console.log('Sem jogos hoje');
                     }
+                } catch (e) {
+                    console.log('Sem jogos hoje');
                 }
                 
-                // 3. Se não tem hoje, buscar PRÓXIMO jogo
-                if (!foundRound) {
-                    try {
-                        const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&next=1`);
-                        if (nextRes.response && nextRes.response.length > 0) {
-                            const roundStr = nextRes.response[0].league.round;
-                            const match = roundStr.match(/Regular Season - (\d+)/);
-                            if (match) {
-                                currentRound = parseInt(match[1]);
-                                foundRound = true;
-                                console.log(`⏭️ Próximo jogo: Rodada ${currentRound}`);
-                            }
-                        }
-                    } catch (e) {
-                        console.log('Erro ao buscar próximo jogo');
-                    }
-                }
-                
-                // 4. Se ainda não achou, buscar último jogo encerrado
+                // ========== PASSO 4: FALLBACK - ÚLTIMO JOGO ==========
                 if (!foundRound) {
                     try {
                         const lastRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&last=1`);
@@ -2136,7 +2188,8 @@
                             const match = roundStr.match(/Regular Season - (\d+)/);
                             if (match) {
                                 currentRound = parseInt(match[1]);
-                                console.log(`🏁 Última rodada jogada: ${currentRound}`);
+                                foundRound = true;
+                                detectionMethod = '🏁 Última rodada';
                             }
                         }
                     } catch (e) {
@@ -2144,25 +2197,60 @@
                     }
                 }
                 
-                // Salvar no Firebase - formato novo
-                if (db) {
-                    await db.ref('gameState').set({
-                        currentRound: currentRound,
-                        substitutionsOpen: true,
-                        roundStatus: 'waiting',
-                        updatedAt: Date.now()
-                    });
+                // ========== PASSO 5: SALVAR NO FIREBASE ==========
+                if (foundRound && currentRound) {
+                    state.currentRound = currentRound;
+                    state.selectedRound = currentRound;
+                    state.delayedGamesRounds = delayedGamesRounds;
+                    
+                    // Manter estado de substituições se existir
+                    if (gameState && gameState.substitutionsOpen !== undefined) {
+                        state.substitutionsOpen = gameState.substitutionsOpen;
+                    } else {
+                        state.substitutionsOpen = true;
+                    }
+                    
+                    // Salvar no Firebase com timestamp
+                    if (db) {
+                        await db.ref('gameState').update({
+                            currentRound: currentRound,
+                            delayedGamesRounds: delayedGamesRounds,
+                            lastApiSync: Date.now(),
+                            detectedFrom: detectionMethod,
+                            updatedAt: Date.now()
+                        });
+                        console.log(`💾 Rodada ${currentRound} salva no Firebase para outros usuários`);
+                        if (delayedGamesRounds.length > 0) {
+                            console.log(`📌 Jogos atrasados das rodadas: ${delayedGamesRounds.join(', ')}`);
+                        }
+                    }
+                    
+                    console.log(`✅ Rodada do Fantasy: ${currentRound} (${detectionMethod})`);
+                    return;
                 }
                 
-                state.currentRound = currentRound;
-                state.selectedRound = currentRound;
-                state.substitutionsOpen = true;
-                console.log(`✅ Rodada definida: ${currentRound}`);
+                // 6. Se nada funcionou, usar Firebase mesmo que antigo
+                if (gameState && gameState.currentRound) {
+                    const roundNum = toRoundNumber(gameState.currentRound);
+                    state.currentRound = roundNum;
+                    state.selectedRound = roundNum;
+                    state.substitutionsOpen = gameState.substitutionsOpen !== false;
+                    state.delayedGamesRounds = gameState.delayedGamesRounds || [];
+                    console.log(`⚠️ Usando cache antigo do Firebase: Rodada ${roundNum}`);
+                    return;
+                }
                 
-            } catch (e) {
-                console.error('Erro ao detectar rodada:', e);
+                // 7. Último recurso
                 state.currentRound = 1;
                 state.selectedRound = 1;
+                state.delayedGamesRounds = [];
+                console.log('⚠️ Nenhum dado disponível, usando rodada 1');
+                
+            } catch (e) {
+                console.error('❌ Erro ao detectar rodada:', e);
+                state.currentRound = 1;
+                state.selectedRound = 1;
+                state.delayedGamesRounds = [];
             }
         }
         
@@ -5115,7 +5203,7 @@
             if (goals > 0) {
                 if (position === 'G') score += goals * 10;      // Goleiro - raridade!
                 else if (position === 'D') score += goals * 6;  // Defensor
-                else score += goals * 5;                         // Meia e Atacante
+                else score += goals * 6;                         // Meia e Atacante
             }
             
             // ==================== GOLEIRO (G) ====================
@@ -5294,6 +5382,8 @@
         }
 
         // Sincronizar pontuação da rodada para TODOS os usuários confirmados
+        // ESTRATÉGIA ECONÔMICA: Cache compartilhado no Firebase
+        // Inclui jogos atrasados de rodadas anteriores na pontuação
         async function syncRoundScores() {
             if (state.isUpdatingScores) return;
             
@@ -5303,79 +5393,173 @@
             render();
 
             try {
-                console.log(` Buscando jogos da Rodada ${round}...`);
+                console.log(`📊 Sincronizando pontuação da Rodada ${round}...`);
                 
-                const fixtures = await getFixturesForRound(round);
+                // 1. VERIFICAR CACHE NO FIREBASE (outro usuário já pode ter sincronizado)
+                const cacheKey = `scoresCache/round_${round}`;
+                let useCache = false;
+                let cachedStats = null;
                 
-                if (fixtures.length === 0) {
-                    console.log('Nenhum jogo encontrado para esta rodada');
-                    state.isUpdatingScores = false;
-                    state.liveScoresUpdating = false;
-                    render();
-                    return;
-                }
-
-                // Status de jogos que queremos processar
-                const liveStatuses = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'];
-                const finishedStatuses = ['FT', 'AET', 'PEN'];
-                
-                const liveGames = fixtures.filter(f => liveStatuses.includes(f.fixture?.status?.short));
-                const finishedGames = fixtures.filter(f => finishedStatuses.includes(f.fixture?.status?.short));
-                const gamesToProcess = [...liveGames, ...finishedGames];
-                
-                console.log(` ${liveGames.length} jogos AO VIVO`);
-                console.log(` ${finishedGames.length} jogos finalizados`);
-                
-                state.hasLiveGames = liveGames.length > 0;
-
-                if (gamesToProcess.length === 0) {
-                    state.isUpdatingScores = false;
-                    state.liveScoresUpdating = false;
-                    render();
-                    return;
-                }
-
-                // Coletar todas as stats dos jogadores de todos os jogos
-                const allPlayerStats = {};
-                const teamsWithGames = new Set(); // Times que tiveram jogos processados
-                
-                for (let i = 0; i < gamesToProcess.length; i++) {
-                    const fixture = gamesToProcess[i];
+                try {
+                    const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
+                    const cacheData = await cacheRes.json();
                     
-                    if (!fixture || !fixture.teams || !fixture.teams.home || !fixture.teams.away) {
-                        continue;
+                    if (cacheData && cacheData.playerStats && cacheData.timestamp) {
+                        const cacheAge = Date.now() - cacheData.timestamp;
+                        const hasLive = cacheData.hasLiveGames;
+                        
+                        // Se tem jogos ao vivo: cache de 5 min
+                        // Se não tem jogos ao vivo: cache de 1 hora
+                        const maxCacheAge = hasLive ? CACHE_5MIN : (60 * 60 * 1000);
+                        
+                        if (cacheAge < maxCacheAge) {
+                            const minAgo = Math.round(cacheAge / 60000);
+                            console.log(`✅ Usando cache Firebase (${minAgo} min atrás)`);
+                            cachedStats = cacheData;
+                            useCache = true;
+                        } else {
+                            console.log(`⏰ Cache expirado, buscando na API...`);
+                        }
+                    }
+                } catch (e) {
+                    console.log('Sem cache, buscando na API...');
+                }
+                
+                let allPlayerStats = {};
+                let teamsWithGames = new Set();
+                let hasLiveGames = false;
+                let fixtures = [];
+                
+                if (useCache && cachedStats) {
+                    // USAR CACHE
+                    allPlayerStats = cachedStats.playerStats;
+                    teamsWithGames = new Set(cachedStats.teamsWithGames || []);
+                    hasLiveGames = cachedStats.hasLiveGames;
+                    state.hasLiveGames = hasLiveGames;
+                    
+                } else {
+                    // BUSCAR DA API (primeiro usuário a acessar)
+                    console.log(`🌐 Buscando jogos da Rodada ${round} na API...`);
+                    
+                    // Buscar jogos da rodada atual
+                    fixtures = await getFixturesForRound(round);
+                    
+                    // ========== INCLUIR JOGOS ATRASADOS ==========
+                    // Se existem rodadas com jogos atrasados, buscar esses jogos também
+                    const delayedRounds = state.delayedGamesRounds || [];
+                    if (delayedRounds.length > 0) {
+                        console.log(`📌 Buscando jogos atrasados das rodadas: ${delayedRounds.join(', ')}`);
+                        
+                        for (const delayedRound of delayedRounds) {
+                            try {
+                                const delayedFixtures = await getFixturesForRound(delayedRound);
+                                // Só incluir jogos que estão ao vivo ou terminaram HOJE
+                                const today = new Date().toISOString().split('T')[0];
+                                
+                                const relevantDelayed = delayedFixtures.filter(f => {
+                                    const status = f.fixture?.status?.short;
+                                    const fixtureDate = f.fixture?.date?.split('T')[0];
+                                    
+                                    // Jogo ao vivo OU finalizado hoje
+                                    const isLive = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'].includes(status);
+                                    const finishedToday = ['FT', 'AET', 'PEN'].includes(status) && fixtureDate === today;
+                                    
+                                    return isLive || finishedToday;
+                                });
+                                
+                                if (relevantDelayed.length > 0) {
+                                    console.log(`   ↳ Rodada ${delayedRound}: ${relevantDelayed.length} jogos atrasados`);
+                                    fixtures = [...fixtures, ...relevantDelayed];
+                                }
+                            } catch (e) {
+                                console.log(`   ↳ Erro ao buscar rodada ${delayedRound}:`, e);
+                            }
+                        }
+                    }
+                    // ========== FIM JOGOS ATRASADOS ==========
+                    
+                    if (fixtures.length === 0) {
+                        console.log('Nenhum jogo encontrado para esta rodada');
+                        state.isUpdatingScores = false;
+                        state.liveScoresUpdating = false;
+                        render();
+                        return;
+                    }
+
+                    const liveStatuses = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'];
+                    const finishedStatuses = ['FT', 'AET', 'PEN'];
+                    
+                    const liveGames = fixtures.filter(f => liveStatuses.includes(f.fixture?.status?.short));
+                    const finishedGames = fixtures.filter(f => finishedStatuses.includes(f.fixture?.status?.short));
+                    const gamesToProcess = [...liveGames, ...finishedGames];
+                    
+                    hasLiveGames = liveGames.length > 0;
+                    state.hasLiveGames = hasLiveGames;
+                    
+                    console.log(`🔴 ${liveGames.length} jogos AO VIVO`);
+                    console.log(`✅ ${finishedGames.length} jogos finalizados`);
+
+                    if (gamesToProcess.length === 0) {
+                        state.isUpdatingScores = false;
+                        state.liveScoresUpdating = false;
+                        render();
+                        return;
+                    }
+
+                    // Coletar todas as stats dos jogadores
+                    for (let i = 0; i < gamesToProcess.length; i++) {
+                        const fixture = gamesToProcess[i];
+                        
+                        if (!fixture || !fixture.teams || !fixture.teams.home || !fixture.teams.away) {
+                            continue;
+                        }
+                        
+                        teamsWithGames.add(fixture.teams.home.id);
+                        teamsWithGames.add(fixture.teams.away.id);
+                        
+                        const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
+                        console.log(`   ${fixture.teams.home.name} x ${fixture.teams.away.name} ${isFinished ? '(FIM)' : '(AO VIVO)'}`);
+                        
+                        const playerStats = await getPlayerStats(fixture.fixture.id, isFinished);
+                        
+                        playerStats.forEach(team => {
+                            team.players?.forEach(playerData => {
+                                const playerId = playerData.player?.id;
+                                if (playerId) {
+                                    allPlayerStats[playerId] = {
+                                        data: playerData,
+                                        fixture: fixture
+                                    };
+                                }
+                            });
+                        });
+
+                        await new Promise(r => setTimeout(r, 300));
                     }
                     
-                    // Guardar IDs dos times que jogaram
-                    teamsWithGames.add(fixture.teams.home.id);
-                    teamsWithGames.add(fixture.teams.away.id);
-                    
-                    const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
-                    console.log(` ${fixture.teams.home.name} x ${fixture.teams.away.name} ${isFinished ? '(FIM)' : '(AO VIVO)'}`);
-                    
-                    const playerStats = await getPlayerStats(fixture.fixture.id, isFinished);
-                    
-                    // Guardar stats de cada jogador
-                    playerStats.forEach(team => {
-                        team.players?.forEach(playerData => {
-                            const playerId = playerData.player?.id;
-                            if (playerId) {
-                                allPlayerStats[playerId] = {
-                                    data: playerData,
-                                    fixture: fixture
-                                };
-                            }
+                    // SALVAR NO FIREBASE PARA OUTROS USUÁRIOS USAREM
+                    try {
+                        await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                            method: 'PUT',
+                            body: JSON.stringify({
+                                playerStats: allPlayerStats,
+                                teamsWithGames: Array.from(teamsWithGames),
+                                hasLiveGames: hasLiveGames,
+                                timestamp: Date.now(),
+                                savedBy: state.currentUser || 'anonymous'
+                            })
                         });
-                    });
-
-                    await new Promise(r => setTimeout(r, 300));
+                        console.log(`💾 Stats salvas no Firebase para outros usuários`);
+                    } catch (e) {
+                        console.log('Erro ao salvar cache:', e);
+                    }
                 }
                 
                 // Agora calcular pontuação para TODOS os usuários confirmados
                 const confirmedUsers = Object.entries(state.users)
                     .filter(([nick, u]) => u.isConfirmed && nick !== 'admin');
                 
-                console.log(` Calculando pontos para ${confirmedUsers.length} usuários...`);
+                console.log(`📈 Calculando pontos para ${confirmedUsers.length} usuários...`);
                 
                 for (const [nick, user] of confirmedUsers) {
                     // Inicializar scores do usuário se não existir
@@ -10492,6 +10676,10 @@
                                             class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium">
                                             🔧 Corrigir Firebase
                                         </button>
+                                        <button onclick="forceRoundSync()" 
+                                            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">
+                                            🔄 Sync API
+                                        </button>
                                     </div>
                                     
                                     <!-- Status dos jogos -->
@@ -10505,7 +10693,10 @@
                                         </div>
                                     </div>
                                     
-                                    <p class="text-zinc-600 text-xs">A rodada avança automaticamente 1h após o último jogo terminar. Todos usuários são sincronizados via Firebase.</p>
+                                    <p class="text-zinc-600 text-xs">
+                                        <strong>API é fonte de verdade:</strong> A rodada é detectada automaticamente da API-Football.<br>
+                                        Re-sync automático a cada 30 min. Use "Sync API" para forçar atualização imediata.
+                                    </p>
                                 </div>
                                 
                                 <!-- Controle de Substituições -->
@@ -13130,6 +13321,9 @@
                 const messages = snapshot.val();
                 console.log('📬 Mensagens recebidas:', messages ? Object.keys(messages).length : 0);
                 
+                const previousMessages = state.privateMessages || [];
+                const previousCount = previousMessages.length;
+                
                 if (messages && state.currentUser) {
                     // Filtrar apenas mensagens do usuário atual
                     state.privateMessages = Object.values(messages)
@@ -13137,6 +13331,24 @@
                         .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
                     
                     console.log(' Mensagens do usuário:', state.privateMessages.length);
+                    
+                    // Verificar se tem NOVA mensagem recebida (não enviada por mim)
+                    if (previousCount > 0 && state.privateMessages.length > previousCount) {
+                        // Pegar as novas mensagens
+                        const newMessages = state.privateMessages.filter(m => 
+                            m.to === state.currentUser && 
+                            !m.read &&
+                            m.timestamp > Date.now() - 10000 // Últimos 10 segundos
+                        );
+                        
+                        // Mostrar notificação para cada nova mensagem
+                        newMessages.forEach(msg => {
+                            // Só notificar se não estiver no chat com essa pessoa
+                            if (state.modal !== 'privateChat' || state.selectedChatUser !== msg.from) {
+                                showPrivateMessageNotification(msg);
+                            }
+                        });
+                    }
                 } else {
                     state.privateMessages = [];
                 }
@@ -13150,6 +13362,38 @@
                     }, 100);
                 }
             });
+        }
+        
+        // Mostrar notificação de mensagem privada
+        function showPrivateMessageNotification(message) {
+            const notification = document.createElement('div');
+            notification.className = 'fixed top-20 right-4 z-50 bg-zinc-800 border border-purple-500/30 rounded-xl p-4 shadow-2xl animate-fade-in max-w-xs';
+            notification.innerHTML = `
+                <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 text-sm font-bold flex-shrink-0">
+                        ${message.from?.charAt(0)?.toUpperCase() || '?'}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-purple-400 text-xs font-bold">💬 ${message.from || 'Anônimo'}</p>
+                        <p class="text-white text-sm truncate">${message.text?.substring(0, 50) || ''}${message.text?.length > 50 ? '...' : ''}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="text-zinc-500 hover:text-white">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <button onclick="openPrivateChat('${message.from}');this.parentElement.remove();" class="mt-2 w-full py-1.5 bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 text-xs rounded-lg transition">
+                    Responder
+                </button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Remover após 5 segundos
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, 5000);
         }
         
         // Zerar todas as pontuações
@@ -17583,21 +17827,15 @@
                 liveUpdateInterval = setInterval(() => {
                     if (state.isConfirmed && !state.isUpdatingScores) {
                         console.log('🔄 Atualização automática (15 min - PRÉ-JOGO)');
-                        syncRoundScores();
-                        manageUpdateInterval(); // Verificar se jogo começou
+                        syncRoundScores(); // Usa cache compartilhado do Firebase
+                        manageUpdateInterval();
                     }
-                }, 15 * 60 * 1000); // 15 minutos
+                }, 15 * 60 * 1000);
                 
             } else {
-                // SEM JOGOS: atualizar a cada 30 minutos
-                console.log('😴 Modo ECONOMIA: atualizando a cada 30 min');
-                liveUpdateInterval = setInterval(() => {
-                    if (state.isConfirmed && !state.isUpdatingScores) {
-                        console.log('🔄 Atualização automática (30 min)');
-                        syncRoundScores();
-                        manageUpdateInterval(); // Verificar se situação mudou
-                    }
-                }, 30 * 60 * 1000); // 30 minutos
+                // SEM JOGOS: NÃO atualizar automaticamente (economia de API)
+                console.log('😴 Modo ECONOMIA: sem atualizações automáticas');
+                // Usuário pode clicar em "Atualizar Pontuação" manualmente se quiser
             }
         }
         
@@ -17611,20 +17849,46 @@
         // Primeira atualização de pontuação ao carregar (se confirmado)
         setTimeout(() => {
             if (state.isConfirmed) {
-                syncRoundScores();
+                syncRoundScores(); // Usa cache compartilhado
                 manageUpdateInterval();
             }
         }, 3000);
 
-        // Detectar rodada atual ao iniciar
+        // Detectar rodada atual ao iniciar (usa cache de 24h)
         setTimeout(async () => {
             await detectCurrentRound();
             render();
         }, 1500);
 
-        // REMOVIDO: Atualização duplicada de 5 minutos
-        // Agora só atualiza a cada 30 minutos para economizar requisições
-        // Usuário pode clicar em "Atualizar Pontuação" manualmente se quiser
+        // ==================== FORÇAR SYNC (ADMIN) ====================
+        // Função global para forçar re-sync ignorando cache
+        window.forceRoundSync = async function() {
+            console.log('🔄 Forçando re-sincronização com API (ignorando cache)...');
+            
+            // Limpar cache do Firebase
+            try {
+                await fetch(`${FIREBASE_URL}/gameState/lastApiSync.json`, { method: 'DELETE' });
+            } catch (e) {}
+            
+            await detectCurrentRound();
+            await fetchLiveFixtures(true);
+            render();
+            alert(`✅ Rodada sincronizada: ${state.currentRound}`);
+        };
+        
+        // ==================== RESUMO ECONOMIA DE API ====================
+        // 📌 detectCurrentRound: Cache 24h no Firebase
+        //    - Primeiro usuário do dia busca na API
+        //    - Outros usam cache do Firebase
+        //
+        // 📌 syncRoundScores: Cache 5min (ao vivo) / 1h (sem jogos) no Firebase
+        //    - Primeiro usuário que pedir busca na API
+        //    - Outros usam cache do Firebase
+        //
+        // 📌 Estimativa de uso:
+        //    - Sem jogos: ~4 requests/dia (1 rodada + 3 fixtures check)
+        //    - Com jogos: ~50 requests/dia (stats a cada 5min por 4h)
+        //    - Muito abaixo do limite de 300 requests/dia!
     </script>
 </body>
 </html>
