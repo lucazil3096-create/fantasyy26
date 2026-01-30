@@ -10363,6 +10363,50 @@
                                 </div>
                             </div>
                         </div>
+                        
+                        <!-- ORDEM DO DRAFT (Snake) - Visível para usuários -->
+                        ${state.draftOrder && state.draftOrder.length > 0 ? `
+                            <div class="card rounded-xl p-4 mb-6 border border-amber-500/30">
+                                <h3 class="text-amber-400 font-bold flex items-center gap-2 mb-3">
+                                    🎲 ORDEM DO DRAFT (Snake)
+                                </h3>
+                                
+                                <div class="bg-zinc-800 rounded-lg p-3 mb-3">
+                                    <!-- IDA -->
+                                    <div class="flex flex-wrap items-center gap-1 mb-2">
+                                        <span class="text-emerald-400 text-xs font-bold mr-1">IDA:</span>
+                                        ${state.draftOrder.map((nick, idx) => {
+                                            const user = state.users[nick] || {};
+                                            const isMe = nick === state.currentUser;
+                                            return `
+                                                <span class="px-2 py-1 ${isMe ? 'bg-emerald-500 text-white font-bold' : 'bg-emerald-600/20 text-emerald-400'} rounded text-xs">${user.teamName || nick}${isMe ? ' (você)' : ''}</span>
+                                                ${idx < state.draftOrder.length - 1 ? '<span class="text-zinc-600 text-xs">→</span>' : ''}
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                    
+                                    <!-- VOLTA -->
+                                    <div class="flex flex-wrap items-center gap-1">
+                                        <span class="text-purple-400 text-xs font-bold mr-1">VOLTA:</span>
+                                        ${[...state.draftOrder].reverse().map((nick, idx) => {
+                                            const user = state.users[nick] || {};
+                                            const isMe = nick === state.currentUser;
+                                            return `
+                                                <span class="px-2 py-1 ${isMe ? 'bg-purple-500 text-white font-bold' : 'bg-purple-600/20 text-purple-400'} rounded text-xs">${user.teamName || nick}${isMe ? ' (você)' : ''}</span>
+                                                ${idx < state.draftOrder.length - 1 ? '<span class="text-zinc-600 text-xs">→</span>' : ''}
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                    
+                                    <p class="text-zinc-500 text-xs mt-2 text-center">↻ Repete até completar 18 jogadores</p>
+                                </div>
+                                
+                                <p class="text-zinc-400 text-xs">
+                                    ⚡ <strong>${state.users[state.draftOrder[state.draftOrder.length - 1]]?.teamName || state.draftOrder[state.draftOrder.length - 1]}</strong> e 
+                                    <strong>${state.users[state.draftOrder[0]]?.teamName || state.draftOrder[0]}</strong> têm picks duplos (fim de cada rodada)
+                                </p>
+                            </div>
+                        ` : ''}
 
                         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                             <!-- Chat do Draft -->
@@ -11431,6 +11475,10 @@
             
             // Times únicos
             const teams = [...new Set(state.players.map(p => p.team))].sort();
+            
+            // Ordem do draft (se já foi sorteada)
+            const draftOrder = state.draftOrder || [];
+            const hasOrder = draftOrder.length > 0;
 
             return `
                 <div class="min-h-screen bg-[#0a0a0a]">
@@ -11478,6 +11526,79 @@
                             </div>
                         </div>
                         
+                        <!-- ORDEM DO DRAFT (Snake) -->
+                        <div class="card rounded-xl p-4 mb-4 border ${hasOrder ? 'border-amber-500/30' : 'border-zinc-700'}">
+                            <div class="flex items-center justify-between mb-3">
+                                <h3 class="text-amber-400 font-bold flex items-center gap-2">
+                                    🎲 ORDEM DO DRAFT (Snake)
+                                </h3>
+                                <div class="flex gap-2">
+                                    ${hasOrder ? `
+                                        <button onclick="limparOrdemDraft()" 
+                                            class="px-3 py-1.5 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-lg text-xs font-medium transition">
+                                            🗑️ Limpar
+                                        </button>
+                                    ` : ''}
+                                    <button onclick="sortearOrdemDraft()" 
+                                        class="px-3 py-1.5 ${hasOrder ? 'bg-zinc-700 hover:bg-zinc-600' : 'bg-amber-600 hover:bg-amber-500'} text-white rounded-lg text-xs font-medium transition">
+                                        ${hasOrder ? '🔄 Sortear Novamente' : '🎲 Sortear Ordem'}
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            ${hasOrder ? `
+                                <div class="space-y-3">
+                                    <!-- Sequência Visual -->
+                                    <div class="bg-zinc-800 rounded-lg p-4">
+                                        <p class="text-white text-sm font-bold mb-3">Sequência de picks:</p>
+                                        
+                                        <!-- Rodada 1 - IDA -->
+                                        <div class="flex flex-wrap items-center gap-1 mb-2">
+                                            <span class="text-emerald-400 text-xs font-bold mr-2">IDA:</span>
+                                            ${draftOrder.map((nick, idx) => {
+                                                const user = state.users[nick] || {};
+                                                return `
+                                                    <span class="px-2 py-1 bg-emerald-600/20 text-emerald-400 rounded text-xs">${user.teamName || nick}</span>
+                                                    ${idx < draftOrder.length - 1 ? '<span class="text-zinc-600">→</span>' : ''}
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                        
+                                        <!-- Rodada 2 - VOLTA -->
+                                        <div class="flex flex-wrap items-center gap-1">
+                                            <span class="text-purple-400 text-xs font-bold mr-2">VOLTA:</span>
+                                            ${[...draftOrder].reverse().map((nick, idx) => {
+                                                const user = state.users[nick] || {};
+                                                return `
+                                                    <span class="px-2 py-1 bg-purple-600/20 text-purple-400 rounded text-xs">${user.teamName || nick}</span>
+                                                    ${idx < draftOrder.length - 1 ? '<span class="text-zinc-600">→</span>' : ''}
+                                                `;
+                                            }).join('')}
+                                        </div>
+                                        
+                                        <p class="text-zinc-500 text-xs mt-3 text-center">↻ Repete até completar 18 jogadores cada</p>
+                                    </div>
+                                    
+                                    <!-- Explicação dos picks duplos -->
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div class="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                                            <p class="text-amber-400 text-xs font-bold">⚡ ${state.users[draftOrder[draftOrder.length - 1]]?.teamName || draftOrder[draftOrder.length - 1]}</p>
+                                            <p class="text-zinc-400 text-xs">Pick duplo no fim da IDA</p>
+                                        </div>
+                                        <div class="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
+                                            <p class="text-cyan-400 text-xs font-bold">⚡ ${state.users[draftOrder[0]]?.teamName || draftOrder[0]}</p>
+                                            <p class="text-zinc-400 text-xs">Pick duplo no fim da VOLTA</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ` : `
+                                <div class="text-center py-6">
+                                    <p class="text-zinc-500 mb-2">Nenhuma ordem definida ainda</p>
+                                    <p class="text-zinc-600 text-sm">Clique em "Sortear Ordem" para definir a sequência do draft</p>
+                                </div>
+                            `}
+                        </div>
+                        
                         <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
                             <!-- Lista de Participantes -->
                             <div class="lg:col-span-1">
@@ -11492,35 +11613,58 @@
                                         </button>
                                     </div>
                                     
-                                    <p class="text-zinc-500 text-xs mb-4">Usuários cadastrados aparecem aqui automaticamente</p>
+                                    <p class="text-zinc-500 text-xs mb-4">${hasOrder ? '📋 Ordenado pela sequência do sorteio' : 'Usuários cadastrados aparecem aqui automaticamente'}</p>
                                     
                                     <div class="space-y-2 max-h-[60vh] overflow-y-auto">
                                         ${registeredUsers.length === 0 ? `
                                             <p class="text-zinc-500 text-sm text-center py-4">Nenhum participante cadastrado ainda</p>
                                             <p class="text-zinc-600 text-xs text-center">Os participantes devem criar conta com o código: <span class="text-emerald-400">season26</span></p>
-                                        ` : registeredUsers.map(u => {
-                                            const totalPlayers = (u.starters || []).filter(p => p).length + (u.reserves || []).filter(p => p).length;
-                                            const isSelected = state.selectedDraftUser === u.nick;
-                                            return `
-                                                <div onclick="selectDraftUser('${u.nick}')" class="w-full p-3 rounded-lg text-left transition cursor-pointer ${isSelected ? 'bg-emerald-600/20 border-2 border-emerald-500' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'}">
-                                                    <div class="flex items-center gap-3">
-                                                        ${u.teamLogo ? 
-                                                            `<img src="${u.teamLogo}" onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">` :
-                                                            `<div onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-white font-bold cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">${u.nick[0].toUpperCase()}</div>`
-                                                        }
-                                                        <div class="flex-1 min-w-0">
-                                                            <p class="text-white font-medium truncate">${u.teamName}</p>
-                                                            <p class="text-zinc-500 text-xs">@${u.nick}</p>
-                                                        </div>
-                                                        <div class="text-right">
-                                                            <span class="text-xs px-2 py-1 rounded ${totalPlayers === 18 ? 'bg-emerald-600/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'}">
-                                                                ${totalPlayers}/18
-                                                            </span>
+                                        ` : (() => {
+                                            // Ordenar pela sequência do sorteio se existir
+                                            let sortedUsers = [...registeredUsers];
+                                            if (hasOrder) {
+                                                sortedUsers.sort((a, b) => {
+                                                    const idxA = draftOrder.indexOf(a.nick);
+                                                    const idxB = draftOrder.indexOf(b.nick);
+                                                    // Se não estiver no sorteio, vai pro final
+                                                    if (idxA === -1) return 1;
+                                                    if (idxB === -1) return -1;
+                                                    return idxA - idxB;
+                                                });
+                                            }
+                                            
+                                            return sortedUsers.map((u, idx) => {
+                                                const totalPlayers = (u.starters || []).filter(p => p).length + (u.reserves || []).filter(p => p).length;
+                                                const isSelected = state.selectedDraftUser === u.nick;
+                                                const orderIdx = hasOrder ? draftOrder.indexOf(u.nick) : -1;
+                                                const hasPickDuplo = hasOrder && (orderIdx === 0 || orderIdx === draftOrder.length - 1);
+                                                
+                                                return `
+                                                    <div onclick="selectDraftUser('${u.nick}')" class="w-full p-3 rounded-lg text-left transition cursor-pointer ${isSelected ? 'bg-emerald-600/20 border-2 border-emerald-500' : 'bg-zinc-800 hover:bg-zinc-700 border border-zinc-700'}">
+                                                        <div class="flex items-center gap-3">
+                                                            ${hasOrder && orderIdx !== -1 ? `
+                                                                <div class="w-7 h-7 rounded-full ${hasPickDuplo ? 'bg-amber-500' : 'bg-purple-600'} flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                                                    ${orderIdx + 1}º
+                                                                </div>
+                                                            ` : ''}
+                                                            ${u.teamLogo ? 
+                                                                `<img src="${u.teamLogo}" onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full object-cover cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">` :
+                                                                `<div onclick="event.stopPropagation();viewProfile('${u.nick}')" class="w-10 h-10 rounded-full bg-zinc-700 flex items-center justify-center text-white font-bold cursor-pointer hover:ring-2 hover:ring-emerald-500 transition" title="Ver perfil">${u.nick[0].toUpperCase()}</div>`
+                                                            }
+                                                            <div class="flex-1 min-w-0">
+                                                                <p class="text-white font-medium truncate">${u.teamName}${hasPickDuplo ? ' ⚡' : ''}</p>
+                                                                <p class="text-zinc-500 text-xs">@${u.nick}</p>
+                                                            </div>
+                                                            <div class="text-right">
+                                                                <span class="text-xs px-2 py-1 rounded ${totalPlayers === 18 ? 'bg-emerald-600/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'}">
+                                                                    ${totalPlayers}/18
+                                                                </span>
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                </div>
-                                            `;
-                                        }).join('')}
+                                                `;
+                                            }).join('');
+                                        })()}
                                     </div>
                                 </div>
                             </div>
@@ -15163,6 +15307,73 @@
             render();
         };
         
+        // Sortear ordem do draft (Snake)
+        window.sortearOrdemDraft = function() {
+            // Pegar todos os usuários (exceto admin)
+            const participants = Object.keys(state.users).filter(nick => nick !== 'admin');
+            
+            if (participants.length === 0) {
+                alert('Nenhum participante cadastrado!');
+                return;
+            }
+            
+            if (!confirm(`🎲 Sortear ordem do draft com ${participants.length} participantes?\n\nIsso vai embaralhar aleatoriamente a ordem de picks.`)) {
+                return;
+            }
+            
+            // Embaralhar (Fisher-Yates shuffle)
+            const shuffled = [...participants];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            
+            // Salvar no state e Firebase
+            state.draftOrder = shuffled;
+            
+            if (db) {
+                db.ref('draftStatus/order').set(shuffled);
+                
+                // Notificar no chat
+                const idaText = shuffled.map((nick) => state.users[nick]?.teamName || nick).join(' → ');
+                const voltaText = [...shuffled].reverse().map((nick) => state.users[nick]?.teamName || nick).join(' → ');
+                const lastPicker = state.users[shuffled[shuffled.length - 1]]?.teamName || shuffled[shuffled.length - 1];
+                const firstPicker = state.users[shuffled[0]]?.teamName || shuffled[0];
+                
+                db.ref('draftChat').push({
+                    user: '🤖 Sistema',
+                    text: `🎲 ORDEM DO DRAFT SORTEADA!\n\n➡️ IDA: ${idaText}\n⬅️ VOLTA: ${voltaText}\n↻ Repete até 18 jogadores cada\n\n⚡ Picks duplos: ${lastPicker} (fim da IDA) e ${firstPicker} (fim da VOLTA)`,
+                    timestamp: Date.now(),
+                    isSystem: true
+                });
+            }
+            
+            render();
+            alert('✅ Ordem sorteada com sucesso!\n\nTodos podem ver a sequência no chat do draft.');
+        };
+        
+        // Limpar ordem do draft
+        window.limparOrdemDraft = function() {
+            if (!confirm('🗑️ Tem certeza que deseja LIMPAR a ordem do draft?\n\nIsso vai remover a sequência sorteada.')) {
+                return;
+            }
+            
+            state.draftOrder = [];
+            
+            if (db) {
+                db.ref('draftStatus/order').remove();
+                
+                db.ref('draftChat').push({
+                    user: '🤖 Sistema',
+                    text: '🗑️ A ordem do draft foi limpa. Aguardando novo sorteio...',
+                    timestamp: Date.now(),
+                    isSystem: true
+                });
+            }
+            
+            render();
+        };
+        
         // Escutar status do draft
         function listenToDraftStatus() {
             if (!db) return;
@@ -15171,6 +15382,11 @@
                 const status = snapshot.val();
                 if (status) {
                     state.draftStarted = status.started || false;
+                    
+                    // Carregar ordem do draft (se existir)
+                    if (status.order && Array.isArray(status.order)) {
+                        state.draftOrder = status.order;
+                    }
                     
                     // Re-render se estiver na tela de draft
                     if (state.screen === 'draft' || state.screen === 'userDraft') {
