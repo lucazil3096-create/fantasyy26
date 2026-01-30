@@ -926,6 +926,7 @@
             // Admin Panel
             adminTab: 'users', // users, players, competition, market, system
             adminMarketOpen: null, // null = automático, true/false = manual
+            accessCode: 'season26', // Código de acesso para criar conta/recuperar senha
             bannedUsers: [], // Lista de usuários banidos
             allTransfers: [], // Histórico de todas as transferências
             previousModal: null, // Modal anterior (para voltar após fechar perfil)
@@ -3954,6 +3955,10 @@
             
             db.ref('chat').push(message);
             console.log(' Mensagem enviada');
+            
+            // Limpar input após enviar
+            const chatInput = document.getElementById('chatInput');
+            if (chatInput) chatInput.value = '';
         }
         
         // Escutar mensagens do chat em tempo real
@@ -10687,6 +10692,31 @@
                                                             class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium">
                                                             🎖️ Conquista
                                                         </button>
+                                                        <button onclick="adminRemoveAchievement('${u.nick}')" 
+                                                            class="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-medium"
+                                                            title="Remover conquista">
+                                                            🎖️❌
+                                                        </button>
+                                                        <button onclick="adminRemoveTitle('${u.nick}')" 
+                                                            class="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-xs font-medium"
+                                                            title="Remover título/troféu">
+                                                            🏆❌
+                                                        </button>
+                                                        <button onclick="adminEditUserScore('${u.nick}')" 
+                                                            class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium"
+                                                            title="Editar pontuação">
+                                                            📊✏️
+                                                        </button>
+                                                        <button onclick="adminResetUser('${u.nick}')" 
+                                                            class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-xs font-medium"
+                                                            title="Zerar conta (reseta tudo)">
+                                                            🔄
+                                                        </button>
+                                                        <button onclick="adminDeleteUser('${u.nick}')" 
+                                                            class="px-3 py-1.5 bg-red-800 hover:bg-red-700 text-white rounded-lg text-xs font-medium"
+                                                            title="Excluir conta permanentemente">
+                                                            🗑️
+                                                        </button>
                                                         ${isBanned ? `
                                                             <button onclick="adminUnbanUser('${u.nick}')" 
                                                                 class="px-3 py-1.5 bg-green-600 hover:bg-green-500 text-white rounded-lg text-xs font-medium">
@@ -11243,6 +11273,95 @@
                             <div class="space-y-4">
                                 <h3 class="text-xl font-bold text-white">Configuracoes do Sistema</h3>
                                 
+                                <!-- 🔐 TROCAR CÓDIGO DE ACESSO -->
+                                <div class="bg-gradient-to-r from-purple-900/50 to-blue-900/50 rounded-xl p-6 border-2 border-purple-500/50">
+                                    <h4 class="text-purple-400 font-bold mb-2 flex items-center gap-2">
+                                        🔐 CÓDIGO DE ACESSO (season26)
+                                    </h4>
+                                    <p class="text-zinc-400 text-sm mb-4">
+                                        Código usado para criar conta ou recuperar senha. Atual: <strong class="text-purple-400">${state.accessCode || 'season26'}</strong>
+                                    </p>
+                                    <div class="flex gap-3 mb-3">
+                                        <input type="text" id="newAccessCode" placeholder="Novo código de acesso" 
+                                            class="flex-1 px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        <button onclick="adminChangeAccessCode()" 
+                                            class="px-6 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-bold transition">
+                                            🔑 Alterar
+                                        </button>
+                                    </div>
+                                    <p class="text-purple-400/70 text-xs">
+                                        ⚠️ Ao alterar, novos usuários precisarão usar o novo código para se cadastrar.
+                                    </p>
+                                </div>
+                                
+                                <!-- 🚀 RESET PARA LANÇAMENTO -->
+                                <div class="bg-gradient-to-r from-red-900/50 to-orange-900/50 rounded-xl p-6 border-2 border-red-500/50">
+                                    <h4 class="text-red-400 font-bold mb-2 flex items-center gap-2">
+                                        🚀 RESET PARA LANÇAMENTO
+                                    </h4>
+                                    <p class="text-zinc-400 text-sm mb-4">
+                                        Zera TUDO para o Draft: times escalados, técnicos, pontos, chats, conquistas, sorteio.
+                                    </p>
+                                    <button onclick="adminResetParaLancamento()" 
+                                        class="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold text-lg transition flex items-center justify-center gap-2">
+                                        🗑️ RESETAR TUDO PARA O DRAFT
+                                    </button>
+                                    <p class="text-red-400/70 text-xs mt-3 text-center">
+                                        ⚠️ Esta ação NÃO pode ser desfeita! Zera times, técnicos e tudo mais.
+                                    </p>
+                                </div>
+                                
+                                <!-- Botões de Reset Individual -->
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- 🏆 RESETAR CONQUISTAS -->
+                                    <div class="bg-zinc-900 rounded-xl p-4 border border-amber-500/30">
+                                        <h4 class="text-amber-400 font-bold mb-2 flex items-center gap-2">
+                                            🏆 Conquistas
+                                        </h4>
+                                        <p class="text-zinc-500 text-xs mb-3">Remove conquistas de todos os usuários</p>
+                                        <button onclick="adminResetConquistas()" 
+                                            class="w-full py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-medium transition">
+                                            Resetar Conquistas
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- 💬 ZERAR CHAT RANKING -->
+                                    <div class="bg-zinc-900 rounded-xl p-4 border border-emerald-500/30">
+                                        <h4 class="text-emerald-400 font-bold mb-2 flex items-center gap-2">
+                                            💬 Chat Ranking
+                                        </h4>
+                                        <p class="text-zinc-500 text-xs mb-3">Limpa todas as mensagens do chat público</p>
+                                        <button onclick="adminZerarChatRanking()" 
+                                            class="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium transition">
+                                            Zerar Chat Ranking
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- 🎲 ZERAR CHAT DRAFT -->
+                                    <div class="bg-zinc-900 rounded-xl p-4 border border-purple-500/30">
+                                        <h4 class="text-purple-400 font-bold mb-2 flex items-center gap-2">
+                                            🎲 Chat Draft
+                                        </h4>
+                                        <p class="text-zinc-500 text-xs mb-3">Limpa todas as mensagens do chat do draft</p>
+                                        <button onclick="adminZerarChatDraft()" 
+                                            class="w-full py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium transition">
+                                            Zerar Chat Draft
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- ⚽ ZERAR TIMES -->
+                                    <div class="bg-zinc-900 rounded-xl p-4 border border-blue-500/30">
+                                        <h4 class="text-blue-400 font-bold mb-2 flex items-center gap-2">
+                                            ⚽ Times Escalados
+                                        </h4>
+                                        <p class="text-zinc-500 text-xs mb-3">Zera titulares, reservas e técnicos</p>
+                                        <button onclick="adminZerarTimes()" 
+                                            class="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition">
+                                            Zerar Times
+                                        </button>
+                                    </div>
+                                </div>
+                                
                                 <!-- Status das API Keys -->
                                 <div class="bg-zinc-900 rounded-xl p-6 border border-emerald-500/30">
                                     <h4 class="text-emerald-400 font-medium mb-4">API Keys Status</h4>
@@ -11618,7 +11737,7 @@
                                     <div class="space-y-2 max-h-[60vh] overflow-y-auto">
                                         ${registeredUsers.length === 0 ? `
                                             <p class="text-zinc-500 text-sm text-center py-4">Nenhum participante cadastrado ainda</p>
-                                            <p class="text-zinc-600 text-xs text-center">Os participantes devem criar conta com o código: <span class="text-emerald-400">season26</span></p>
+                                            <p class="text-zinc-600 text-xs text-center">Os participantes devem criar conta com o código: <span class="text-emerald-400">${state.accessCode || 'season26'}</span></p>
                                         ` : (() => {
                                             // Ordenar pela sequência do sorteio se existir
                                             let sortedUsers = [...registeredUsers];
@@ -12764,7 +12883,7 @@
                 return;
             }
             
-            if (recoverCode !== 'season26') {
+            if (recoverCode !== (state.accessCode || 'season26')) {
                 errorEl.textContent = ' Código de acesso inválido';
                 errorEl.classList.remove('hidden');
                 return;
@@ -12865,7 +12984,7 @@
             
             if (state.authMode === 'register') {
                 const accessCode = document.getElementById('accessCode').value;
-                if (accessCode !== 'season26') {
+                if (accessCode !== (state.accessCode || 'season26')) {
                     errorEl.textContent = ' Código de acesso inválido';
                     errorEl.classList.remove('hidden');
                     return;
@@ -16571,6 +16690,314 @@
             render();
         };
         
+        // ==================== NOVAS FUNÇÕES ADMIN - GERENCIAMENTO COMPLETO ====================
+        
+        // Remover conquista de um usuário
+        window.adminRemoveAchievement = function(nick) {
+            const user = state.users[nick];
+            if (!user) return alert('Usuário não encontrado');
+            
+            if (!user.achievements || user.achievements.length === 0) {
+                return alert(`@${nick} não possui nenhuma conquista!`);
+            }
+            
+            // Montar lista de conquistas do usuário
+            const userAchievements = user.achievements.map(id => {
+                const ach = ACHIEVEMENTS[id] || { icon: '❓', name: id };
+                return `${ach.icon} ${id} - ${ach.name}`;
+            }).join('\n');
+            
+            const achievementId = prompt(`Qual conquista REMOVER de @${nick}?\n\nConquistas atuais:\n${userAchievements}\n\nDigite o ID da conquista:`);
+            if (!achievementId) return;
+            
+            if (!user.achievements.includes(achievementId)) {
+                return alert(`@${nick} não possui a conquista "${achievementId}"!`);
+            }
+            
+            if (!confirm(`Tem certeza que deseja REMOVER a conquista "${achievementId}" de @${nick}?`)) return;
+            
+            // Remover conquista
+            user.achievements = user.achievements.filter(id => id !== achievementId);
+            
+            // Remover também de achievementsShown para permitir re-exibição futura
+            if (user.achievementsShown) {
+                user.achievementsShown = user.achievementsShown.filter(id => id !== achievementId);
+            }
+            
+            if (db) {
+                db.ref('users/' + nick + '/achievements').set(user.achievements);
+                if (user.achievementsShown) {
+                    db.ref('users/' + nick + '/achievementsShown').set(user.achievementsShown);
+                }
+            }
+            
+            alert(`✅ Conquista "${achievementId}" removida de @${nick}!`);
+            render();
+        };
+        
+        // Remover título/troféu de um usuário
+        window.adminRemoveTitle = function(nick) {
+            const user = state.users[nick];
+            if (!user) return alert('Usuário não encontrado');
+            
+            if (!user.titles || user.titles.length === 0) {
+                return alert(`@${nick} não possui nenhum título/troféu!`);
+            }
+            
+            // Montar lista de títulos do usuário
+            const userTitles = user.titles.map((t, idx) => {
+                return `${idx + 1}. ${t.icon || '🏆'} ${t.name || t.id} (${t.id})`;
+            }).join('\n');
+            
+            const titleId = prompt(`Qual título REMOVER de @${nick}?\n\nTítulos atuais:\n${userTitles}\n\nDigite o ID do título:`);
+            if (!titleId) return;
+            
+            const titleIndex = user.titles.findIndex(t => t.id === titleId);
+            if (titleIndex === -1) {
+                return alert(`@${nick} não possui o título "${titleId}"!`);
+            }
+            
+            const titleToRemove = user.titles[titleIndex];
+            if (!confirm(`Tem certeza que deseja REMOVER o título "${titleToRemove.icon || '🏆'} ${titleToRemove.name}" de @${nick}?`)) return;
+            
+            // Remover título
+            user.titles.splice(titleIndex, 1);
+            
+            // Remover também de titlesShown para permitir re-exibição futura
+            if (user.titlesShown) {
+                user.titlesShown = user.titlesShown.filter(id => id !== titleId);
+            }
+            
+            if (db) {
+                db.ref('users/' + nick + '/titles').set(user.titles);
+                if (user.titlesShown) {
+                    db.ref('users/' + nick + '/titlesShown').set(user.titlesShown);
+                }
+            }
+            
+            alert(`✅ Título "${titleToRemove.icon || '🏆'} ${titleToRemove.name}" removido de @${nick}!`);
+            render();
+        };
+        
+        // Editar pontuação de um usuário (pontuação direta por rodada)
+        window.adminEditUserScore = function(nick) {
+            const user = state.users[nick];
+            if (!user) return alert('Usuário não encontrado');
+            
+            const action = prompt(`O que deseja fazer com @${nick}?\n\n1 = Editar pontuação de uma rodada\n2 = Adicionar/Remover bônus\n3 = Ver detalhes de pontuação\n4 = Zerar pontuação total\n\nDigite o número:`);
+            
+            if (action === '1') {
+                // Editar pontuação de rodada específica
+                const round = parseInt(prompt(`Qual rodada editar? (1-38)\nAtual: ${state.currentRound}`));
+                if (isNaN(round) || round < 1 || round > 38) return alert('Rodada inválida!');
+                
+                const currentScore = user.scores?.[round]?.total || 0;
+                const newScore = parseInt(prompt(`Rodada ${round} - Pontuação atual: ${currentScore}\n\nDigite a NOVA pontuação total:`));
+                if (isNaN(newScore)) return alert('Pontuação inválida!');
+                
+                if (!confirm(`Alterar pontuação da rodada ${round} de @${nick}:\n\nDE: ${currentScore} pts\nPARA: ${newScore} pts\n\nConfirmar?`)) return;
+                
+                if (!user.scores) user.scores = {};
+                if (!user.scores[round]) user.scores[round] = { players: {}, coach: 0 };
+                user.scores[round].total = newScore;
+                user.scores[round].manualEdit = true;
+                user.scores[round].editedBy = 'admin';
+                user.scores[round].editedAt = new Date().toISOString();
+                
+                if (db) {
+                    db.ref('users/' + nick + '/scores/' + round).set(user.scores[round]);
+                }
+                
+                alert(`✅ Pontuação da rodada ${round} de @${nick} alterada para ${newScore} pts!`);
+                
+            } else if (action === '2') {
+                // Redireciona para função existente
+                adminGivePoints(nick);
+                return;
+                
+            } else if (action === '3') {
+                // Ver detalhes
+                const scores = user.scores || {};
+                let details = `📊 PONTUAÇÃO DE @${nick}\n\n`;
+                details += `Total geral: ${calculateUserScore(user)} pts\n\n`;
+                details += `POR RODADA:\n`;
+                
+                for (let i = 1; i <= 38; i++) {
+                    if (scores[i]?.total) {
+                        details += `R${i}: ${scores[i].total} pts${scores[i].manualEdit ? ' (editado)' : ''}\n`;
+                    }
+                }
+                
+                // Bônus de mercado
+                if (scores.market?.purchases?.length) {
+                    details += `\nBÔNUS/TRANSAÇÕES:\n`;
+                    scores.market.purchases.forEach(p => {
+                        details += `${p.price > 0 ? '+' : ''}${p.price} pts - ${p.playerName || 'Transação'}\n`;
+                    });
+                }
+                
+                alert(details);
+                return;
+                
+            } else if (action === '4') {
+                // Zerar tudo
+                if (!confirm(`⚠️ ATENÇÃO!\n\nIsso vai ZERAR toda a pontuação de @${nick}!\n\nTem certeza?`)) return;
+                if (!confirm(`ÚLTIMA CONFIRMAÇÃO!\n\nZerar TUDO de @${nick}?`)) return;
+                
+                user.scores = {};
+                
+                if (db) {
+                    db.ref('users/' + nick + '/scores').set({});
+                }
+                
+                alert(`✅ Pontuação de @${nick} zerada!`);
+            }
+            
+            render();
+        };
+        
+        // Trocar código de acesso (season26)
+        window.adminChangeAccessCode = function() {
+            const newCode = document.getElementById('newAccessCode')?.value?.trim();
+            
+            if (!newCode || newCode.length < 4) {
+                return alert('❌ O código deve ter pelo menos 4 caracteres!');
+            }
+            
+            if (!confirm(`Alterar código de acesso de "${state.accessCode || 'season26'}" para "${newCode}"?\n\n⚠️ Isso afeta:\n- Criação de novas contas\n- Recuperação de senha`)) return;
+            
+            state.accessCode = newCode;
+            
+            if (db) {
+                db.ref('settings/accessCode').set(newCode);
+            }
+            
+            // Limpar campo
+            const input = document.getElementById('newAccessCode');
+            if (input) input.value = '';
+            
+            alert(`✅ Código de acesso alterado para: ${newCode}\n\nNovos usuários precisarão usar este código para se cadastrar.`);
+            render();
+        };
+        
+        // Zerar conta de um usuário (reseta tudo mas mantém a conta)
+        window.adminResetUser = function(nick) {
+            const user = state.users[nick];
+            if (!user) return alert('Usuário não encontrado');
+            
+            const info = `
+🔄 ZERAR CONTA DE @${nick}
+
+Isso vai RESETAR:
+• Pontuação total
+• Titulares e reservas
+• Técnico
+• Conquistas e títulos
+• Histórico de transações
+• Palpites
+
+A conta continuará existindo com nome e senha.
+            `;
+            
+            if (!confirm(info + '\n\nTem certeza?')) return;
+            if (!confirm(`⚠️ ÚLTIMA CONFIRMAÇÃO!\n\nZerar TUDO de @${nick}?\n\nEsta ação NÃO pode ser desfeita!`)) return;
+            
+            // Resetar dados
+            user.starters = Array(11).fill(null);
+            user.reserves = Array(7).fill(null);
+            user.coach = null;
+            user.scores = {};
+            user.achievements = [];
+            user.achievementsShown = [];
+            user.titles = [];
+            user.titlesShown = [];
+            user.palpitesCravados = {};
+            user.isConfirmed = false;
+            
+            // Salvar no Firebase
+            if (db) {
+                const updates = {};
+                updates['users/' + nick + '/starters'] = Array(11).fill(null);
+                updates['users/' + nick + '/reserves'] = Array(7).fill(null);
+                updates['users/' + nick + '/coach'] = null;
+                updates['users/' + nick + '/scores'] = {};
+                updates['users/' + nick + '/achievements'] = [];
+                updates['users/' + nick + '/achievementsShown'] = [];
+                updates['users/' + nick + '/titles'] = [];
+                updates['users/' + nick + '/titlesShown'] = [];
+                updates['users/' + nick + '/palpitesCravados'] = {};
+                updates['users/' + nick + '/isConfirmed'] = false;
+                
+                db.ref().update(updates)
+                    .then(() => {
+                        alert(`✅ Conta de @${nick} foi ZERADA!\n\nA conta ainda existe, mas todos os dados foram resetados.`);
+                        render();
+                    })
+                    .catch(err => {
+                        alert('❌ Erro ao zerar: ' + err.message);
+                    });
+            } else {
+                alert(`✅ Conta de @${nick} foi ZERADA!`);
+                render();
+            }
+        };
+        
+        // Excluir conta de um usuário permanentemente
+        window.adminDeleteUser = function(nick) {
+            const user = state.users[nick];
+            if (!user) return alert('Usuário não encontrado');
+            
+            if (nick === 'admin') {
+                return alert('❌ Não é possível excluir a conta admin!');
+            }
+            
+            const info = `
+🗑️ EXCLUIR CONTA DE @${nick}
+
+Time: ${user.teamName || 'Sem nome'}
+Pontos: ${calculateUserScore(user)}
+
+⚠️ ATENÇÃO: Isso vai DELETAR a conta PERMANENTEMENTE!
+O usuário não poderá mais fazer login.
+            `;
+            
+            if (!confirm(info + '\n\nTem certeza?')) return;
+            
+            const confirmText = prompt(`Para confirmar, digite o nickname: ${nick}`);
+            if (confirmText !== nick) {
+                return alert('❌ Nickname não confere. Operação cancelada.');
+            }
+            
+            // Remover do state local
+            delete state.users[nick];
+            
+            // Remover do Firebase
+            if (db) {
+                db.ref('users/' + nick).remove()
+                    .then(() => {
+                        // Remover também mensagens privadas relacionadas
+                        db.ref('privateMessages').orderByChild('from').equalTo(nick).once('value', snapshot => {
+                            snapshot.forEach(child => child.ref.remove());
+                        });
+                        db.ref('privateMessages').orderByChild('to').equalTo(nick).once('value', snapshot => {
+                            snapshot.forEach(child => child.ref.remove());
+                        });
+                        
+                        // Remover notificações
+                        db.ref('notifications/' + nick).remove();
+                        
+                        alert(`✅ Conta de @${nick} foi EXCLUÍDA permanentemente!`);
+                        render();
+                    })
+                    .catch(err => {
+                        alert('❌ Erro ao excluir: ' + err.message);
+                    });
+            } else {
+                alert(`✅ Conta de @${nick} foi EXCLUÍDA!`);
+                render();
+            }
+        };
+        
         // Abrir modal de edição de usuário
         window.adminOpenUserModal = function(nick) {
             const user = state.users[nick];
@@ -16782,6 +17209,229 @@
             
             alert(`✅ gameState corrigido!\nRodada: ${roundNum}\nSubstituições: Liberadas`);
             render();
+        };
+        
+        // Admin: Reset TOTAL para lançamento (zera pontos, chats, conquistas)
+        window.adminResetParaLancamento = async function() {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode fazer isso!');
+            }
+            
+            if (!confirm('⚠️ ATENÇÃO: Isso vai ZERAR TUDO!\n\n• Times escalados (titulares e reservas)\n• Técnicos\n• Pontos de todos os usuários\n• Chat público (ranking)\n• Chat do draft\n• Conquistas\n• Ordem do sorteio\n\nTem certeza?')) {
+                return;
+            }
+            
+            if (!confirm('🚨 ÚLTIMA CONFIRMAÇÃO!\n\nTem certeza que deseja resetar TUDO para o lançamento?\n\nINCLUINDO todos os times escalados e técnicos!\n\nEsta ação NÃO pode ser desfeita!')) {
+                return;
+            }
+            
+            console.log('🔄 Iniciando reset total para lançamento...');
+            
+            try {
+                // 1. Zerar TUDO de todos os usuários
+                console.log('1/5 - Zerando usuários (times, pontos, conquistas)...');
+                const usersSnapshot = await db.ref('users').once('value');
+                const users = usersSnapshot.val() || {};
+                
+                for (const nick of Object.keys(users)) {
+                    if (nick === 'admin') continue;
+                    
+                    // Zerar times
+                    await db.ref(`users/${nick}/starters`).remove();
+                    await db.ref(`users/${nick}/reserves`).remove();
+                    await db.ref(`users/${nick}/coach`).remove();
+                    await db.ref(`users/${nick}/isConfirmed`).set(false);
+                    
+                    // Zerar pontos e conquistas
+                    await db.ref(`users/${nick}/scores`).remove();
+                    await db.ref(`users/${nick}/achievements`).remove();
+                    await db.ref(`users/${nick}/achievementsShown`).remove();
+                    await db.ref(`users/${nick}/titles`).remove();
+                    await db.ref(`users/${nick}/palpitesCravados`).remove();
+                    await db.ref(`users/${nick}/pontosCravar`).remove();
+                    
+                    console.log(`   ✓ ${nick} zerado`);
+                }
+                
+                // 2. Limpar chat público
+                console.log('2/5 - Limpando chat público...');
+                await db.ref('chat').remove();
+                
+                // 3. Limpar chat do draft
+                console.log('3/5 - Limpando chat do draft...');
+                await db.ref('draftChat').remove();
+                
+                // 4. Limpar ordem do sorteio e status do draft
+                console.log('4/5 - Limpando sorteio e status do draft...');
+                await db.ref('draftStatus').remove();
+                state.draftOrder = [];
+                state.draftStarted = false;
+                
+                // 5. Limpar cache de pontuação
+                console.log('5/5 - Limpando caches...');
+                await db.ref('scoresCache').remove();
+                await db.ref('statsCache').remove();
+                
+                // Resetar state local
+                state.chatMessages = [];
+                state.draftChatMessages = [];
+                state.starters = Array(11).fill(null);
+                state.reserves = Array(7).fill(null);
+                state.coach = null;
+                state.isConfirmed = false;
+                
+                // Mensagem de boas-vindas no chat
+                await db.ref('chat').push({
+                    user: '🤖 Sistema',
+                    text: '🎉 Bem-vindos ao Fantasy Brasileirão 2026! O Draft será em breve. Boa sorte a todos!',
+                    timestamp: Date.now(),
+                    isSystem: true
+                });
+                
+                alert('✅ RESET COMPLETO!\n\n• Times zerados (titulares, reservas, técnicos)\n• Pontos zerados\n• Chats limpos\n• Conquistas removidas\n• Sorteio limpo\n\nPronto para o Draft de segunda! 🚀');
+                
+                render();
+                
+            } catch (error) {
+                console.error('Erro no reset:', error);
+                alert('❌ Erro ao resetar: ' + error.message);
+            }
+        };
+        
+        // Admin: Resetar apenas conquistas
+        window.adminResetConquistas = async function() {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode fazer isso!');
+            }
+            
+            if (!confirm('🏆 Isso vai REMOVER todas as conquistas de todos os usuários.\n\nContinuar?')) {
+                return;
+            }
+            
+            console.log('🔄 Resetando conquistas...');
+            
+            try {
+                const usersSnapshot = await db.ref('users').once('value');
+                const users = usersSnapshot.val() || {};
+                
+                let count = 0;
+                for (const nick of Object.keys(users)) {
+                    if (nick === 'admin') continue;
+                    
+                    await db.ref(`users/${nick}/achievements`).remove();
+                    await db.ref(`users/${nick}/achievementsShown`).remove();
+                    count++;
+                    console.log(`   ✓ ${nick} conquistas removidas`);
+                }
+                
+                alert(`✅ Conquistas resetadas!\n\n${count} usuários afetados.`);
+                render();
+                
+            } catch (error) {
+                console.error('Erro ao resetar conquistas:', error);
+                alert('❌ Erro: ' + error.message);
+            }
+        };
+        
+        // Admin: Zerar Chat Ranking (público)
+        window.adminZerarChatRanking = async function() {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode fazer isso!');
+            }
+            
+            if (!confirm('💬 Isso vai APAGAR todas as mensagens do chat do Ranking.\n\nContinuar?')) {
+                return;
+            }
+            
+            try {
+                await db.ref('chat').remove();
+                state.chatMessages = [];
+                
+                // Mensagem de boas-vindas
+                await db.ref('chat').push({
+                    user: '🤖 Sistema',
+                    text: '💬 Chat limpo! Bem-vindos ao Fantasy Brasileirão 2026!',
+                    timestamp: Date.now(),
+                    isSystem: true
+                });
+                
+                alert('✅ Chat do Ranking zerado!');
+                render();
+                
+            } catch (error) {
+                console.error('Erro ao zerar chat:', error);
+                alert('❌ Erro: ' + error.message);
+            }
+        };
+        
+        // Admin: Zerar Chat Draft
+        window.adminZerarChatDraft = async function() {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode fazer isso!');
+            }
+            
+            if (!confirm('🎲 Isso vai APAGAR todas as mensagens do chat do Draft.\n\nContinuar?')) {
+                return;
+            }
+            
+            try {
+                await db.ref('draftChat').remove();
+                state.draftChatMessages = [];
+                
+                alert('✅ Chat do Draft zerado!');
+                render();
+                
+            } catch (error) {
+                console.error('Erro ao zerar chat draft:', error);
+                alert('❌ Erro: ' + error.message);
+            }
+        };
+        
+        // Admin: Zerar Times (titulares, reservas, técnicos)
+        window.adminZerarTimes = async function() {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode fazer isso!');
+            }
+            
+            if (!confirm('⚽ Isso vai ZERAR os times de TODOS os usuários!\n\n• Titulares\n• Reservas\n• Técnicos\n\nContinuar?')) {
+                return;
+            }
+            
+            if (!confirm('🚨 TEM CERTEZA?\n\nTodos os times serão zerados e o Draft terá que ser refeito!\n\nEsta ação NÃO pode ser desfeita!')) {
+                return;
+            }
+            
+            console.log('🔄 Zerando times...');
+            
+            try {
+                const usersSnapshot = await db.ref('users').once('value');
+                const users = usersSnapshot.val() || {};
+                
+                let count = 0;
+                for (const nick of Object.keys(users)) {
+                    if (nick === 'admin') continue;
+                    
+                    await db.ref(`users/${nick}/starters`).remove();
+                    await db.ref(`users/${nick}/reserves`).remove();
+                    await db.ref(`users/${nick}/coach`).remove();
+                    await db.ref(`users/${nick}/isConfirmed`).set(false);
+                    count++;
+                    console.log(`   ✓ ${nick} time zerado`);
+                }
+                
+                // Resetar state local
+                state.starters = Array(11).fill(null);
+                state.reserves = Array(7).fill(null);
+                state.coach = null;
+                state.isConfirmed = false;
+                
+                alert(`✅ Times zerados!\n\n${count} usuários afetados.\nPronto para o Draft!`);
+                render();
+                
+            } catch (error) {
+                console.error('Erro ao zerar times:', error);
+                alert('❌ Erro: ' + error.message);
+            }
         };
         
         // Criar novo título
@@ -17486,6 +18136,11 @@
             
             db.ref('settings/marketOpen').on('value', (snapshot) => {
                 state.adminMarketOpen = snapshot.val();
+            });
+            
+            // Carregar código de acesso customizado
+            db.ref('settings/accessCode').on('value', (snapshot) => {
+                state.accessCode = snapshot.val() || 'season26';
             });
             
             db.ref('settings/currentRound').on('value', (snapshot) => {
