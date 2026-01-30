@@ -3392,8 +3392,8 @@
                         console.error('Erro ao salvar localStorage:', e);
                     }
                     
-                    // Atualizar tela
-                    if (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup') {
+                    // Atualizar tela - incluindo quando modal de cravar está aberto
+                    if (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup' || state.modal === 'cravar') {
                         render();
                     }
                 }
