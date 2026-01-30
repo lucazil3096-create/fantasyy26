@@ -926,14 +926,9 @@
             const achievements = userData.achievements || [];
             const newAchievements = [];
             
-            // Controle de notificações JÁ MOSTRADAS (permanente, não reseta)
-            const notifiedKey = 'fantasy_achievements_shown_' + userNick;
-            let alreadyShown = [];
-            try {
-                alreadyShown = JSON.parse(localStorage.getItem(notifiedKey) || '[]');
-            } catch (e) {
-                alreadyShown = [];
-            }
+            // Controle de notificações JÁ MOSTRADAS (Firebase - permanente)
+            let alreadyShown = userData.achievementsShown || [];
+            if (!Array.isArray(alreadyShown)) alreadyShown = [];
             
             // Helper para adicionar conquista
             const addAchievement = (id) => {
@@ -1014,9 +1009,12 @@
                         const ach = ACHIEVEMENTS[id];
                         if (ach) {
                             // MARCAR COMO MOSTRADA IMEDIATAMENTE (antes do setTimeout)
-                            // Isso evita duplicatas se o usuário recarregar a página
                             alreadyShown.push(id);
-                            localStorage.setItem(notifiedKey, JSON.stringify(alreadyShown));
+                            userData.achievementsShown = alreadyShown;
+                            // Salvar no Firebase
+                            if (db) {
+                                db.ref('users/' + userNick + '/achievementsShown').set(alreadyShown);
+                            }
                             
                             setTimeout(() => {
                                 showAchievementNotification(ach);
@@ -1146,12 +1144,9 @@
         function checkPendingNotifications() {
             if (!db || !state.currentUser) return;
             
-            // Chave localStorage para backup de notificações já vistas
-            const seenKey = 'fantasy_notifications_seen_' + state.currentUser;
-            let seenLocal = [];
-            try {
-                seenLocal = JSON.parse(localStorage.getItem(seenKey) || '[]');
-            } catch(e) { seenLocal = []; }
+            // Notificações vistas ficam no Firebase (campo 'seen')
+            const userData = state.users?.[state.currentUser] || {};
+            const seenNotifications = userData.seenNotifications || [];
             
             db.ref('notifications/' + state.currentUser).once('value').then(snap => {
                 const notifications = snap.val();
@@ -1159,11 +1154,12 @@
                 
                 let delay = 0;
                 const toDelete = []; // Notificações antigas para deletar
+                const newSeen = [...seenNotifications];
                 
                 // Processar cada notificação pendente
                 Object.entries(notifications).forEach(([id, notif]) => {
-                    // Verificar se já foi vista (Firebase OU localStorage)
-                    if (notif.seen || seenLocal.includes(id)) {
+                    // Verificar se já foi vista (Firebase)
+                    if (notif.seen || seenNotifications.includes(id)) {
                         // Se já foi vista há mais de 24h, marcar para deletar
                         if (notif.createdAt && Date.now() - notif.createdAt > 24 * 60 * 60 * 1000) {
                             toDelete.push(id);
@@ -1172,10 +1168,10 @@
                     }
                     
                     // MARCAR COMO VISTA IMEDIATAMENTE (antes de mostrar)
-                    // Isso evita duplicatas se o usuário recarregar a página
                     db.ref('notifications/' + state.currentUser + '/' + id + '/seen').set(true);
-                    seenLocal.push(id);
-                    localStorage.setItem(seenKey, JSON.stringify(seenLocal));
+                    if (!newSeen.includes(id)) {
+                        newSeen.push(id);
+                    }
                     
                     // Mostrar notificação com delay
                     setTimeout(() => {
@@ -1193,6 +1189,14 @@
                     
                     delay += 2500; // Espaço entre notificações
                 });
+                
+                // Salvar lista de notificações vistas no Firebase
+                if (newSeen.length > seenNotifications.length) {
+                    if (state.users[state.currentUser]) {
+                        state.users[state.currentUser].seenNotifications = newSeen;
+                    }
+                    db.ref('users/' + state.currentUser + '/seenNotifications').set(newSeen);
+                }
                 
                 // Limpar notificações antigas (já vistas há mais de 24h)
                 if (toDelete.length > 0) {
@@ -1334,17 +1338,14 @@
             const user = state.users[state.currentUser];
             if (!user) return;
             
-            // Pegar desafios já completados (localStorage + Firebase)
-            const completedKey = 'fantasy_completed_challenges_' + state.currentUser;
-            let completedLocal = [];
-            try {
-                completedLocal = JSON.parse(localStorage.getItem(completedKey) || '[]');
-            } catch(e) { completedLocal = []; }
+            // Pegar desafios já completados do Firebase
+            const userCompletedChallenges = userData.completedChallenges || [];
             
             state.challenges.forEach(challenge => {
-                // Verificar se já completou (localStorage ou Firebase)
+                // Verificar se já completou (Firebase)
                 const completedInFirebase = state.challengeCompletions?.[challenge.id]?.[state.currentUser];
-                if (completedLocal.includes(challenge.id) || completedInFirebase) return;
+                const completedInUser = userCompletedChallenges.includes(challenge.id);
+                if (completedInUser || completedInFirebase) return;
                 
                 // Só verifica desafios automáticos
                 if (!challenge.isAuto && challenge.challengeType === 'manual') return;
@@ -1357,9 +1358,9 @@
                 if (typeHandler.check(user, challenge.params || {})) {
                     console.log(`🎯 Desafio completado automaticamente: ${challenge.name}`);
                     
-                    // Marcar como completado no localStorage
-                    completedLocal.push(challenge.id);
-                    localStorage.setItem(completedKey, JSON.stringify(completedLocal));
+                    // Marcar como completado no Firebase (dentro do usuário)
+                    userCompletedChallenges.push(challenge.id);
+                    userData.completedChallenges = userCompletedChallenges;
                     
                     // Dar a recompensa
                     if (challenge.reward > 0) {
@@ -1380,12 +1381,15 @@
                             db.ref('users/' + state.currentUser + '/scores/market/purchases')
                                 .set(user.scores.market.purchases);
                             
-                            // Marcar como completado no Firebase
+                            // Marcar como completado no Firebase (global)
                             db.ref('challengeCompletions/' + state.currentUser + '/' + challenge.id).set({
                                 completedAt: Date.now(),
                                 reward: challenge.reward,
                                 autoCompleted: true
                             });
+                            
+                            // Salvar lista de desafios completados no usuário
+                            db.ref('users/' + state.currentUser + '/completedChallenges').set(userCompletedChallenges);
                         }
                     }
                     
@@ -3334,9 +3338,13 @@
                     favoriteTeam: userData.favoriteTeam || null,
                     userBio: userData.userBio || '',
                     titles: userData.titles || [],
-                    // CORREÇÃO: Incluir palpites na sincronização
+                    // DADOS 100% ONLINE
                     palpitesCravados: userData.palpitesCravados || {},
                     jogosConferidos: userData.jogosConferidos || {},
+                    seenGoals: userData.seenGoals || {},
+                    achievementsShown: userData.achievementsShown || [],
+                    completedChallenges: userData.completedChallenges || [],
+                    seenNotifications: userData.seenNotifications || [],
                     lastUpdate: new Date().toISOString()
                 };
                 db.ref('users/' + nickname).set(dataToSave);
@@ -3393,9 +3401,13 @@
                             userBio: cloudUsers[nick].userBio || '',
                             achievements: cloudUsers[nick].achievements || [],
                             titles: cloudUsers[nick].titles || [],
-                            // CORREÇÃO: Sincronizar palpites do Firebase (fonte única de verdade)
-                            palpitesCravados: cloudUsers[nick].palpitesCravados || state.users[nick].palpitesCravados || {},
-                            jogosConferidos: cloudUsers[nick].jogosConferidos || state.users[nick].jogosConferidos || {}
+                            // DADOS 100% ONLINE - Sempre do Firebase
+                            palpitesCravados: cloudUsers[nick].palpitesCravados || {},
+                            jogosConferidos: cloudUsers[nick].jogosConferidos || {},
+                            seenGoals: cloudUsers[nick].seenGoals || {},
+                            achievementsShown: cloudUsers[nick].achievementsShown || [],
+                            completedChallenges: cloudUsers[nick].completedChallenges || [],
+                            seenNotifications: cloudUsers[nick].seenNotifications || []
                         };
                         
                         // IMPORTANTE: Se for o usuário atual, atualizar TUDO no state principal
@@ -3435,15 +3447,10 @@
                         setTimeout(() => verificarAcertosAutomatico(), 1000);
                     }
                     
-                    // Salvar no localStorage SEM as fotos (economiza espaço)
+                    // localStorage: APENAS para lembrar qual usuário está logado
+                    // Todos os outros dados vêm do Firebase
                     try {
-                        const usersParaSalvar = {};
-                        Object.keys(state.users).forEach(nick => {
-                            usersParaSalvar[nick] = { ...state.users[nick] };
-                            delete usersParaSalvar[nick].teamLogo;
-                        });
                         localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
-                            users: usersParaSalvar,
                             currentUser: state.currentUser
                         }));
                     } catch (e) {
@@ -3591,42 +3598,28 @@
 
         function loadState() {
             try {
+                // localStorage: APENAS para lembrar qual usuário está logado
                 const saved = localStorage.getItem('fantasyBrasileirao2026');
                 if (saved) {
                     const data = JSON.parse(saved);
-                    state.users = data.users || {};
                     state.currentUser = data.currentUser || null;
                     
-                    if (state.currentUser && state.users[state.currentUser]) {
-                        const userData = state.users[state.currentUser];
-                        state.teamName = userData.teamName || '';
-                        state.teamLogo = null; // Foto vem do Firebase
-                        state.formation = userData.formation || '4-3-3';
-                        state.starters = ensureArray(userData.starters, 11);
-                        state.reserves = ensureArray(userData.reserves, 7);
-                        state.coach = userData.coach || null;
-                        state.isConfirmed = userData.isConfirmed || false;
-                        state.scores = userData.scores || {};
-                        state.favoriteTeam = userData.favoriteTeam || null;
-                        state.userBio = userData.userBio || '';
-                        state.screen = userData.teamName ? 'lineup' : 'createTeam';
-                        
-                        // Carregar foto do cache (sessionStorage)
+                    // NÃO carregar dados de usuário do localStorage!
+                    // Todos os dados vêm do Firebase via listenToUsers()
+                    
+                    // Carregar foto do cache temporário (sessionStorage) enquanto Firebase carrega
+                    if (state.currentUser) {
                         try {
                             const photoCache = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}');
                             if (photoCache[state.currentUser]) {
                                 state.teamLogo = photoCache[state.currentUser];
-                                if (state.users[state.currentUser]) {
-                                    state.users[state.currentUser].teamLogo = photoCache[state.currentUser];
-                                }
                                 console.log('📷 Foto carregada do cache');
                             }
                         } catch(e) {}
-                        // Nota: O listener db.ref('users').on() vai carregar a foto atualizada do Firebase
                     }
                 }
                 
-                // Carregar jogadores do cache
+                // Carregar jogadores do cache local primeiro (rápido)
                 const cachedPlayers = localStorage.getItem('fantasyPlayers2026');
                 if (cachedPlayers) {
                     const parsed = JSON.parse(cachedPlayers);
@@ -3636,8 +3629,11 @@
                     // Mesclar jogadores manuais (contratações recentes)
                     mergeManualPlayers();
                 }
+                
+                // Escutar jogadores do Firebase (atualiza em tempo real)
+                try { listenToPlayers(); } catch(e) { console.error('Erro listenToPlayers:', e); }
 
-                // Escutar ranking da nuvem
+                // Escutar ranking da nuvem - FONTE DE VERDADE PARA DADOS DE USUÁRIO
                 try { listenToUsers(); } catch(e) { console.error('Erro listenToUsers:', e); }
                 
                 // Escutar chat em tempo real
@@ -3672,12 +3668,11 @@
         function saveState() {
             try {
                 if (state.currentUser) {
-                    // NÃO incluir teamLogo no localStorage (ocupa muito espaço)
-                    // Foto fica só no Firebase
+                    // Atualizar dados no state
                     state.users[state.currentUser] = {
                         ...state.users[state.currentUser],
                         teamName: state.teamName,
-                        // teamLogo: NÃO SALVAR AQUI - vai pro Firebase direto
+                        teamLogo: state.teamLogo,
                         formation: state.formation,
                         starters: state.starters,
                         reserves: state.reserves,
@@ -3689,50 +3684,32 @@
                         lastUpdate: new Date().toISOString()
                     };
                     
-                    // Salvar na nuvem (incluindo foto)
-                    saveUserToCloud(state.currentUser, {
-                        ...state.users[state.currentUser],
-                        teamLogo: state.teamLogo
-                    });
+                    // SALVAR TUDO NO FIREBASE - fonte única de verdade
+                    saveUserToCloud(state.currentUser, state.users[state.currentUser]);
                 }
                 
-                // Remover fotos do objeto users antes de salvar no localStorage
-                const usersParaSalvar = {};
-                Object.keys(state.users).forEach(nick => {
-                    usersParaSalvar[nick] = { ...state.users[nick] };
-                    delete usersParaSalvar[nick].teamLogo; // Remove foto para economizar espaço
-                });
-                
+                // localStorage: APENAS para lembrar qual usuário está logado
                 localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
-                    users: usersParaSalvar,
                     currentUser: state.currentUser
                 }));
             } catch (e) {
                 console.error('Erro ao salvar:', e);
-                // Se der erro de quota, tentar limpar fotos antigas
-                if (e.name === 'QuotaExceededError') {
-                    console.log(' Limpando localStorage...');
-                    try {
-                        const saved = localStorage.getItem('fantasyBrasileirao2026');
-                        if (saved) {
-                            const data = JSON.parse(saved);
-                            Object.keys(data.users || {}).forEach(nick => {
-                                if (data.users[nick]) {
-                                    delete data.users[nick].teamLogo;
-                                }
-                            });
-                            localStorage.setItem('fantasyBrasileirao2026', JSON.stringify(data));
-                            console.log(' localStorage limpo!');
-                        }
-                    } catch (e2) {
-                        console.error('Erro ao limpar:', e2);
-                    }
-                }
             }
         }
 
         function savePlayers() {
             try {
+                // Salvar no Firebase (fonte de verdade para todos os usuários)
+                if (db) {
+                    db.ref('gameData/players').set({
+                        players: state.players,
+                        teams: state.teams,
+                        lastSync: new Date().toISOString()
+                    });
+                    console.log('☁️ Jogadores salvos no Firebase:', state.players.length);
+                }
+                
+                // Também salvar cache local (para carregamento mais rápido)
                 localStorage.setItem('fantasyPlayers2026', JSON.stringify({
                     players: state.players,
                     teams: state.teams,
@@ -3741,6 +3718,38 @@
             } catch (e) {
                 console.error('Erro ao salvar jogadores:', e);
             }
+        }
+        
+        // Escutar mudanças nos jogadores (Firebase)
+        function listenToPlayers() {
+            if (!db) return;
+            db.ref('gameData/players').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data && data.players && data.players.length > 0) {
+                    // Só atualiza se tiver mais jogadores ou for mais recente
+                    const localLastSync = localStorage.getItem('fantasy_players_sync') || '2000-01-01';
+                    const firebaseLastSync = data.lastSync || '2000-01-01';
+                    
+                    if (data.players.length >= state.players.length || firebaseLastSync > localLastSync) {
+                        state.players = data.players;
+                        state.teams = data.teams || [];
+                        
+                        // Mesclar jogadores manuais
+                        mergeManualPlayers();
+                        
+                        // Atualizar cache local
+                        localStorage.setItem('fantasyPlayers2026', JSON.stringify(data));
+                        localStorage.setItem('fantasy_players_sync', firebaseLastSync);
+                        
+                        console.log('☁️ Jogadores atualizados do Firebase:', state.players.length);
+                        
+                        // Re-renderizar se estiver na tela certa
+                        if (state.screen === 'draft' || state.screen === 'lineup') {
+                            render();
+                        }
+                    }
+                }
+            });
         }
         
         // Mescla jogadores manuais com os da API
@@ -4516,9 +4525,15 @@
             }
         };
         
-        // Carregar gols já vistos do localStorage
+        // Carregar gols já vistos do Firebase (com fallback para localStorage)
         function getSeenGoals() {
             try {
+                // Priorizar Firebase
+                const userData = state.users?.[state.currentUser];
+                if (userData?.seenGoals) {
+                    return userData.seenGoals;
+                }
+                // Fallback para localStorage (migração)
                 const saved = localStorage.getItem('fantasy_seen_goals');
                 return saved ? JSON.parse(saved) : {};
             } catch (e) {
@@ -4526,10 +4541,17 @@
             }
         }
         
-        // Salvar gols vistos no localStorage
+        // Salvar gols vistos no Firebase
         function saveSeenGoals(seenGoals) {
             try {
-                localStorage.setItem('fantasy_seen_goals', JSON.stringify(seenGoals));
+                // Salvar no state
+                if (state.users[state.currentUser]) {
+                    state.users[state.currentUser].seenGoals = seenGoals;
+                }
+                // Salvar no Firebase
+                if (db && state.currentUser) {
+                    db.ref('users/' + state.currentUser + '/seenGoals').set(seenGoals);
+                }
             } catch (e) {
                 console.error('Erro ao salvar gols vistos:', e);
             }
@@ -15660,6 +15682,12 @@
             state.players = [];
             state.teams = [];
             
+            // Limpar do Firebase também
+            if (db) {
+                db.ref('gameData/players').remove();
+                console.log('☁️ Jogadores removidos do Firebase');
+            }
+            
             // Iniciar sincronização IMEDIATAMENTE (sem alert bloqueante)
             console.log('Cache limpo! Iniciando sincronização...');
             syncAllData();
@@ -15871,7 +15899,30 @@
         }
         
         // Verifica se já sincronizou hoje
-        function shouldAutoSync() {
+        // Verificar se precisa sincronizar (verifica Firebase primeiro)
+        async function shouldAutoSync() {
+            // Primeiro, verificar no Firebase (fonte de verdade)
+            if (db) {
+                try {
+                    const snapshot = await db.ref('gameData/players/lastSync').once('value');
+                    const firebaseLastSync = snapshot.val();
+                    
+                    if (firebaseLastSync) {
+                        const lastDate = new Date(firebaseLastSync);
+                        const today = new Date();
+                        
+                        // Se já sincronizou hoje no Firebase, não precisa de novo
+                        if (lastDate.toDateString() === today.toDateString()) {
+                            console.log('✓ Firebase já foi sincronizado hoje');
+                            return false;
+                        }
+                    }
+                } catch (e) {
+                    console.log('⚠️ Erro ao verificar Firebase, usando localStorage');
+                }
+            }
+            
+            // Fallback: verificar localStorage
             const lastSync = localStorage.getItem('fantasy_last_sync');
             if (!lastSync) return true;
             
@@ -15887,7 +15938,8 @@
             console.log('🔄 Iniciando sincronização...');
             
             // Se não é forçado, verificar se precisa sincronizar
-            if (!forceSync && !shouldAutoSync() && state.players.length > 0) {
+            const needsSync = await shouldAutoSync();
+            if (!forceSync && !needsSync && state.players.length > 0) {
                 console.log('✓ Já sincronizou hoje, pulando...');
                 return;
             }
@@ -15907,12 +15959,20 @@
                     state.players = allPlayers;
                     currentApiSource = 'api-football';
                     mergeManualPlayers();
+                    
+                    // Salvar no Firebase (atualiza para TODOS os usuários)
                     savePlayers();
+                    
+                    // Também atualizar data da última sync no Firebase
+                    if (db) {
+                        db.ref('gameData/lastSyncDate').set(new Date().toISOString());
+                    }
+                    
                     localStorage.setItem('fantasy_last_sync', new Date().toISOString());
                     localStorage.setItem('fantasy_api_source', 'api-football');
                     
                     state.syncProgress = `✅ ${state.players.length} jogadores!`;
-                    console.log(`🎉 Auto-sync completo! ${state.players.length} jogadores`);
+                    console.log(`🎉 Auto-sync completo! ${state.players.length} jogadores salvos no Firebase`);
                 }
                 
             } catch (e) {
@@ -16062,12 +16122,18 @@
                 // Sincronizar imediatamente (forçado)
                 setTimeout(() => autoSyncPlayers(true), 500);
             } 
-            // Se tem cache mas precisa atualizar (1x por dia)
-            else if (shouldAutoSync()) {
-                console.log('📅 Atualização diária - sincronizando em background...');
-                setTimeout(() => autoSyncPlayers(false), 2000);
-            } else {
-                console.log('✓ Dados atualizados!');
+            // Se tem cache, verificar se precisa atualizar (1x por dia)
+            else {
+                // Verificar de forma async se precisa sync
+                setTimeout(async () => {
+                    const needsSync = await shouldAutoSync();
+                    if (needsSync) {
+                        console.log('📅 Atualização diária - sincronizando em background...');
+                        autoSyncPlayers(false);
+                    } else {
+                        console.log('✓ Dados atualizados!');
+                    }
+                }, 2000);
             }
         })();
 
