@@ -531,7 +531,8 @@
         const API_KEYS = [
             "7323cf974437eebed0866f3138cea56d",  // Key 1
             "41d2354cb79de285df976083bf03bd2",   // Key 2
-            "fce311073b739083636173a395d4c3d9"   // Key 3
+            "fce311073b739083636173a395d4c3d9",  // Key 3
+            "7cb8e7bf79b957678b4b33914a04fc06"   // Key 4
         ];
         const API_BASE = "https://v3.football.api-sports.io";
         
@@ -1998,7 +1999,7 @@
         // ==================== SISTEMA DE CACHE INTELIGENTE ====================
         // Cache dinâmico baseado na situação dos jogos
         const CACHE_SETTINGS = {
-            LIVE_GAME: 10 * 60 * 1000,       // 10 min - jogos ao vivo
+            LIVE_GAME: 3 * 60 * 1000,        // 3 min - jogos ao vivo
             STARTING_SOON: 30 * 60 * 1000,   // 30 min - jogos começam em breve
             NO_GAMES: 6 * 60 * 60 * 1000,    // 6 horas - sem jogos
             DEFAULT: 60 * 60 * 1000          // 1 hora - padrão
@@ -2032,7 +2033,7 @@
             
             // Se tem jogo ao vivo, cache curto
             if (hasLive) {
-                console.log('⚡ Jogos AO VIVO - cache de 10 min');
+                console.log('⚡ Jogos AO VIVO - cache de 3 min');
                 return CACHE_SETTINGS.LIVE_GAME;
             }
             
@@ -2055,7 +2056,7 @@
         // Isso economiza MUITO as requisições da API!
         
         const CACHE_24H = 24 * 60 * 60 * 1000; // 24 horas
-        const CACHE_5MIN = 5 * 60 * 1000; // 5 minutos (para jogos ao vivo)
+        const CACHE_3MIN = 3 * 60 * 1000; // 3 minutos (para jogos ao vivo)
         
         // ==================== SISTEMA INTELIGENTE DE RODADAS ====================
         // Rodada do Fantasy = Próxima rodada com maioria dos jogos não iniciados
@@ -2100,22 +2101,29 @@
                 
                 // ========== PASSO 1: BUSCAR PRÓXIMO JOGO (DEFINE A RODADA DO FANTASY) ==========
                 // Esta é a rodada "oficial" do Fantasy - independente de jogos atrasados
-                try {
-                    const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&next=1`);
-                    if (nextRes.response && nextRes.response.length > 0) {
-                        const roundStr = nextRes.response[0].league.round;
-                        const match = roundStr.match(/Regular Season - (\d+)/);
-                        if (match) {
-                            currentRound = parseInt(match[1]);
-                            foundRound = true;
-                            const nextDate = new Date(nextRes.response[0].fixture.date);
-                            const dayName = nextDate.toLocaleDateString('pt-BR', { weekday: 'long' });
-                            detectionMethod = `⏭️ Próxima rodada (${dayName})`;
-                            console.log(`📌 Rodada do Fantasy: ${currentRound} (${detectionMethod})`);
+                // Tenta 2026 primeiro, se não achar tenta 2025
+                const seasonsToTry = [SEASON, SEASON_FALLBACK];
+                
+                for (const season of seasonsToTry) {
+                    if (foundRound) break;
+                    
+                    try {
+                        const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
+                        if (nextRes.response && nextRes.response.length > 0) {
+                            const roundStr = nextRes.response[0].league.round;
+                            const match = roundStr.match(/Regular Season - (\d+)/);
+                            if (match) {
+                                currentRound = parseInt(match[1]);
+                                foundRound = true;
+                                const nextDate = new Date(nextRes.response[0].fixture.date);
+                                const dayName = nextDate.toLocaleDateString('pt-BR', { weekday: 'long' });
+                                detectionMethod = `⏭️ Próxima rodada (${dayName})${season !== SEASON ? ' [fallback]' : ''}`;
+                                console.log(`📌 Rodada do Fantasy: ${currentRound} (${detectionMethod})`);
+                            }
                         }
+                    } catch (e) {
+                        console.log(`Erro ao buscar próximo jogo (season ${season})`);
                     }
-                } catch (e) {
-                    console.log('Erro ao buscar próximo jogo');
                 }
                 
                 // ========== PASSO 2: VERIFICAR JOGOS AO VIVO (podem ser atrasados) ==========
@@ -4293,6 +4301,9 @@
                     // Mesclar jogadores manuais
                     mergeManualPlayers();
                     
+                    // Verificar se algum jogador escalado saiu do Brasileirão
+                    checkPlayersLeftBrasileirao();
+                    
                     // Atualizar cache local para uso offline
                     localStorage.setItem('fantasyPlayers2026', JSON.stringify(data));
                     localStorage.setItem('fantasy_players_sync', data.lastSync || new Date().toISOString());
@@ -4305,6 +4316,110 @@
                     }
                 }
             });
+        }
+        
+        // Verificar se jogadores escalados ainda estão no Brasileirão
+        // Se saíram (vendido, aposentadoria, lesão grave), notifica e remove do time
+        function checkPlayersLeftBrasileirao() {
+            if (!state.currentUser || !state.players || state.players.length === 0) return;
+            
+            const user = state.users[state.currentUser];
+            if (!user) return;
+            
+            const availablePlayerIds = new Set(state.players.map(p => p.id));
+            const playersRemoved = [];
+            
+            // Verificar titulares
+            const starters = ensureArray(user.starters, 11);
+            starters.forEach((player, index) => {
+                if (player && player.id && !availablePlayerIds.has(player.id)) {
+                    playersRemoved.push({ player, type: 'starter', index });
+                }
+            });
+            
+            // Verificar reservas
+            const reserves = ensureArray(user.reserves, 7);
+            reserves.forEach((player, index) => {
+                if (player && player.id && !availablePlayerIds.has(player.id)) {
+                    playersRemoved.push({ player, type: 'reserve', index });
+                }
+            });
+            
+            // Se encontrou jogadores que saíram
+            if (playersRemoved.length > 0) {
+                console.log(`⚠️ ${playersRemoved.length} jogador(es) saíram do Brasileirão!`);
+                
+                playersRemoved.forEach(({ player, type, index }) => {
+                    console.log(`   - ${player.name} (${player.team}) removido dos ${type === 'starter' ? 'titulares' : 'reservas'}`);
+                    
+                    // Remover do time
+                    if (type === 'starter') {
+                        state.starters[index] = null;
+                        if (user.starters) user.starters[index] = null;
+                    } else {
+                        state.reserves[index] = null;
+                        if (user.reserves) user.reserves[index] = null;
+                    }
+                });
+                
+                // Desconfirmar time (precisa escalar novamente)
+                state.isConfirmed = false;
+                if (user.isConfirmed) user.isConfirmed = false;
+                
+                // Salvar mudanças
+                saveState();
+                if (db && state.currentUser) {
+                    db.ref('users/' + state.currentUser).update({
+                        starters: sanitizeArrayForFirebase(state.starters, 11),
+                        reserves: sanitizeArrayForFirebase(state.reserves, 7),
+                        isConfirmed: false
+                    });
+                }
+                
+                // Notificar usuário
+                showPlayerLeftNotification(playersRemoved);
+            }
+        }
+        
+        // Mostrar notificação de jogador que saiu do Brasileirão
+        function showPlayerLeftNotification(playersRemoved) {
+            const playerNames = playersRemoved.map(p => p.player.name).join(', ');
+            const plural = playersRemoved.length > 1;
+            
+            const notification = document.createElement('div');
+            notification.className = 'fixed top-20 right-4 z-50 bg-zinc-800 border border-red-500/30 rounded-xl p-4 shadow-2xl animate-fade-in max-w-sm';
+            notification.innerHTML = `
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center text-red-400 text-xl flex-shrink-0">
+                        ⚠️
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-red-400 text-sm font-bold mb-1">
+                            Jogador${plural ? 'es' : ''} ${plural ? 'saíram' : 'saiu'} do Brasileirão!
+                        </p>
+                        <p class="text-white text-sm mb-2">${playerNames}</p>
+                        <p class="text-zinc-400 text-xs">
+                            ${plural ? 'Foram removidos' : 'Foi removido'} do seu time automaticamente. 
+                            Escale ${plural ? 'novos jogadores' : 'outro jogador'}.
+                        </p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="text-zinc-500 hover:text-white">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Remover após 10 segundos (mais tempo por ser importante)
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.classList.add('opacity-0', 'transition-opacity', 'duration-500');
+                    setTimeout(() => notification.remove(), 500);
+                }
+            }, 10000);
         }
         
         // Mescla jogadores manuais com os da API
@@ -4599,10 +4714,10 @@
             'teams': 7 * 24 * 60 * 60 * 1000,
             // Jogadores/squads - cache longo (24h)
             'players': 24 * 60 * 60 * 1000,
-            // Fixtures ao vivo - cache curto (10 min)
-            'fixtures_live': 10 * 60 * 1000,
-            // Stats ao vivo - cache curto (5 min)
-            'stats_live': 5 * 60 * 1000,
+            // Fixtures ao vivo - cache curto (3 min)
+            'fixtures_live': 3 * 60 * 1000,
+            // Stats ao vivo - cache curto (3 min)
+            'stats_live': 3 * 60 * 1000,
             // Padrão
             'default': 60 * 60 * 1000
         };
@@ -4973,13 +5088,13 @@
                         
                         if (cache && cache.data && cache.updatedAt) {
                             const cacheAge = Date.now() - cache.updatedAt;
-                            // Cache válido: 24 horas para jogos FINALIZADOS, 5 min para ao vivo
+                            // Cache válido: 24 horas para jogos FINALIZADOS, 3 min para ao vivo
                             const maxAge = (cache.isFinished || isFinished) 
                                 ? 24 * 60 * 60 * 1000  // 24 horas
-                                : 5 * 60 * 1000;       // 5 minutos
+                                : 3 * 60 * 1000;       // 3 minutos
                             
                             if (cacheAge < maxAge) {
-                                const status = cache.isFinished ? 'FINALIZADO-24h' : 'ao vivo-5min';
+                                const status = cache.isFinished ? 'FINALIZADO-24h' : 'ao vivo-3min';
                                 console.log(`📦 Stats jogo ${fixtureId} (cache ${status})`);
                                 return cache.data || [];
                             }
@@ -5010,7 +5125,7 @@
                                 savedBy: state.currentUser || 'anonymous'
                             })
                         });
-                        const cacheDur = isFinished ? '24h' : '5min';
+                        const cacheDur = isFinished ? '24h' : '3min';
                         console.log(`💾 Stats salvos Firebase (cache ${cacheDur})`);
                     } catch(e) {
                         // Falha no cache não é crítica
@@ -5408,9 +5523,9 @@
                         const cacheAge = Date.now() - cacheData.timestamp;
                         const hasLive = cacheData.hasLiveGames;
                         
-                        // Se tem jogos ao vivo: cache de 5 min
+                        // Se tem jogos ao vivo: cache de 3 min
                         // Se não tem jogos ao vivo: cache de 1 hora
-                        const maxCacheAge = hasLive ? CACHE_5MIN : (60 * 60 * 1000);
+                        const maxCacheAge = hasLive ? CACHE_3MIN : (60 * 60 * 1000);
                         
                         if (cacheAge < maxCacheAge) {
                             const minAgo = Math.round(cacheAge / 60000);
@@ -6673,7 +6788,7 @@
             // Verificar acertos automaticamente
             verificarAcertosAutomatico();
             
-            // INICIAR AUTO-REFRESH a cada 5 minutos
+            // INICIAR AUTO-REFRESH a cada 3 minutos
             startCravarAutoRefresh();
         };
         
@@ -6683,7 +6798,7 @@
             render();
         };
         
-        // Iniciar auto-refresh do Cravar (5 minutos)
+        // Iniciar auto-refresh do Cravar (3 minutos)
         function startCravarAutoRefresh() {
             // Limpar intervalo anterior se existir
             if (cravarAutoRefreshInterval) {
@@ -6700,9 +6815,9 @@
                 return;
             }
             
-            console.log(`🔄 Auto-refresh ativado: ${jogosNaoFinalizados} jogos pendentes (a cada 5 min)`);
+            console.log(`🔄 Auto-refresh ativado: ${jogosNaoFinalizados} jogos pendentes (a cada 3 min)`);
             
-            // Atualizar a cada 5 minutos (300000ms)
+            // Atualizar a cada 3 minutos (180000ms)
             cravarAutoRefreshInterval = setInterval(async () => {
                 // Só atualizar se o modal Cravar ainda estiver aberto
                 if (state.modal !== 'cravar') {
@@ -6731,7 +6846,7 @@
                 } catch(e) {
                     console.error('Erro no auto-refresh:', e);
                 }
-            }, 5 * 60 * 1000); // 5 minutos
+            }, 3 * 60 * 1000); // 3 minutos
         }
         
         // Parar auto-refresh quando fechar modal
@@ -7306,7 +7421,7 @@
                                     ${!todosFinalizados ? `
                                         <span class="text-zinc-500 text-[10px] flex items-center gap-1">
                                             <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></span>
-                                            Auto 5min
+                                            Auto 3min
                                         </span>
                                     ` : ''}
                                     <button onclick="closeModalDirect()" class="text-white/60 hover:text-white p-2 hover:bg-white/10 rounded-lg transition">
@@ -17812,14 +17927,14 @@
             }
             
             if (hasLive) {
-                // JOGO AO VIVO: atualizar a cada 5 minutos
-                console.log('⚡ Modo AO VIVO: atualizando a cada 5 min');
+                // JOGO AO VIVO: atualizar a cada 3 minutos
+                console.log('⚡ Modo AO VIVO: atualizando a cada 3 min');
                 liveUpdateInterval = setInterval(() => {
                     if (state.isConfirmed && !state.isUpdatingScores) {
-                        console.log('🔄 Atualização automática (5 min - AO VIVO)');
+                        console.log('🔄 Atualização automática (3 min - AO VIVO)');
                         syncRoundScores();
                     }
-                }, 5 * 60 * 1000); // 5 minutos
+                }, 3 * 60 * 1000); // 3 minutos
                 
             } else if (hasSoon) {
                 // JOGO EM BREVE: atualizar a cada 15 minutos
@@ -17881,13 +17996,13 @@
         //    - Primeiro usuário do dia busca na API
         //    - Outros usam cache do Firebase
         //
-        // 📌 syncRoundScores: Cache 5min (ao vivo) / 1h (sem jogos) no Firebase
+        // 📌 syncRoundScores: Cache 3min (ao vivo) / 1h (sem jogos) no Firebase
         //    - Primeiro usuário que pedir busca na API
         //    - Outros usam cache do Firebase
         //
         // 📌 Estimativa de uso:
         //    - Sem jogos: ~4 requests/dia (1 rodada + 3 fixtures check)
-        //    - Com jogos: ~50 requests/dia (stats a cada 5min por 4h)
+        //    - Com jogos: ~100 requests/dia (stats a cada 3min por 4h)
         //    - Muito abaixo do limite de 300 requests/dia!
     </script>
 </body>
