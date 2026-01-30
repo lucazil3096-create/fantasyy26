@@ -3268,8 +3268,15 @@
                     titles: userData.titles || [],
                     lastUpdate: new Date().toISOString()
                 };
-                db.ref('users/' + nickname).set(dataToSave);
-                console.log(' Salvo na nuvem:', nickname);
+                
+                // Só incluir palpitesCravados se existir (para não sobrescrever com objeto vazio)
+                if (userData.palpitesCravados && Object.keys(userData.palpitesCravados).length > 0) {
+                    dataToSave.palpitesCravados = userData.palpitesCravados;
+                }
+                
+                // Usar update ao invés de set para não sobrescrever campos existentes como palpitesCravados
+                db.ref('users/' + nickname).update(dataToSave);
+                console.log('☁️ Salvo na nuvem:', nickname);
             } catch (e) {
                 console.error('Erro ao salvar na nuvem:', e);
             }
@@ -3321,7 +3328,8 @@
                             favoriteTeam: cloudUsers[nick].favoriteTeam || null,
                             userBio: cloudUsers[nick].userBio || '',
                             achievements: cloudUsers[nick].achievements || [],
-                            titles: cloudUsers[nick].titles || []
+                            titles: cloudUsers[nick].titles || [],
+                            palpitesCravados: cloudUsers[nick].palpitesCravados || state.users[nick].palpitesCravados || {}
                         };
                         
                         // IMPORTANTE: Se for o usuário atual, atualizar TUDO no state principal
@@ -3354,6 +3362,14 @@
                     } catch(e) {}
                     
                     console.log('☁️ Usuários sincronizados:', Object.keys(cloudUsers).length);
+                    
+                    // DEBUG: Ver palpites carregados do Firebase
+                    Object.keys(cloudUsers).forEach(nick => {
+                        if (cloudUsers[nick].palpitesCravados) {
+                            console.log(`📋 Palpites de ${nick}:`, cloudUsers[nick].palpitesCravados);
+                        }
+                    });
+                    
                     state.firebaseSynced = true;
                     
                     // Verificar acertos automaticamente após sync
@@ -6117,13 +6133,35 @@
                 cravadoEm: Date.now()
             };
             
-            // Salvar no Firebase
+            // Salvar no Firebase com tratamento de erro
             if (db) {
-                db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(userData.palpitesCravados[rodada]);
+                db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada)
+                    .set(userData.palpitesCravados[rodada])
+                    .then(() => {
+                        console.log('✅ Palpites salvos no Firebase!');
+                        // Também chamar saveUserToCloud para garantir persistência total
+                        saveUserToCloud(state.currentUser, userData);
+                    })
+                    .catch((error) => {
+                        console.error('❌ Erro ao salvar palpites:', error);
+                        alert('⚠️ Erro ao salvar no servidor. Seus palpites foram salvos localmente.');
+                    });
+            }
+            
+            // Backup no localStorage
+            try {
+                const localKey = 'fantasy_palpites_' + state.currentUser;
+                const localPalpites = JSON.parse(localStorage.getItem(localKey) || '{}');
+                localPalpites[rodada] = userData.palpitesCravados[rodada];
+                localStorage.setItem(localKey, JSON.stringify(localPalpites));
+                console.log('💾 Backup local salvo!');
+            } catch (e) {
+                console.error('Erro ao salvar backup local:', e);
             }
             
             alert(`${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
             
+            render(); // Atualizar interface
             closeModalDirect();
         };
         
@@ -6510,10 +6548,19 @@
             const statusFin = ['FT', 'AET', 'PEN', 'AWD', 'WO'];
             const rodadaStr = String(rodada);
             
-            // Função para pegar foto do usuário
+            // DEBUG: Ver palpites de todos
+            console.log('📋 Verificando palpites da galera para rodada', rodada);
+            todosUsuarios.forEach(u => {
+                const palpites = state.users[u]?.palpitesCravados;
+                if (palpites) {
+                    console.log(`   👤 ${u}:`, palpites[rodada] || palpites[rodadaStr] || 'nenhum');
+                }
+            });
+            
+            // Função para pegar foto do usuário (corrigido para teamLogo)
             const getUserPhoto = (username) => {
                 const user = state.users[username];
-                return user?.photo || `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=27272a&color=fff&size=64`;
+                return user?.teamLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=27272a&color=fff&size=64`;
             };
             
             // Função para pegar palpites do usuário (tenta número e string)
@@ -11742,6 +11789,24 @@
                         render();
                     }
                 } catch(e) {}
+            }
+            
+            // Recuperar palpites do backup local (se Firebase não tiver)
+            try {
+                const localKey = 'fantasy_palpites_' + nickname;
+                const localPalpites = JSON.parse(localStorage.getItem(localKey) || '{}');
+                if (Object.keys(localPalpites).length > 0) {
+                    // Mesclar com dados do Firebase (Firebase tem prioridade)
+                    const userPalpites = state.users[nickname]?.palpitesCravados || {};
+                    state.users[nickname] = state.users[nickname] || {};
+                    state.users[nickname].palpitesCravados = {
+                        ...localPalpites,
+                        ...userPalpites // Firebase sobrescreve local
+                    };
+                    console.log('📋 Palpites recuperados do backup local');
+                }
+            } catch(e) {
+                console.error('Erro ao recuperar palpites locais:', e);
             }
             
             // Verificar conquistas do usuário
