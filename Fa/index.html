@@ -799,6 +799,16 @@
             { id: 20, name: "Juan Carlos Osorio", team: "Remo", teamId: 1186, country: "🇨🇴", photo: "https://media.api-sports.io/football/coachs/3049.png" }
         ];
 
+        // Helper: garantir que rodada seja sempre número
+        function toRoundNumber(val) {
+            if (typeof val === 'number') return val;
+            if (typeof val === 'object' && val !== null) {
+                if (typeof val.round === 'number') return val.round;
+                return parseInt(val.round || val) || 1;
+            }
+            return parseInt(val) || 1;
+        }
+
         // ==================== STATE ====================
         let state = {
             screen: 'auth',
@@ -817,6 +827,12 @@
             nextRoundDate: null, // Data/hora do início da próxima rodada
             nextRoundNumber: null, // Número da próxima rodada
             firebaseSynced: false, // Se já sincronizou com Firebase
+            
+            // Sistema de Controle de Rodada (100% Online via Firebase)
+            roundStatus: 'waiting', // 'waiting', 'live', 'finished'
+            roundEndedAt: null, // Timestamp quando todos jogos terminaram
+            substitutionsOpen: true, // Se substituições estão liberadas
+            autoConfirmedAt: null, // Quando foi confirmado automaticamente
             
             // Sistema de Sync
             isSyncingBackground: false, // Se está sincronizando em background
@@ -894,6 +910,8 @@
             // Chat
             chatMessages: [],
             chatInput: '',
+            unreadChatCount: 0, // Notificações de mensagens não lidas no chat do ranking
+            lastReadChatTimestamp: 0, // Último timestamp lido
             // Perfil
             favoriteTeam: null, // Time que torce
             userBio: '', // Bio/descrição
@@ -2031,30 +2049,29 @@
         let FIXTURES_CACHE_TIME = CACHE_SETTINGS.DEFAULT;
         
         // Detectar rodada atual/próxima do campeonato
-        // Sincroniza automaticamente com a API
+        // Sincroniza automaticamente com Firebase (fonte de verdade)
         async function detectCurrentRound() {
             try {
-                // Primeiro tentar cache do Firebase
-                const cacheRes = await fetch(`${FIREBASE_URL}/cache/current_round.json`);
-                const cacheData = await cacheRes.json();
+                // Firebase é a FONTE DE VERDADE para a rodada atual
+                const firebaseRes = await fetch(`${FIREBASE_URL}/gameState.json`);
+                const gameState = await firebaseRes.json();
                 
-                // Cache válido por 15 minutos (mais frequente para detectar mudanças)
-                if (cacheData && cacheData.round && cacheData.updatedAt) {
-                    const cacheAge = Date.now() - cacheData.updatedAt;
-                    if (cacheAge < 15 * 60 * 1000) { // 15 minutos
-                        state.currentRound = cacheData.round;
-                        state.selectedRound = cacheData.round;
-                        console.log(`✅ Rodada atual: ${cacheData.round} (cache)`);
-                        
-                        // Verificar se precisa avançar rodada
-                        await checkRoundTransition(cacheData.round);
-                        return;
-                    }
+                if (gameState && gameState.currentRound) {
+                    // Usar helper para garantir número
+                    const roundNum = toRoundNumber(gameState.currentRound);
+                    
+                    state.currentRound = roundNum;
+                    state.selectedRound = roundNum;
+                    state.substitutionsOpen = gameState.substitutionsOpen !== false;
+                    state.roundStatus = gameState.roundStatus || 'waiting';
+                    console.log(`✅ Rodada atual do Firebase: ${roundNum} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}`);
+                    return;
                 }
                 
-                // Buscar da API - jogos de hoje ou próximos
-                const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+                // Se não tem no Firebase, detectar via API e salvar
+                console.log('🔍 Detectando rodada via API...');
                 
+                const today = new Date().toISOString().split('T')[0];
                 let currentRound = 1;
                 let foundRound = false;
                 
@@ -2120,9 +2137,6 @@
                             if (match) {
                                 currentRound = parseInt(match[1]);
                                 console.log(`🏁 Última rodada jogada: ${currentRound}`);
-                                
-                                // Verificar se a rodada terminou e precisa avançar
-                                await checkRoundTransition(currentRound);
                             }
                         }
                     } catch (e) {
@@ -2130,17 +2144,19 @@
                     }
                 }
                 
-                // Salvar no Firebase
-                await fetch(`${FIREBASE_URL}/cache/current_round.json`, {
-                    method: 'PUT',
-                    body: JSON.stringify({
-                        round: currentRound,
+                // Salvar no Firebase - formato novo
+                if (db) {
+                    await db.ref('gameState').set({
+                        currentRound: currentRound,
+                        substitutionsOpen: true,
+                        roundStatus: 'waiting',
                         updatedAt: Date.now()
-                    })
-                });
+                    });
+                }
                 
                 state.currentRound = currentRound;
                 state.selectedRound = currentRound;
+                state.substitutionsOpen = true;
                 console.log(`✅ Rodada definida: ${currentRound}`);
                 
             } catch (e) {
@@ -2150,68 +2166,7 @@
             }
         }
         
-        // Verificar se a rodada terminou e precisa avançar
-        async function checkRoundTransition(currentRound) {
-            if (!state.liveFixtures || state.liveFixtures.length === 0) return;
-            
-            const now = Date.now();
-            const oneHour = 60 * 60 * 1000;
-            
-            let allGamesFinished = true;
-            let lastGameEndTime = 0;
-            
-            for (const fixture of state.liveFixtures) {
-                const status = fixture.fixture?.status?.short;
-                const matchTime = new Date(fixture.fixture?.date).getTime();
-                
-                // Se tem jogo não finalizado
-                if (!['FT', 'AET', 'PEN', 'CANC', 'ABD', 'AWD', 'WO'].includes(status)) {
-                    allGamesFinished = false;
-                    break;
-                }
-                
-                // Estimar hora de término
-                const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
-                if (estimatedEndTime > lastGameEndTime) {
-                    lastGameEndTime = estimatedEndTime;
-                }
-            }
-            
-            // Se todos os jogos terminaram há mais de 1 hora, avançar para próxima rodada
-            if (allGamesFinished && lastGameEndTime > 0 && (now - lastGameEndTime) >= oneHour) {
-                const nextRound = currentRound + 1;
-                if (nextRound <= 38) {
-                    console.log(`🔄 Rodada ${currentRound} encerrada! Avançando para rodada ${nextRound}...`);
-                    
-                    // Atualizar state
-                    state.currentRound = nextRound;
-                    state.selectedRound = nextRound;
-                    
-                    // Atualizar cache no Firebase
-                    await fetch(`${FIREBASE_URL}/cache/current_round.json`, {
-                        method: 'PUT',
-                        body: JSON.stringify({
-                            round: nextRound,
-                            updatedAt: Date.now(),
-                            previousRoundEndedAt: lastGameEndTime
-                        })
-                    });
-                    
-                    // Recarregar jogos da nova rodada
-                    await fetchLiveFixtures(true);
-                    
-                    render();
-                }
-            }
-        }
-        
-        // Verificação periódica de transição de rodada (a cada 10 minutos)
-        setInterval(async () => {
-            if (state.isConfirmed && state.liveFixtures && state.liveFixtures.length > 0) {
-                console.log('🔄 Verificando transição de rodada...');
-                await detectCurrentRound();
-            }
-        }, 10 * 60 * 1000); // A cada 10 minutos
+        // Remover saveCurrentRoundToFirebase - agora usa db.ref('gameState').update()
         
         // Buscar jogos da rodada - COM CACHE NO FIREBASE
         async function fetchLiveFixtures(forceRefresh = false) {
@@ -2332,6 +2287,9 @@
                 if (typeof verificarAcertosAutomatico === 'function') {
                     setTimeout(() => verificarAcertosAutomatico(), 500);
                 }
+                
+                // Verificar estado do jogo (transição de rodada, trava de substituições)
+                setTimeout(() => updateGameState(), 1000);
                 
                 render();
                 
@@ -3399,97 +3357,93 @@
             return false;
         }
         
-        // Verifica se pode EDITAR ESCALAÇÃO (trocar titulares/reservas, mudar formação)
-        // Liberado 1 hora após todos os jogos da rodada terminarem
-        // Travado 30 minutos antes do primeiro jogo da próxima rodada
+        // ==================== SISTEMA DE CONTROLE DE RODADA (100% ONLINE) ====================
+        
+        // Verifica se pode EDITAR ESCALAÇÃO baseado no estado do Firebase
+        // Liberado: 1 hora após todos os jogos terminarem
+        // Travado: 30 minutos antes do primeiro jogo da próxima rodada
         function canEditTeam() {
-            // Se não tem fixtures carregadas, não pode editar
-            if (!state.liveFixtures || state.liveFixtures.length === 0) {
-                return false;
-            }
-            
-            const now = Date.now();
-            const oneHour = 60 * 60 * 1000; // 1 hora em ms
-            const thirtyMinutes = 30 * 60 * 1000; // 30 minutos em ms
-            
-            // Verificar status dos jogos da rodada atual
-            let hasLiveGames = false;
-            let allGamesFinished = true;
-            let lastGameEndTime = 0;
-            let firstUpcomingGameTime = Infinity;
-            
-            for (const fixture of state.liveFixtures) {
-                const status = fixture.fixture?.status?.short;
-                const matchTime = new Date(fixture.fixture?.date).getTime();
-                
-                // Verificar se tem jogo ao vivo
-                if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
-                    hasLiveGames = true;
-                    allGamesFinished = false;
-                }
-                
-                // Verificar se ainda tem jogo não iniciado
-                if (['NS', 'TBD', 'PST'].includes(status)) {
-                    allGamesFinished = false;
-                    // Encontrar o primeiro jogo a começar
-                    if (matchTime < firstUpcomingGameTime) {
-                        firstUpcomingGameTime = matchTime;
-                    }
-                }
-                
-                // Rastrear quando o último jogo terminou
-                if (['FT', 'AET', 'PEN'].includes(status)) {
-                    // Estimar hora de término: hora do jogo + 2 horas (duração média)
-                    const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
-                    if (estimatedEndTime > lastGameEndTime) {
-                        lastGameEndTime = estimatedEndTime;
-                    }
-                }
-            }
-            
-            // Se tem jogos ao vivo, não pode editar
-            if (hasLiveGames) {
-                return false;
-            }
-            
-            // Se nem todos os jogos terminaram, não pode editar
-            if (!allGamesFinished) {
-                // Mas se o primeiro jogo ainda não começou, verificar se falta mais de 30 minutos
-                if (firstUpcomingGameTime !== Infinity) {
-                    const timeUntilFirstGame = firstUpcomingGameTime - now;
-                    // Se falta mais de 30 minutos para o primeiro jogo, pode editar
-                    if (timeUntilFirstGame > thirtyMinutes) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            
-            // Todos os jogos terminaram - verificar se passou 1 hora
-            if (lastGameEndTime > 0 && (now - lastGameEndTime) < oneHour) {
-                return false; // Ainda não passou 1 hora desde o fim
-            }
-            
-            // Verificar se a próxima rodada está para começar (usando nextRoundDate do Firebase)
-            if (state.nextRoundDate) {
-                const nextRoundTime = new Date(state.nextRoundDate).getTime();
-                const timeUntilNextRound = nextRoundTime - now;
-                
-                // Se falta menos de 30 minutos para a próxima rodada, travar
-                if (timeUntilNextRound > 0 && timeUntilNextRound < thirtyMinutes) {
-                    return false;
-                }
-            }
-            
-            // Pode editar escalação
-            return true;
+            // Usar o estado do Firebase (fonte de verdade)
+            return state.substitutionsOpen === true;
         }
         
         // Função auxiliar para verificar status de edição do time
         function getEditTeamStatus() {
-            if (!state.liveFixtures || state.liveFixtures.length === 0) {
-                return { canEdit: false, reason: 'Carregando jogos...' };
+            if (state.substitutionsOpen) {
+                return { canEdit: true, reason: 'Substituições liberadas' };
+            } else {
+                return { canEdit: false, reason: 'Escalação travada' };
             }
+        }
+        
+        // Escutar estado do jogo do Firebase em tempo real
+        function listenToGameState() {
+            if (!db) return;
+            
+            db.ref('gameState').on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    const oldRound = state.currentRound;
+                    const oldSubsOpen = state.substitutionsOpen;
+                    
+                    // Usar helper para garantir número
+                    const roundNum = toRoundNumber(data.currentRound);
+                    
+                    state.currentRound = roundNum;
+                    state.selectedRound = roundNum;
+                    state.roundStatus = data.roundStatus || 'waiting';
+                    state.roundEndedAt = data.roundEndedAt || null;
+                    state.substitutionsOpen = data.substitutionsOpen !== false; // default true
+                    
+                    console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}`);
+                    
+                    // Log de mudanças importantes
+                    if (oldRound !== state.currentRound) {
+                        console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
+                        // Recarregar jogos da nova rodada
+                        fetchLiveFixtures(true);
+                    }
+                    if (oldSubsOpen !== state.substitutionsOpen) {
+                        console.log(`${state.substitutionsOpen ? '🔓 SUBSTITUIÇÕES LIBERADAS' : '🔒 ESCALAÇÃO TRAVADA'}`);
+                        
+                        // Se travou as substituições, confirmar time automaticamente
+                        if (!state.substitutionsOpen && state.currentUser && !state.isAdmin) {
+                            autoConfirmTeam();
+                        }
+                    }
+                    
+                    // Re-render se houver mudanças significativas
+                    if (oldRound !== state.currentRound || oldSubsOpen !== state.substitutionsOpen) {
+                        render();
+                    }
+                }
+            });
+            
+            console.log('👂 Escutando gameState do Firebase...');
+        }
+        
+        // Confirmar time automaticamente quando trava
+        async function autoConfirmTeam() {
+            if (state.isConfirmed) return; // Já confirmado
+            
+            // Verificar se tem time completo
+            const startersCount = state.starters.filter(p => p).length;
+            const reservesCount = state.reserves.filter(p => p).length;
+            
+            if (startersCount === 11 && reservesCount === 7 && state.coach) {
+                console.log('✅ Confirmando time automaticamente...');
+                state.isConfirmed = true;
+                state.autoConfirmedAt = Date.now();
+                saveState();
+            } else {
+                console.log('⚠️ Time incompleto - não foi confirmado automaticamente');
+                console.log(`   Titulares: ${startersCount}/11, Reservas: ${reservesCount}/7, Técnico: ${state.coach ? 'Sim' : 'Não'}`);
+            }
+        }
+        
+        // Atualizar estado do jogo no Firebase (chamado periodicamente)
+        async function updateGameState() {
+            if (!state.liveFixtures || state.liveFixtures.length === 0) return;
             
             const now = Date.now();
             const oneHour = 60 * 60 * 1000;
@@ -3500,15 +3454,18 @@
             let lastGameEndTime = 0;
             let firstUpcomingGameTime = Infinity;
             
+            // Analisar todos os jogos
             for (const fixture of state.liveFixtures) {
                 const status = fixture.fixture?.status?.short;
                 const matchTime = new Date(fixture.fixture?.date).getTime();
                 
+                // Jogos ao vivo
                 if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
                     hasLiveGames = true;
                     allGamesFinished = false;
                 }
                 
+                // Jogos não iniciados
                 if (['NS', 'TBD', 'PST'].includes(status)) {
                     allGamesFinished = false;
                     if (matchTime < firstUpcomingGameTime) {
@@ -3516,6 +3473,7 @@
                     }
                 }
                 
+                // Jogos finalizados
                 if (['FT', 'AET', 'PEN'].includes(status)) {
                     const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
                     if (estimatedEndTime > lastGameEndTime) {
@@ -3524,40 +3482,85 @@
                 }
             }
             
-            if (hasLiveGames) {
-                return { canEdit: false, reason: 'Jogos em andamento' };
-            }
+            // Determinar novo estado
+            let newRoundStatus = state.roundStatus;
+            let newSubstitutionsOpen = state.substitutionsOpen;
+            let shouldAdvanceRound = false;
             
-            if (!allGamesFinished) {
+            if (hasLiveGames) {
+                // Jogos ao vivo - travar
+                newRoundStatus = 'live';
+                newSubstitutionsOpen = false;
+            } else if (!allGamesFinished) {
+                // Tem jogos não iniciados
                 if (firstUpcomingGameTime !== Infinity) {
                     const timeUntilFirstGame = firstUpcomingGameTime - now;
-                    if (timeUntilFirstGame > thirtyMinutes) {
-                        const mins = Math.floor(timeUntilFirstGame / 60000);
-                        return { canEdit: true, reason: `Liberado (${mins} min até o jogo)` };
+                    
+                    if (timeUntilFirstGame <= thirtyMinutes && timeUntilFirstGame > 0) {
+                        // Falta menos de 30 min - TRAVAR
+                        newRoundStatus = 'waiting';
+                        newSubstitutionsOpen = false;
+                        console.log(`🔒 Faltam ${Math.ceil(timeUntilFirstGame/60000)} min - TRAVANDO`);
+                    } else if (timeUntilFirstGame > thirtyMinutes) {
+                        // Falta mais de 30 min - liberado
+                        newRoundStatus = 'waiting';
+                        newSubstitutionsOpen = true;
                     }
-                    const mins = Math.floor(timeUntilFirstGame / 60000);
-                    return { canEdit: false, reason: `Trava em ${mins} min` };
                 }
-                return { canEdit: false, reason: 'Rodada em andamento' };
-            }
-            
-            if (lastGameEndTime > 0 && (now - lastGameEndTime) < oneHour) {
-                const remaining = Math.ceil((oneHour - (now - lastGameEndTime)) / 60000);
-                return { canEdit: false, reason: `Aguarde ${remaining} min` };
-            }
-            
-            if (state.nextRoundDate) {
-                const nextRoundTime = new Date(state.nextRoundDate).getTime();
-                const timeUntilNextRound = nextRoundTime - now;
+            } else {
+                // Todos os jogos terminaram
+                newRoundStatus = 'finished';
                 
-                if (timeUntilNextRound > 0 && timeUntilNextRound < thirtyMinutes) {
-                    const mins = Math.floor(timeUntilNextRound / 60000);
-                    return { canEdit: false, reason: `Trava em ${mins} min` };
+                if (lastGameEndTime > 0) {
+                    const timeSinceLastGame = now - lastGameEndTime;
+                    
+                    if (timeSinceLastGame >= oneHour) {
+                        // Passou 1 hora - AVANÇAR RODADA e LIBERAR
+                        newSubstitutionsOpen = true;
+                        shouldAdvanceRound = true;
+                        console.log(`🔓 Passou 1 hora desde o fim - LIBERANDO e AVANÇANDO`);
+                    } else {
+                        // Ainda não passou 1 hora
+                        newSubstitutionsOpen = false;
+                        const remaining = Math.ceil((oneHour - timeSinceLastGame) / 60000);
+                        console.log(`⏳ Faltam ${remaining} min para liberar substituições`);
+                    }
                 }
             }
             
-            return { canEdit: true, reason: 'Liberado' };
+            // Atualizar Firebase se houver mudanças
+            const stateChanged = 
+                newRoundStatus !== state.roundStatus || 
+                newSubstitutionsOpen !== state.substitutionsOpen ||
+                shouldAdvanceRound;
+            
+            if (stateChanged && db) {
+                const newRound = shouldAdvanceRound ? state.currentRound + 1 : state.currentRound;
+                
+                console.log('📤 Atualizando gameState no Firebase...');
+                
+                await db.ref('gameState').update({
+                    currentRound: Math.min(newRound, 38),
+                    roundStatus: newRoundStatus,
+                    roundEndedAt: allGamesFinished ? lastGameEndTime : null,
+                    substitutionsOpen: newSubstitutionsOpen,
+                    updatedAt: Date.now()
+                });
+                
+                // Se avançou rodada, recarregar fixtures
+                if (shouldAdvanceRound && newRound <= 38) {
+                    console.log(`🔄 Avançando para rodada ${newRound}...`);
+                    setTimeout(() => fetchLiveFixtures(true), 1000);
+                }
+            }
         }
+        
+        // Verificação periódica do estado do jogo (a cada 1 minuto)
+        setInterval(() => {
+            if (state.currentUser && state.liveFixtures && state.liveFixtures.length > 0) {
+                updateGameState();
+            }
+        }, 60 * 1000); // A cada 1 minuto
 
         // Tempo até o mercado abrir
         function getTimeUntilMarketOpens() {
@@ -3861,23 +3864,115 @@
         function listenToChat() {
             if (!db) return;
             
+            // Carregar último timestamp lido do localStorage
+            const savedLastRead = localStorage.getItem('fantasy_lastReadChat');
+            if (savedLastRead) {
+                state.lastReadChatTimestamp = parseInt(savedLastRead) || 0;
+            }
+            
             // Pegar apenas as últimas 200 mensagens
             db.ref('chat').orderByChild('timestamp').limitToLast(200).on('value', (snapshot) => {
                 const messages = snapshot.val();
+                const previousCount = state.chatMessages.length;
+                
                 if (messages) {
                     state.chatMessages = Object.values(messages).sort((a, b) => a.timestamp - b.timestamp);
+                    
+                    // Contar mensagens não lidas (após o último timestamp lido, de outros usuários)
+                    const unreadMessages = state.chatMessages.filter(m => 
+                        m.timestamp > state.lastReadChatTimestamp && 
+                        m.user !== state.currentUser
+                    );
+                    
+                    // Se está na tela de ranking com chat aberto, marca como lido
+                    if (state.screen === 'ranking') {
+                        state.unreadChatCount = 0;
+                        markChatAsRead();
+                    } else {
+                        state.unreadChatCount = unreadMessages.length;
+                        
+                        // Notificar se tem nova mensagem (e não é a primeira carga)
+                        if (previousCount > 0 && unreadMessages.length > 0) {
+                            const lastMsg = unreadMessages[unreadMessages.length - 1];
+                            // Verificar se é mensagem realmente nova (últimos 10 segundos)
+                            if (Date.now() - lastMsg.timestamp < 10000) {
+                                showChatNotification(lastMsg);
+                            }
+                        }
+                    }
                 } else {
                     state.chatMessages = [];
+                    state.unreadChatCount = 0;
                 }
                 
                 // Atualizar só o chat se estiver na tela de ranking
                 if (state.screen === 'ranking') {
                     updateChatMessages();
+                } else {
+                    // Atualizar badge de notificação na navbar
+                    updateChatBadge();
                 }
             });
             
             // Limpar mensagens com mais de 30 dias (executa uma vez ao carregar)
             cleanOldChatMessages();
+        }
+        
+        // Marcar chat como lido
+        function markChatAsRead() {
+            if (state.chatMessages.length > 0) {
+                const lastTimestamp = state.chatMessages[state.chatMessages.length - 1].timestamp;
+                state.lastReadChatTimestamp = lastTimestamp;
+                localStorage.setItem('fantasy_lastReadChat', lastTimestamp.toString());
+            }
+            state.unreadChatCount = 0;
+            updateChatBadge();
+        }
+        
+        // Atualizar badge de notificação
+        function updateChatBadge() {
+            const badge = document.getElementById('chatNotificationBadge');
+            if (badge) {
+                if (state.unreadChatCount > 0) {
+                    badge.textContent = state.unreadChatCount > 9 ? '9+' : state.unreadChatCount;
+                    badge.classList.remove('hidden');
+                } else {
+                    badge.classList.add('hidden');
+                }
+            }
+        }
+        
+        // Mostrar notificação de nova mensagem
+        function showChatNotification(message) {
+            // Criar elemento de notificação
+            const notification = document.createElement('div');
+            notification.className = 'fixed top-20 right-4 z-50 bg-zinc-800 border border-emerald-500/30 rounded-xl p-4 shadow-2xl animate-fade-in max-w-xs';
+            notification.innerHTML = `
+                <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-sm font-bold flex-shrink-0">
+                        ${message.user?.charAt(0)?.toUpperCase() || '?'}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-emerald-400 text-xs font-bold">${message.user || 'Anônimo'}</p>
+                        <p class="text-white text-sm truncate">${message.text?.substring(0, 50) || ''}${message.text?.length > 50 ? '...' : ''}</p>
+                    </div>
+                    <button onclick="this.parentElement.parentElement.remove()" class="text-zinc-500 hover:text-white">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <button onclick="state.screen='ranking';render();this.parentElement.remove();" class="mt-2 w-full py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 text-xs rounded-lg transition">
+                    Ver no Chat
+                </button>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Remover após 5 segundos
+            setTimeout(() => {
+                if (notification.parentElement) {
+                    notification.remove();
+                }
+            }, 5000);
         }
         
         // Limpar mensagens do chat com mais de 30 dias
@@ -4009,6 +4104,9 @@
 
                 // Escutar ranking da nuvem - FONTE DE VERDADE PARA DADOS DE USUÁRIO
                 try { listenToUsers(); } catch(e) { console.error('Erro listenToUsers:', e); }
+                
+                // Escutar rodada atual do Firebase em tempo real
+                try { listenToGameState(); } catch(e) { console.error('Erro listenToGameState:', e); }
                 
                 // Escutar chat em tempo real
                 try { listenToChat(); } catch(e) { console.error('Erro listenToChat:', e); }
@@ -5375,6 +5473,11 @@
                 
                 saveState();
                 console.log(` Pontuação da Rodada ${round} calculada para todos!`);
+                
+                // Verificar se deve avançar rodada automaticamente
+                setTimeout(() => {
+                    updateGameState();
+                }, 2000);
 
             } catch (e) {
                 console.error('Erro ao atualizar pontuação:', e);
@@ -5753,8 +5856,9 @@
                                     <button onclick="openTeamsModal()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         TIMES
                                     </button>
-                                    <button onclick="goToRanking()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'ranking' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="goToRanking()" class="relative px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'ranking' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
                                         RANKING
+                                        <span id="chatNotificationBadge" class="${state.unreadChatCount > 0 ? '' : 'hidden'} absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 text-white text-xs flex items-center justify-center rounded-full font-bold animate-pulse">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>
                                     </button>
                                     <button onclick="openDoacaoModal()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.modal === 'doacao' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
                                         VAQUINHA
@@ -5809,8 +5913,9 @@
                             <button onclick="openTeamsModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
                             </button>
-                            <button onclick="goToRanking()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'ranking' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                            <button onclick="goToRanking()" class="relative flex flex-col items-center p-2 rounded-xl ${state.screen === 'ranking' ? 'text-white bg-white/10' : 'text-zinc-500'}">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                                ${state.unreadChatCount > 0 ? `<span class="absolute -top-0.5 -right-0.5 w-4 h-4 bg-emerald-500 text-white text-[10px] flex items-center justify-center rounded-full font-bold">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>` : ''}
                             </button>
                             <button onclick="openDoacaoModal()" class="flex flex-col items-center p-2 rounded-xl ${state.modal === 'doacao' ? 'text-white bg-white/10' : 'text-zinc-500'}">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
@@ -5895,6 +6000,12 @@
                                                         ${state.scores[state.selectedRound].players[state.starters[i].id]}
                                                     </div>
                                                 ` : ''}
+                                                <span class="absolute -top-2 -left-1 px-1.5 py-0.5 text-[8px] font-bold rounded ${
+                                                    pos.label === 'GOL' ? 'bg-amber-500 text-black' :
+                                                    ['LD', 'ZAG', 'LE'].includes(pos.label) ? 'bg-blue-500 text-white' :
+                                                    ['VOL', 'MC', 'MEI', 'MD', 'ME'].includes(pos.label) ? 'bg-emerald-500 text-white' :
+                                                    'bg-red-500 text-white'
+                                                }">${pos.label}</span>
                                                 <p class="text-white text-xs font-medium mt-1 bg-black/70 rounded px-2 py-0.5">
                                                     ${state.starters[i].name.split(' ').pop()}
                                                 </p>
@@ -5904,7 +6015,12 @@
                                                 <div class="w-16 h-16 sm:w-20 sm:h-20 mx-auto rounded-full border-2 border-dashed border-white/30 flex items-center justify-center bg-black/20 hover:bg-black/40 transition">
                                                     <svg class="w-7 h-7 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
                                                 </div>
-                                                <p class="text-white/50 text-xs mt-1">${getSlotLabel(i)}</p>
+                                                <span class="inline-block mt-1 px-1.5 py-0.5 text-[8px] font-bold rounded ${
+                                                    pos.label === 'GOL' ? 'bg-amber-500/70 text-black' :
+                                                    ['LD', 'ZAG', 'LE'].includes(pos.label) ? 'bg-blue-500/70 text-white' :
+                                                    ['VOL', 'MC', 'MEI', 'MD', 'ME'].includes(pos.label) ? 'bg-emerald-500/70 text-white' :
+                                                    'bg-red-500/70 text-white'
+                                                }">${pos.label}</span>
                                             </div>
                                         `}
                                     </div>
@@ -8984,19 +9100,19 @@
             const user = state.users[state.viewingUser];
             if (!user) return '';
             
-            // Posições padrão 4-3-3 para visualização
+            // Posições padrão 4-3-3 para visualização (INVERTIDO: atacantes em cima)
             const viewPositions = [
-                { top: '8%', left: '50%' },
-                { top: '28%', left: '15%' },
-                { top: '28%', left: '38%' },
-                { top: '28%', left: '62%' },
-                { top: '28%', left: '85%' },
-                { top: '52%', left: '25%' },
-                { top: '52%', left: '50%' },
-                { top: '52%', left: '75%' },
-                { top: '76%', left: '20%' },
-                { top: '76%', left: '50%' },
-                { top: '76%', left: '80%' },
+                { top: '88%', left: '50%', label: 'GOL' },   // GOL
+                { top: '70%', left: '15%', label: 'LD' },    // LD
+                { top: '70%', left: '38%', label: 'ZAG' },   // ZAG
+                { top: '70%', left: '62%', label: 'ZAG' },   // ZAG
+                { top: '70%', left: '85%', label: 'LE' },    // LE
+                { top: '46%', left: '25%', label: 'VOL' },   // VOL
+                { top: '46%', left: '50%', label: 'MEI' },   // MEI
+                { top: '46%', left: '75%', label: 'VOL' },   // VOL
+                { top: '20%', left: '20%', label: 'PE' },    // PE
+                { top: '20%', left: '50%', label: 'CA' },    // CA
+                { top: '20%', left: '80%', label: 'PD' },    // PD
             ];
 
             return `
@@ -9953,61 +10069,14 @@
                             <!-- Chat do Draft -->
                             <div class="card rounded-xl overflow-hidden flex flex-col" style="height: 70vh;">
                                 <div class="p-4 border-b border-purple-500/20 bg-purple-500/10 flex items-center gap-3">
-                                    <span class="text-2xl"></span>
+                                    <span class="text-2xl">💬</span>
                                     <div>
                                         <h3 class="font-bold text-white text-lg">Chat do Draft</h3>
-                                        <p class="text-purple-400 text-sm">Converse com os outros participantes</p>
+                                        <p class="text-purple-400 text-sm">${state.draftStarted ? 'Converse com os outros participantes' : '🔒 Aguardando início do Draft'}</p>
                                     </div>
                                 </div>
                                 
-                                <!-- Mensagens -->
-                                <div id="userDraftChatFull" class="flex-1 overflow-y-auto p-4 space-y-4">
-                                    ${(state.draftChatMessages || []).length === 0 ? 
-                                        `<div class="text-center py-8">
-                                            <p class="text-zinc-600 text-5xl mb-3"></p>
-                                            <p class="text-zinc-500 text-sm">Nenhuma mensagem ainda</p>
-                                            <p class="text-zinc-600 text-xs">Seja o primeiro a mandar um salve!</p>
-                                        </div>` :
-                                        (state.draftChatMessages || []).map(m => {
-                                            const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                                            const isAdmin = m.user === 'admin';
-                                            const isMe = m.user === state.currentUser;
-                                            return `
-                                                <div class="flex gap-3 ${isMe ? 'flex-row-reverse' : ''}">
-                                                    <div class="w-10 h-10 rounded-full ${isAdmin ? 'bg-red-500' : isMe ? 'bg-emerald-600' : 'bg-zinc-700'} flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
-                                                        ${isAdmin ? '' : (m.user || 'U')[0].toUpperCase()}
-                                                    </div>
-                                                    <div class="flex-1 min-w-0 ${isMe ? 'text-right' : ''}">
-                                                        <div class="flex items-center gap-2 mb-1 ${isMe ? 'justify-end' : ''}">
-                                                            <span class="text-sm font-medium ${isAdmin ? 'text-red-400' : isMe ? 'text-emerald-400' : 'text-zinc-400'}">
-                                                                ${isAdmin ? ' ADMIN' : '@' + m.user}
-                                                            </span>
-                                                            <span class="text-zinc-600 text-xs">${time}</span>
-                                                        </div>
-                                                        <div class="inline-block ${isMe ? 'bg-emerald-600/20 border-emerald-500/30' : isAdmin ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-800'} rounded-xl px-4 py-2.5 border border-transparent max-w-[85%]">
-                                                            <p class="text-white text-sm break-words text-left">${escapeHtml(m.text)}</p>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            `;
-                                        }).join('')
-                                    }
-                                </div>
-                                
-                                <!-- Input -->
-                                <div class="p-4 border-t border-zinc-800 bg-zinc-900/50">
-                                    <div class="flex gap-3">
-                                        <input type="text" id="userDraftChatInputFull" 
-                                            placeholder="Digite sua mensagem..." 
-                                            class="flex-1 px-4 py-3 input-dark rounded-xl text-white"
-                                            onkeypress="if(event.key === 'Enter') sendUserDraftMessageFull()"
-                                            maxlength="200">
-                                        <button onclick="sendUserDraftMessageFull()" 
-                                            class="px-6 py-3 bg-purple-500 hover:bg-purple-400 text-white rounded-xl font-medium transition">
-                                            Enviar
-                                        </button>
-                                    </div>
-                                </div>
+                                ${state.draftStarted ? renderDraftChatFullContent() : renderDraftChatFullLocked()}
                             </div>
                             
                             <!-- Info e Dicas -->
@@ -10390,6 +10459,77 @@
                         ${state.adminTab === 'competition' ? `
                             <div class="space-y-4">
                                 <h3 class="text-xl font-bold text-white">🏆 Gerenciar Competição</h3>
+                                
+                                <!-- Controle de Rodada -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border border-purple-500/30">
+                                    <h4 class="text-purple-400 font-medium mb-4">🔢 Controle de Rodada</h4>
+                                    <div class="flex items-center gap-4 mb-4">
+                                        <div class="flex-1">
+                                            <p class="text-zinc-500 text-sm">Rodada Atual</p>
+                                            <p class="text-4xl font-bold text-white">${state.currentRound}</p>
+                                        </div>
+                                        <div class="flex gap-2">
+                                            <button onclick="adminChangeRound(${state.currentRound - 1})" 
+                                                ${state.currentRound <= 1 ? 'disabled' : ''}
+                                                class="w-12 h-12 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xl disabled:opacity-50 disabled:cursor-not-allowed">
+                                                ←
+                                            </button>
+                                            <button onclick="adminChangeRound(${state.currentRound + 1})" 
+                                                ${state.currentRound >= 38 ? 'disabled' : ''}
+                                                class="w-12 h-12 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xl disabled:opacity-50 disabled:cursor-not-allowed">
+                                                →
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 mb-3">
+                                        <input type="number" id="adminRoundInput" min="1" max="38" value="${typeof state.currentRound === 'number' ? state.currentRound : 1}"
+                                            class="w-20 px-3 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-center">
+                                        <button onclick="adminChangeRound(parseInt(document.getElementById('adminRoundInput').value))" 
+                                            class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium">
+                                            Ir para Rodada
+                                        </button>
+                                        <button onclick="adminResetGameState()" 
+                                            class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium">
+                                            🔧 Corrigir Firebase
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Status dos jogos -->
+                                    <div class="bg-zinc-800 rounded-lg p-3 mb-3">
+                                        <p class="text-zinc-400 text-xs mb-1">Status da Rodada ${typeof state.currentRound === 'number' ? state.currentRound : toRoundNumber(state.currentRound)}:</p>
+                                        <div class="flex items-center gap-4 text-sm">
+                                            <span class="text-white">${state.liveFixtures?.length || 0} jogos</span>
+                                            <span class="text-emerald-400">${state.liveFixtures?.filter(f => ['FT','AET','PEN'].includes(f.fixture?.status?.short)).length || 0} finalizados</span>
+                                            <span class="text-red-400">${state.liveFixtures?.filter(f => ['1H','2H','HT','LIVE','ET'].includes(f.fixture?.status?.short)).length || 0} ao vivo</span>
+                                            <span class="text-zinc-500">${state.liveFixtures?.filter(f => ['NS','TBD'].includes(f.fixture?.status?.short)).length || 0} não iniciados</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <p class="text-zinc-600 text-xs">A rodada avança automaticamente 1h após o último jogo terminar. Todos usuários são sincronizados via Firebase.</p>
+                                </div>
+                                
+                                <!-- Controle de Substituições -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border ${state.substitutionsOpen ? 'border-emerald-500/30' : 'border-red-500/30'}">
+                                    <h4 class="${state.substitutionsOpen ? 'text-emerald-400' : 'text-red-400'} font-medium mb-4">
+                                        ${state.substitutionsOpen ? '🔓 Substituições LIBERADAS' : '🔒 Escalação TRAVADA'}
+                                    </h4>
+                                    
+                                    <div class="flex flex-wrap gap-2 mb-3">
+                                        <button onclick="adminToggleSubstitutions(true)" 
+                                            class="px-4 py-2 ${state.substitutionsOpen ? 'bg-emerald-600' : 'bg-zinc-800 hover:bg-emerald-600'} text-white rounded-lg text-sm font-medium">
+                                            🔓 Liberar Substituições
+                                        </button>
+                                        <button onclick="adminToggleSubstitutions(false)" 
+                                            class="px-4 py-2 ${!state.substitutionsOpen ? 'bg-red-600' : 'bg-zinc-800 hover:bg-red-600'} text-white rounded-lg text-sm font-medium">
+                                            🔒 Travar Escalações
+                                        </button>
+                                    </div>
+                                    
+                                    <p class="text-zinc-600 text-xs">
+                                        <strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera 1h após o último jogo.<br>
+                                        <strong>Manual:</strong> Use os botões acima para controlar manualmente.
+                                    </p>
+                                </div>
                                 
                                 <!-- Títulos Disponíveis -->
                                 <div class="bg-zinc-900 rounded-xl p-6 border border-amber-500/30">
@@ -11173,48 +11313,14 @@
                             <!-- Chat do Draft -->
                             <div class="card rounded-xl overflow-hidden flex flex-col" style="height: 300px;">
                                 <div class="p-3 border-b border-zinc-800 flex items-center gap-2 bg-zinc-800/50">
-                                    <span class="text-lg"></span>
+                                    <span class="text-lg">💬</span>
                                     <h3 class="font-bold text-white text-sm">CHAT DO DRAFT</h3>
-                                    <span class="text-zinc-500 text-xs ml-auto">${Object.keys(state.users).filter(n => n !== 'admin').length} participantes</span>
+                                    ${state.draftStarted ? 
+                                        `<span class="text-zinc-500 text-xs ml-auto">${Object.keys(state.users).filter(n => n !== 'admin').length} participantes</span>` : 
+                                        '<span class="text-zinc-500 text-xs ml-auto">🔒 Bloqueado</span>'}
                                 </div>
                                 
-                                <!-- Mensagens -->
-                                <div id="draftChatMessages" class="flex-1 overflow-y-auto p-3 space-y-2">
-                                    ${(state.draftChatMessages || []).length === 0 ? 
-                                        `<p class="text-zinc-600 text-center text-xs py-4">Chat do Draft - Converse com os participantes! </p>` :
-                                        (state.draftChatMessages || []).map(m => {
-                                            const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                                            const isAdmin = m.user === 'admin';
-                                            return `
-                                                <div class="flex gap-2">
-                                                    <div onclick="${!isAdmin ? `viewProfile('${m.user}')` : ''}" class="w-6 h-6 rounded-full ${isAdmin ? 'bg-red-500' : 'bg-zinc-700 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition'} flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-                                                        ${isAdmin ? '' : (m.user || 'U')[0].toUpperCase()}
-                                                    </div>
-                                                    <div class="flex-1 min-w-0">
-                                                        <div class="flex items-center gap-2">
-                                                            <span onclick="${!isAdmin ? `viewProfile('${m.user}')` : ''}" class="text-xs font-medium ${isAdmin ? 'text-red-400' : 'text-zinc-400 cursor-pointer hover:underline'}">@${m.user}</span>
-                                                            <span class="text-zinc-600 text-xs">${time}</span>
-                                                        </div>
-                                                        <p class="text-white text-sm break-words">${escapeHtml(m.text)}</p>
-                                                    </div>
-                                                </div>
-                                            `;
-                                        }).join('')
-                                    }
-                                </div>
-                                
-                                <!-- Input -->
-                                <div class="p-2 border-t border-zinc-800 flex gap-2">
-                                    <input type="text" id="draftChatInput" 
-                                        placeholder="Digite uma mensagem..." 
-                                        class="flex-1 px-3 py-2 input-dark rounded-lg text-white text-sm"
-                                        onkeypress="if(event.key === 'Enter') sendDraftMessage()"
-                                        maxlength="200">
-                                    <button onclick="sendDraftMessage()" 
-                                        class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium transition">
-                                        Enviar
-                                    </button>
-                                </div>
+                                ${state.draftStarted ? renderDraftChatContent() : renderDraftChatLocked()}
                             </div>
                             
                             <!-- Ações do Admin -->
@@ -11992,35 +12098,36 @@
         }
         
         // Posições visuais no campo por formação
+        // INVERTIDO: Atacantes em cima, Defesa embaixo (visão tradicional)
         function getFieldPositions() {
             if (state.formation === '4-4-2') {
                 return [
-                    { top: '10%', left: '50%' },   // 0: GOL
-                    { top: '28%', left: '15%' },  // 1: LD
-                    { top: '28%', left: '38%' },  // 2: ZAG
-                    { top: '28%', left: '62%' },  // 3: ZAG
-                    { top: '28%', left: '85%' },  // 4: LE
-                    { top: '52%', left: '15%' },  // 5: MD
-                    { top: '52%', left: '38%' },  // 6: MC
-                    { top: '52%', left: '62%' },  // 7: MC
-                    { top: '52%', left: '85%' },  // 8: ME
-                    { top: '78%', left: '35%' },  // 9: ATA
-                    { top: '78%', left: '65%' },  // 10: ATA
+                    { top: '88%', left: '50%', label: 'GOL' },   // 0: GOL
+                    { top: '70%', left: '15%', label: 'LD' },   // 1: LD
+                    { top: '70%', left: '38%', label: 'ZAG' },  // 2: ZAG
+                    { top: '70%', left: '62%', label: 'ZAG' },  // 3: ZAG
+                    { top: '70%', left: '85%', label: 'LE' },   // 4: LE
+                    { top: '46%', left: '15%', label: 'MD' },   // 5: MD
+                    { top: '46%', left: '38%', label: 'MC' },   // 6: MC
+                    { top: '46%', left: '62%', label: 'MC' },   // 7: MC
+                    { top: '46%', left: '85%', label: 'ME' },   // 8: ME
+                    { top: '20%', left: '35%', label: 'ATA' },  // 9: ATA
+                    { top: '20%', left: '65%', label: 'ATA' },  // 10: ATA
                 ];
             }
             // 4-3-3 (padrão)
             return [
-                { top: '10%', left: '50%' },   // 0: GOL
-                { top: '28%', left: '15%' },  // 1: LD
-                { top: '28%', left: '38%' },  // 2: ZAG
-                { top: '28%', left: '62%' },  // 3: ZAG
-                { top: '28%', left: '85%' },  // 4: LE
-                { top: '52%', left: '25%' },  // 5: MC
-                { top: '52%', left: '50%' },  // 6: MEI
-                { top: '52%', left: '75%' },  // 7: MC
-                { top: '78%', left: '20%' },  // 8: PE
-                { top: '78%', left: '50%' },  // 9: ATA
-                { top: '78%', left: '80%' },  // 10: PD
+                { top: '88%', left: '50%', label: 'GOL' },   // 0: GOL
+                { top: '70%', left: '15%', label: 'LD' },   // 1: LD
+                { top: '70%', left: '38%', label: 'ZAG' },  // 2: ZAG
+                { top: '70%', left: '62%', label: 'ZAG' },  // 3: ZAG
+                { top: '70%', left: '85%', label: 'LE' },   // 4: LE
+                { top: '46%', left: '25%', label: 'VOL' },  // 5: VOL
+                { top: '46%', left: '50%', label: 'MEI' },  // 6: MEI
+                { top: '46%', left: '75%', label: 'VOL' },  // 7: VOL
+                { top: '20%', left: '20%', label: 'PE' },   // 8: PE
+                { top: '20%', left: '50%', label: 'CA' },   // 9: CA
+                { top: '20%', left: '80%', label: 'PD' },   // 10: PD
             ];
         }
 
@@ -12437,18 +12544,24 @@
             const rememberCheckbox = document.getElementById('rememberDevice');
             const shouldRemember = rememberCheckbox ? rememberCheckbox.checked : false;
             
-            if (shouldRemember) {
+            // Pegar a senha do input (mais confiável que userData.password)
+            const passwordInput = document.getElementById('password');
+            const typedPassword = passwordInput ? passwordInput.value : '';
+            const passwordToSave = typedPassword || userData.password || '';
+            
+            if (shouldRemember && passwordToSave) {
                 // Salvar credenciais para login automático
                 localStorage.setItem('fantasyRememberDevice', 'true');
                 localStorage.setItem('fantasyRememberUser', nickname);
-                localStorage.setItem('fantasyRememberPass', btoa(userData.password || '')); // Encode básico
-                console.log('🔐 Dispositivo será lembrado');
-            } else {
-                // Limpar credenciais salvas
+                localStorage.setItem('fantasyRememberPass', btoa(passwordToSave));
+                console.log('🔐 Dispositivo lembrado para:', nickname);
+            } else if (!shouldRemember) {
+                // Usuário desmarcou - limpar credenciais
                 localStorage.removeItem('fantasyRememberDevice');
                 localStorage.removeItem('fantasyRememberUser');
                 localStorage.removeItem('fantasyRememberPass');
             }
+            // Se não tem checkbox (ex: login automático), manter credenciais existentes
             
             state.currentUser = nickname;
             state.isAdmin = false;
@@ -12462,7 +12575,11 @@
             state.scores = userData.scores || {};
             state.favoriteTeam = userData.favoriteTeam || null;
             state.userBio = userData.userBio || '';
-            state.screen = userData.teamName ? 'lineup' : 'createTeam';
+            
+            // Verificar se tem time: pelo nome OU se já tem jogadores escalados
+            const hasTeam = userData.teamName || 
+                           (userData.starters && userData.starters.filter(s => s).length > 0);
+            state.screen = hasTeam ? 'lineup' : 'createTeam';
             
             // Limpar campos temporários do login
             state.tempNickname = '';
@@ -13360,11 +13477,11 @@
         
         // Mapeamento de slots titulares para categorias
         function getSlotCategory(slotIndex) {
-            // Slots: 0=GOL, 1-4=DEF, 5-8=MEI, 9-10=ATA
+            // Slots: 0=GOL, 1-4=DEF, 5-7=MEI, 8-10=ATA (PE, CA, PD)
             if (slotIndex === 0) return 'GOL';
             if (slotIndex >= 1 && slotIndex <= 4) return 'DEF';
-            if (slotIndex >= 5 && slotIndex <= 8) return 'MEI';
-            if (slotIndex >= 9 && slotIndex <= 10) return 'ATA';
+            if (slotIndex >= 5 && slotIndex <= 7) return 'MEI';
+            if (slotIndex >= 8 && slotIndex <= 10) return 'ATA';
             return 'ANY';
         }
         
@@ -13992,6 +14109,7 @@
         window.syncScores = syncRoundScores;
         window.fetchLiveFixtures = fetchLiveFixtures;
         window.detectCurrentRound = detectCurrentRound;
+        window.updateGameState = updateGameState;
         window.listenToUsers = listenToUsers;
         
         // Atualizar pontuações de TODOS os usuários
@@ -14029,6 +14147,9 @@
 
         window.goToRanking = function() {
             state.screen = 'ranking';
+            
+            // Marcar mensagens do chat como lidas
+            markChatAsRead();
             
             // Atualizar dados de todos os usuários do Firebase
             listenToUsers();
@@ -14379,6 +14500,134 @@
         };
         
         // ==================== CHAT DO DRAFT ====================
+        
+        // Renderizar conteúdo do chat do draft quando aberto
+        function renderDraftChatContent() {
+            const messages = state.draftChatMessages || [];
+            
+            const messagesHtml = messages.length === 0 ? 
+                '<p class="text-zinc-600 text-center text-xs py-4">Chat do Draft - Converse com os participantes! 💬</p>' :
+                messages.map(m => {
+                    const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    const isAdmin = m.user === 'admin';
+                    return `
+                        <div class="flex gap-2">
+                            <div onclick="${!isAdmin ? `viewProfile('${m.user}')` : ''}" class="w-6 h-6 rounded-full ${isAdmin ? 'bg-red-500' : 'bg-zinc-700 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition'} flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                                ${isAdmin ? '👑' : (m.user || 'U')[0].toUpperCase()}
+                            </div>
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span onclick="${!isAdmin ? `viewProfile('${m.user}')` : ''}" class="text-xs font-medium ${isAdmin ? 'text-red-400' : 'text-zinc-400 cursor-pointer hover:underline'}">@${m.user}</span>
+                                    <span class="text-zinc-600 text-xs">${time}</span>
+                                </div>
+                                <p class="text-white text-sm break-words">${escapeHtml(m.text)}</p>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            
+            return `
+                <div id="draftChatMessages" class="flex-1 overflow-y-auto p-3 space-y-2">
+                    ${messagesHtml}
+                </div>
+                <div class="p-2 border-t border-zinc-800 flex gap-2">
+                    <input type="text" id="draftChatInput" 
+                        placeholder="Digite uma mensagem..." 
+                        class="flex-1 px-3 py-2 input-dark rounded-lg text-white text-sm"
+                        onkeypress="if(event.key === 'Enter') sendDraftMessage()"
+                        maxlength="200">
+                    <button onclick="sendDraftMessage()" 
+                        class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium transition">
+                        Enviar
+                    </button>
+                </div>
+            `;
+        }
+        
+        // Renderizar chat do draft bloqueado
+        function renderDraftChatLocked() {
+            return `
+                <div class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+                    <div class="w-16 h-16 rounded-full bg-zinc-800 flex items-center justify-center mb-4">
+                        <span class="text-3xl">🔒</span>
+                    </div>
+                    <h4 class="text-white font-bold mb-2">Chat Bloqueado</h4>
+                    <p class="text-zinc-500 text-sm">O chat será liberado quando o Admin iniciar o Draft.</p>
+                    <p class="text-zinc-600 text-xs mt-2">Aguarde o início do evento...</p>
+                </div>
+            `;
+        }
+        
+        // Renderizar conteúdo do chat do draft full (tela de draft do usuário)
+        function renderDraftChatFullContent() {
+            const messages = state.draftChatMessages || [];
+            
+            const messagesHtml = messages.length === 0 ? 
+                `<div class="text-center py-8">
+                    <p class="text-zinc-600 text-5xl mb-3">💬</p>
+                    <p class="text-zinc-500 text-sm">Nenhuma mensagem ainda</p>
+                    <p class="text-zinc-600 text-xs">Seja o primeiro a mandar um salve!</p>
+                </div>` :
+                messages.map(m => {
+                    const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    const isAdmin = m.user === 'admin';
+                    const isMe = m.user === state.currentUser;
+                    return `
+                        <div class="flex gap-3 ${isMe ? 'flex-row-reverse' : ''}">
+                            <div class="w-10 h-10 rounded-full ${isAdmin ? 'bg-red-500' : isMe ? 'bg-emerald-600' : 'bg-zinc-700'} flex items-center justify-center text-white text-sm font-bold flex-shrink-0">
+                                ${isAdmin ? '👑' : (m.user || 'U')[0].toUpperCase()}
+                            </div>
+                            <div class="flex-1 min-w-0 ${isMe ? 'text-right' : ''}">
+                                <div class="flex items-center gap-2 mb-1 ${isMe ? 'justify-end' : ''}">
+                                    <span class="text-sm font-medium ${isAdmin ? 'text-red-400' : isMe ? 'text-emerald-400' : 'text-zinc-400'}">
+                                        ${isAdmin ? '👑 ADMIN' : '@' + m.user}
+                                    </span>
+                                    <span class="text-zinc-600 text-xs">${time}</span>
+                                </div>
+                                <div class="inline-block ${isMe ? 'bg-emerald-600/20 border-emerald-500/30' : isAdmin ? 'bg-red-500/10 border-red-500/20' : 'bg-zinc-800'} rounded-xl px-4 py-2.5 border border-transparent max-w-[85%]">
+                                    <p class="text-white text-sm break-words text-left">${escapeHtml(m.text)}</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            
+            return `
+                <div id="userDraftChatFull" class="flex-1 overflow-y-auto p-4 space-y-4">
+                    ${messagesHtml}
+                </div>
+                <div class="p-4 border-t border-zinc-800 bg-zinc-900/50">
+                    <div class="flex gap-3">
+                        <input type="text" id="userDraftChatInputFull" 
+                            placeholder="Digite sua mensagem..." 
+                            class="flex-1 px-4 py-3 input-dark rounded-xl text-white"
+                            onkeypress="if(event.key === 'Enter') sendUserDraftMessageFull()"
+                            maxlength="200">
+                        <button onclick="sendUserDraftMessageFull()" 
+                            class="px-6 py-3 bg-purple-500 hover:bg-purple-400 text-white rounded-xl font-medium transition">
+                            Enviar
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Renderizar chat do draft full bloqueado
+        function renderDraftChatFullLocked() {
+            return `
+                <div class="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                    <div class="w-24 h-24 rounded-full bg-zinc-800/50 flex items-center justify-center mb-6">
+                        <span class="text-5xl">🔒</span>
+                    </div>
+                    <h4 class="text-white font-bold text-xl mb-3">Chat Bloqueado</h4>
+                    <p class="text-zinc-400 text-sm mb-2">O chat do Draft será liberado quando o Admin iniciar o evento.</p>
+                    <p class="text-zinc-600 text-xs">Aguarde o início do Draft para poder conversar com os outros participantes...</p>
+                    <div class="mt-6 px-4 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                        <p class="text-purple-400 text-sm">⏳ Aguardando Admin...</p>
+                    </div>
+                </div>
+            `;
+        }
         
         // Debounce para busca do draft
         let draftSearchTimeout = null;
@@ -15842,6 +16091,124 @@
             return prices[pos] || 10;
         }
         
+        // Admin: Mudar rodada manualmente
+        window.adminChangeRound = async function(newRound) {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode mudar a rodada!');
+            }
+            
+            // Garantir que seja número
+            newRound = parseInt(newRound) || 1;
+            
+            if (newRound < 1 || newRound > 38) {
+                return alert('Rodada inválida! Deve ser entre 1 e 38.');
+            }
+            
+            if (!confirm(`Deseja mudar para a RODADA ${newRound}?\n\nTodos os usuários serão atualizados automaticamente.\nSubstituições serão LIBERADAS.`)) {
+                return;
+            }
+            
+            console.log(`🔄 Admin mudando rodada: ${state.currentRound} → ${newRound}`);
+            
+            // Salvar no Firebase com formato correto - número puro
+            if (db) {
+                await db.ref('gameState').set({
+                    currentRound: newRound, // Número puro
+                    substitutionsOpen: true,
+                    roundStatus: 'waiting',
+                    updatedAt: Date.now()
+                });
+            }
+            
+            // Atualizar state local imediatamente
+            state.currentRound = newRound;
+            state.selectedRound = newRound;
+            state.substitutionsOpen = true;
+            
+            // Limpar cache de fixtures
+            try {
+                await fetch(`${FIREBASE_URL}/cache/fixtures_round_${newRound}.json`, { method: 'DELETE' });
+            } catch (e) {}
+            
+            // Recarregar jogos da nova rodada
+            await fetchLiveFixtures(true);
+            
+            alert(`✅ Rodada alterada para ${newRound}!\nSubstituições LIBERADAS.`);
+            render();
+        };
+        
+        // Admin: Travar/Liberar substituições manualmente
+        window.adminToggleSubstitutions = async function(open) {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode controlar substituições!');
+            }
+            
+            const action = open ? 'LIBERAR' : 'TRAVAR';
+            if (!confirm(`Deseja ${action} as substituições para TODOS os usuários?`)) {
+                return;
+            }
+            
+            console.log(`${open ? '🔓' : '🔒'} Admin ${action.toLowerCase()}ndo substituições`);
+            
+            // Salvar no Firebase (todos receberão via listener)
+            if (db) {
+                await db.ref('gameState').update({
+                    substitutionsOpen: open,
+                    updatedAt: Date.now()
+                });
+            }
+            
+            state.substitutionsOpen = open;
+            alert(`✅ Substituições ${open ? 'LIBERADAS' : 'TRAVADAS'}!`);
+            render();
+        };
+        
+        // Admin: Resetar gameState no Firebase (corrigir bugs)
+        window.adminResetGameState = async function() {
+            if (!state.isAdmin) {
+                return alert('Apenas o admin pode fazer isso!');
+            }
+            
+            const roundInput = prompt('Digite o número da rodada atual (1-38):', '2');
+            if (!roundInput) return;
+            
+            const roundNum = parseInt(roundInput);
+            if (isNaN(roundNum) || roundNum < 1 || roundNum > 38) {
+                return alert('Rodada inválida!');
+            }
+            
+            if (!confirm(`Isso vai RESETAR o gameState do Firebase para:\n\nRodada: ${roundNum}\nSubstituições: Liberadas\n\nContinuar?`)) {
+                return;
+            }
+            
+            console.log(`🔧 Resetando gameState para rodada ${roundNum}...`);
+            
+            // Deletar e recriar com formato correto
+            if (db) {
+                await db.ref('gameState').set({
+                    currentRound: roundNum, // NÚMERO PURO
+                    substitutionsOpen: true,
+                    roundStatus: 'waiting',
+                    updatedAt: Date.now()
+                });
+            }
+            
+            state.currentRound = roundNum;
+            state.selectedRound = roundNum;
+            state.substitutionsOpen = true;
+            
+            // Limpar cache
+            try {
+                await fetch(`${FIREBASE_URL}/cache/fixtures_round_${roundNum}.json`, { method: 'DELETE' });
+            } catch (e) {}
+            
+            // Recarregar jogos
+            await fetchLiveFixtures(true);
+            
+            alert(`✅ gameState corrigido!\nRodada: ${roundNum}\nSubstituições: Liberadas`);
+            render();
+        };
+        
         // Criar novo título
         window.adminCreateTitle = function() {
             const id = document.getElementById('newTitleId')?.value?.trim();
@@ -16642,15 +17009,18 @@
         }
 
         window.logout = function(forgetDevice = false) {
-            // Se forgetDevice é true ou se confirmar, limpa credenciais
+            // Se forgetDevice é true, limpa credenciais do "lembrar dispositivo"
             if (forgetDevice) {
                 localStorage.removeItem('fantasyRememberDevice');
                 localStorage.removeItem('fantasyRememberUser');
                 localStorage.removeItem('fantasyRememberPass');
-                console.log('🔓 Credenciais removidas');
+                console.log('🔓 Credenciais de "lembrar dispositivo" removidas');
             }
             
+            // Salvar dados do usuário ANTES de deslogar
             saveState();
+            
+            // Limpar sessão atual
             state.currentUser = null;
             state.teamName = '';
             state.teamLogo = null;
@@ -16660,6 +17030,13 @@
             state.isConfirmed = false;
             state.scores = {};
             state.screen = 'auth';
+            
+            // Limpar currentUser do localStorage (mas manter credenciais de "lembrar dispositivo")
+            localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
+                currentUser: null
+            }));
+            
+            console.log('👋 Logout realizado');
             render();
         };
         
@@ -16680,18 +17057,38 @@
             const savedUser = localStorage.getItem('fantasyRememberUser');
             const savedPass = localStorage.getItem('fantasyRememberPass');
             
+            console.log('🔐 Verificando login automático...');
+            console.log('   Remember:', shouldRemember, '| User:', savedUser, '| Pass:', savedPass ? '***' : 'vazio');
+            
             if (!shouldRemember || !savedUser || !savedPass) {
+                console.log('❌ Credenciais não salvas');
                 return false;
             }
             
             console.log('🔐 Tentando login automático para:', savedUser);
             
-            const password = atob(savedPass); // Decode
+            let password;
+            try {
+                password = atob(savedPass); // Decode
+            } catch (e) {
+                console.log('❌ Erro ao decodificar senha');
+                localStorage.removeItem('fantasyRememberDevice');
+                localStorage.removeItem('fantasyRememberUser');
+                localStorage.removeItem('fantasyRememberPass');
+                return false;
+            }
             
-            // Buscar do Firebase
+            // Buscar do Firebase com timeout
             if (db) {
                 try {
-                    const snapshot = await db.ref('users/' + savedUser).once('value');
+                    // Timeout de 5 segundos
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Timeout')), 5000)
+                    );
+                    
+                    const firebasePromise = db.ref('users/' + savedUser).once('value');
+                    
+                    const snapshot = await Promise.race([firebasePromise, timeoutPromise]);
                     const userData = snapshot.val();
                     
                     if (userData && userData.password === password) {
@@ -16713,7 +17110,11 @@
                         state.scores = userData.scores || {};
                         state.favoriteTeam = userData.favoriteTeam || null;
                         state.userBio = userData.userBio || '';
-                        state.screen = userData.teamName ? 'lineup' : 'createTeam';
+                        
+                        // Verificar se tem time: pelo nome OU se já tem jogadores escalados
+                        const hasTeam = userData.teamName || 
+                                       (userData.starters && userData.starters.filter(s => s).length > 0);
+                        state.screen = hasTeam ? 'lineup' : 'createTeam';
                         
                         console.log('✅ Login automático bem sucedido!');
                         
@@ -16725,18 +17126,21 @@
                         
                         return true;
                     } else {
-                        console.log('⚠️ Senha alterada ou usuário não encontrado, limpando credenciais salvas');
+                        console.log('⚠️ Senha alterada ou usuário não encontrado');
                         localStorage.removeItem('fantasyRememberDevice');
                         localStorage.removeItem('fantasyRememberUser');
                         localStorage.removeItem('fantasyRememberPass');
                         return false;
                     }
                 } catch (e) {
-                    console.error('Erro no login automático:', e);
+                    console.error('❌ Erro no login automático:', e.message);
+                    // Não limpar credenciais em caso de timeout/erro de rede
+                    // Usuário pode tentar de novo
                     return false;
                 }
             }
             
+            console.log('⚠️ Firebase não disponível');
             return false;
         }
         
@@ -16749,10 +17153,81 @@
                 
                 loadState();
                 
-                // Se não tem usuário logado, tentar login automático
-                if (!state.currentUser) {
-                    const autoLogged = await tryAutoLogin();
-                    if (!autoLogged) {
+                // Aguardar Firebase estar pronto (max 3 segundos)
+                let attempts = 0;
+                while (!db && attempts < 30) {
+                    await new Promise(r => setTimeout(r, 100));
+                    attempts++;
+                }
+                
+                // Se JÁ tem usuário logado (do localStorage), carregar dados do Firebase
+                if (state.currentUser) {
+                    console.log('👤 Usuário já logado:', state.currentUser);
+                    
+                    if (db) {
+                        try {
+                            // Buscar dados atualizados do Firebase
+                            const snapshot = await db.ref('users/' + state.currentUser).once('value');
+                            const userData = snapshot.val();
+                            
+                            console.log('📦 Dados do Firebase:', userData ? 'encontrado' : 'vazio');
+                            console.log('   teamName:', userData?.teamName);
+                            console.log('   starters:', userData?.starters?.filter(s => s)?.length || 0, 'jogadores');
+                            
+                            if (userData) {
+                                // Carregar dados do usuário
+                                state.users[state.currentUser] = userData;
+                                state.teamName = userData.teamName || '';
+                                state.teamLogo = userData.teamLogo || null;
+                                state.formation = userData.formation || '4-3-3';
+                                state.starters = ensureArray(userData.starters, 11);
+                                state.reserves = ensureArray(userData.reserves, 7);
+                                state.coach = userData.coach || null;
+                                state.isConfirmed = userData.isConfirmed || false;
+                                state.scores = userData.scores || {};
+                                state.favoriteTeam = userData.favoriteTeam || null;
+                                state.userBio = userData.userBio || '';
+                                
+                                // Verificar se tem time: pelo nome OU se já tem jogadores escalados
+                                const hasTeam = userData.teamName || 
+                                               (userData.starters && userData.starters.filter(s => s).length > 0);
+                                
+                                state.screen = hasTeam ? 'lineup' : 'createTeam';
+                                console.log('📺 Tela:', state.screen, '| hasTeam:', hasTeam);
+                                
+                                console.log('✅ Dados carregados do Firebase');
+                                
+                                // Iniciar listeners
+                                listenToDraftChat();
+                                listenToDraftStatus();
+                                listenToNextRound();
+                                listenToPrivateMessages();
+                            } else {
+                                // Usuário não existe mais no Firebase
+                                console.log('⚠️ Usuário não encontrado no Firebase');
+                                state.currentUser = null;
+                                state.screen = 'auth';
+                            }
+                        } catch (e) {
+                            console.error('Erro ao carregar usuário:', e);
+                            // Em caso de erro, manter na tela de auth
+                            state.screen = 'auth';
+                        }
+                    } else {
+                        console.log('⚠️ Firebase não conectou');
+                        state.screen = 'auth';
+                    }
+                } 
+                // Se NÃO tem usuário logado, tentar login automático (lembrar dispositivo)
+                else {
+                    if (db) {
+                        console.log('🔐 Verificando login automático...');
+                        const autoLogged = await tryAutoLogin();
+                        if (!autoLogged) {
+                            state.screen = 'auth';
+                        }
+                    } else {
+                        console.log('⚠️ Firebase não conectou, indo para login');
                         state.screen = 'auth';
                     }
                 }
