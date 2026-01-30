@@ -3334,6 +3334,9 @@
                     favoriteTeam: userData.favoriteTeam || null,
                     userBio: userData.userBio || '',
                     titles: userData.titles || [],
+                    // CORREÇÃO: Incluir palpites na sincronização
+                    palpitesCravados: userData.palpitesCravados || {},
+                    jogosConferidos: userData.jogosConferidos || {},
                     lastUpdate: new Date().toISOString()
                 };
                 db.ref('users/' + nickname).set(dataToSave);
@@ -3389,7 +3392,10 @@
                             favoriteTeam: cloudUsers[nick].favoriteTeam || null,
                             userBio: cloudUsers[nick].userBio || '',
                             achievements: cloudUsers[nick].achievements || [],
-                            titles: cloudUsers[nick].titles || []
+                            titles: cloudUsers[nick].titles || [],
+                            // CORREÇÃO: Sincronizar palpites do Firebase (fonte única de verdade)
+                            palpitesCravados: cloudUsers[nick].palpitesCravados || state.users[nick].palpitesCravados || {},
+                            jogosConferidos: cloudUsers[nick].jogosConferidos || state.users[nick].jogosConferidos || {}
                         };
                         
                         // IMPORTANTE: Se for o usuário atual, atualizar TUDO no state principal
