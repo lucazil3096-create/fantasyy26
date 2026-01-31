@@ -14515,8 +14515,9 @@
             return 'ANY';
         }
         
-        // Verificar se posição do jogador é compatível com slot
-        function isPositionCompatible(playerPosition, slotType, slotIndex) {
+        // Verificar se posição do jogador é compatível com slot (por índice)
+        // Usada pelo drag and drop
+        function isPositionCompatibleByIndex(playerPosition, slotType, slotIndex) {
             const playerCategory = getPositionCategory(playerPosition);
             
             // Posição desconhecida = compatível com tudo
@@ -14630,7 +14631,7 @@
             
             // Verificar compatibilidade de posições
             // O jogador de origem deve ser compatível com o slot de destino
-            if (sourcePlayer && !isPositionCompatible(sourcePlayer.position, targetType, targetIndex)) {
+            if (sourcePlayer && !isPositionCompatibleByIndex(sourcePlayer.position, targetType, targetIndex)) {
                 alert('⚠️ Posição Incompatível!\n\n' + sourcePlayer.name + ' (' + sourcePlayer.position + ') não pode jogar nessa posição.\n\nVerifique as posições compatíveis.');
                 removeAllHighlights();
                 dragData = null;
@@ -14638,7 +14639,7 @@
             }
             
             // Se tem jogador no destino, verificar se ele é compatível com a origem
-            if (targetPlayer && !isPositionCompatible(targetPlayer.position, dragData.type, dragData.index)) {
+            if (targetPlayer && !isPositionCompatibleByIndex(targetPlayer.position, dragData.type, dragData.index)) {
                 alert('⚠️ Posição Incompatível!\n\n' + targetPlayer.name + ' (' + targetPlayer.position + ') não pode ir para a posição de ' + sourcePlayer.name + '.\n\nEscolha jogadores com posições compatíveis.');
                 removeAllHighlights();
                 dragData = null;
@@ -14700,7 +14701,7 @@
                 const slotIndex = parseInt(slot.dataset.index);
                 if (sourceType === 'starter' && slotIndex === dragData.index) return;
                 
-                const isCompatible = isPositionCompatible(playerPosition, 'starter', slotIndex);
+                const isCompatible = isPositionCompatibleByIndex(playerPosition, 'starter', slotIndex);
                 console.log('  Titular slot', slotIndex, '(', getSlotCategory(slotIndex), ') =', isCompatible ? '✓' : '✕');
                 
                 if (isCompatible) {
@@ -14715,7 +14716,7 @@
                 const slotIndex = parseInt(slot.dataset.index);
                 if (sourceType === 'reserve' && slotIndex === dragData.index) return;
                 
-                const isCompatible = isPositionCompatible(playerPosition, 'reserve', slotIndex);
+                const isCompatible = isPositionCompatibleByIndex(playerPosition, 'reserve', slotIndex);
                 console.log('  Reserva slot', slotIndex, '(', getReserveSlotCategory(slotIndex), ') =', isCompatible ? '✓' : '✕');
                 
                 if (isCompatible) {
