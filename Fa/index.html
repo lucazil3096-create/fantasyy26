@@ -932,6 +932,8 @@
             previousModal: null, // Modal anterior (para voltar após fechar perfil)
             temporadaIniciada: false, // Flag para esconder botão de nova temporada após uso
             customPrices: {}, // Preços customizados de jogadores { playerId: price }
+            marketBasePrice: 100, // Preço base do mercado (pode ser alterado pelo admin)
+            marketPriceMultiplier: 1.0, // Multiplicador global de preços
             challenges: [], // Desafios ativos
             challengeCompletions: {}, // Quem completou cada desafio { challengeId: { nick: info } }
             customTitles: {}, // Títulos customizados criados pelo admin
@@ -1906,67 +1908,157 @@
             });
         }
 
-        // ==================== SISTEMA DE PREÇOS ====================
+        // ==================== SISTEMA DE PREÇOS (ESTILO CARTOLA) ====================
         
-        // Preço BASE igual para todos - o desempenho é que muda o preço!
-        const BASE_PRICE = 100;
-
-        // Calcula preço do jogador baseado no desempenho (pontos acumulados)
-        function getPlayerPrice(playerId) {
-            const player = state.players.find(p => p.id === playerId);
-            if (!player) return BASE_PRICE;
+        // Tiers de times (baseado em investimento/tradição)
+        const TEAM_TIERS = {
+            // Tier 1 - Gigantes (maior investimento)
+            'Flamengo': 1, 'Palmeiras': 1, 'São Paulo': 1, 'Corinthians': 1,
+            // Tier 2 - Grandes
+            'Atlético-MG': 2, 'Fluminense': 2, 'Internacional': 2, 'Grêmio': 2, 'Botafogo': 2, 'Cruzeiro': 2,
+            // Tier 3 - Tradicionais
+            'Santos': 3, 'Vasco': 3, 'Bahia': 3, 'Athletico-PR': 3, 'Fortaleza': 3,
+            // Tier 4 - Médios
+            'Bragantino': 4, 'Ceará': 4, 'Vitória': 4, 'Sport': 4, 'Coritiba': 4,
+            // Tier 5 - Menores
+            'Juventude': 5, 'Cuiabá': 5, 'América-MG': 5, 'Goiás': 5, 'Avaí': 5, 'Mirassol': 5
+        };
+        
+        // Preços base por posição e tier do time (em pontos)
+        // Tier:           1      2      3      4      5
+        const PRICE_TABLE = {
+            'GOL': [150, 120, 100, 80, 60],
+            'DEF': [180, 140, 110, 90, 70],
+            'MEI': [220, 170, 130, 100, 80],
+            'ATA': [280, 210, 160, 120, 90]
+        };
+        
+        // Preço base do mercado (pode ser alterado pelo admin)
+        function getBasePrice() {
+            return state.marketBasePrice || 100;
+        }
+        
+        // Multiplicador global de preços (pode ser alterado pelo admin)
+        function getPriceMultiplier() {
+            return state.marketPriceMultiplier || 1.0;
+        }
+        
+        // Obter preço inicial do jogador baseado em posição + time (estilo Cartola)
+        function getInitialPlayerPrice(player) {
+            if (!player) return 100;
             
-            // Calcular pontos TOTAIS acumulados deste jogador em todas as rodadas
+            // Normalizar posição para categoria
+            const pos = normalizePosition(player.position);
+            let posCategory = 'MEI'; // default
+            if (pos === 'GOL') posCategory = 'GOL';
+            else if (['ZAG', 'LD', 'LE', 'LAT'].includes(pos)) posCategory = 'DEF';
+            else if (['VOL', 'MC', 'MEI', 'MO'].includes(pos)) posCategory = 'MEI';
+            else if (['PE', 'PD', 'ATA', 'SA', 'CA'].includes(pos)) posCategory = 'ATA';
+            
+            // Obter tier do time (1-5)
+            const teamTier = TEAM_TIERS[player.team] || 4;
+            
+            // Buscar preço na tabela
+            const priceRow = PRICE_TABLE[posCategory] || PRICE_TABLE['MEI'];
+            const basePrice = priceRow[teamTier - 1] || 100;
+            
+            return basePrice;
+        }
+        
+        // Calcula preço do jogador (ESTILO CARTOLA)
+        // Preço = Preço Inicial + Valorização/Desvalorização por desempenho
+        function getPlayerPrice(playerId) {
+            // Se tem preço customizado, usa ele diretamente
+            if (state.customPrices && state.customPrices[playerId] !== undefined) {
+                return state.customPrices[playerId];
+            }
+            
+            const player = state.players.find(p => p.id === playerId);
+            if (!player) return getBasePrice();
+            
+            const MULTIPLIER = getPriceMultiplier();
+            
+            // Preço inicial baseado em posição + time
+            const initialPrice = getInitialPlayerPrice(player);
+            
+            // Calcular valorização/desvalorização baseado no desempenho
             let totalPoints = 0;
             let roundsPlayed = 0;
+            let roundsNotPlayed = 0;
             
             // Verificar pontuações de todos os usuários para este jogador
             Object.values(state.users).forEach(user => {
                 if (user.scores) {
                     Object.entries(user.scores).forEach(([key, round]) => {
-                        if (key !== 'market' && round.players && round.players[playerId] !== undefined) {
-                            totalPoints += round.players[playerId];
-                            roundsPlayed++;
+                        if (key !== 'market' && round.players) {
+                            if (round.players[playerId] !== undefined) {
+                                totalPoints += round.players[playerId];
+                                roundsPlayed++;
+                            }
                         }
                     });
                 }
             });
             
-            // Se não tem dados de rodadas, preço base
+            // Se não tem dados, retorna preço inicial
             if (roundsPlayed === 0) {
-                return BASE_PRICE;
+                return Math.round(initialPrice * MULTIPLIER);
             }
             
-            // Calcular média de pontos por rodada
+            // Média por rodada
             const avgPoints = totalPoints / roundsPlayed;
             
-            // PREÇO = BASE + (média × multiplicador)
-            // Quanto melhor a média, mais caro!
-            // Média 10+ = craque = muito caro
-            // Média 0 ou negativa = ruim = barato
+            // VALORIZAÇÃO/DESVALORIZAÇÃO (estilo Cartola)
+            // Média 10+ = valoriza muito
+            // Média 5-10 = valoriza
+            // Média 0-5 = mantém/leve queda
+            // Média negativa = desvaloriza
             
-            let price;
+            let valorization = 0;
+            
             if (avgPoints >= 12) {
-                // Craque absoluto - melhor do campeonato
-                price = BASE_PRICE + (avgPoints * 50); // Ex: avg 12 = 100 + 600 = 700
+                // Craque - valoriza muito (até +100%)
+                valorization = initialPrice * 0.8;
             } else if (avgPoints >= 8) {
-                // Estrela - muito bom
-                price = BASE_PRICE + (avgPoints * 40); // Ex: avg 8 = 100 + 320 = 420
+                // Muito bom - valoriza bem (até +50%)
+                valorization = initialPrice * 0.5;
             } else if (avgPoints >= 5) {
-                // Bom jogador
-                price = BASE_PRICE + (avgPoints * 30); // Ex: avg 5 = 100 + 150 = 250
-            } else if (avgPoints >= 2) {
-                // Regular
-                price = BASE_PRICE + (avgPoints * 20); // Ex: avg 2 = 100 + 40 = 140
+                // Bom - valoriza (até +25%)
+                valorization = initialPrice * 0.25;
+            } else if (avgPoints >= 3) {
+                // Regular - leve valorização
+                valorization = initialPrice * 0.1;
             } else if (avgPoints >= 0) {
-                // Abaixo da média
-                price = BASE_PRICE + (avgPoints * 10); // Ex: avg 1 = 100 + 10 = 110
+                // Fraco - mantém ou leve queda
+                valorization = -initialPrice * 0.1;
             } else {
-                // Negativo - jogando mal = mais barato pra apostar
-                price = Math.max(50, BASE_PRICE + (avgPoints * 10)); // Ex: avg -2 = 100 - 20 = 80
+                // Muito ruim - desvaloriza (até -30%)
+                valorization = -initialPrice * 0.3;
             }
             
-            return Math.round(price);
+            // Preço final = inicial + valorização
+            let finalPrice = initialPrice + valorization;
+            
+            // Mínimo de 50 pts, máximo de 500 pts
+            finalPrice = Math.max(50, Math.min(500, finalPrice));
+            
+            // Aplicar multiplicador global
+            return Math.round(finalPrice * MULTIPLIER);
+        }
+        
+        // Calcular estatísticas de preços do mercado
+        function getMarketPriceStats() {
+            const availablePlayers = getMarketPlayers();
+            if (availablePlayers.length === 0) {
+                return { min: 0, max: 0, avg: 0, total: 0 };
+            }
+            
+            const prices = availablePlayers.map(p => getPlayerPrice(p.id));
+            const min = Math.min(...prices);
+            const max = Math.max(...prices);
+            const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+            
+            return { min, max, avg, total: availablePlayers.length };
         }
 
         // ==================== JOGOS AO VIVO ====================
@@ -4270,22 +4362,45 @@
             }
         }
 
+        // Limpar valores undefined de um objeto (Firebase não aceita undefined)
+        function cleanUndefined(obj) {
+            if (Array.isArray(obj)) {
+                return obj.map(item => cleanUndefined(item));
+            } else if (obj !== null && typeof obj === 'object') {
+                const cleaned = {};
+                for (const key in obj) {
+                    if (obj[key] !== undefined) {
+                        cleaned[key] = cleanUndefined(obj[key]);
+                    }
+                }
+                return cleaned;
+            }
+            return obj;
+        }
+        
         function savePlayers() {
             try {
+                // Limpar undefined dos jogadores (Firebase não aceita)
+                const cleanedPlayers = cleanUndefined(state.players);
+                const cleanedTeams = cleanUndefined(state.teams);
+                
                 // Salvar no Firebase (fonte de verdade para todos os usuários)
                 if (db) {
                     db.ref('gameData/players').set({
-                        players: state.players,
-                        teams: state.teams,
+                        players: cleanedPlayers,
+                        teams: cleanedTeams,
                         lastSync: new Date().toISOString()
+                    }).then(() => {
+                        console.log('☁️ Jogadores salvos no Firebase:', cleanedPlayers.length);
+                    }).catch(err => {
+                        console.error('❌ Erro ao salvar no Firebase:', err.message);
                     });
-                    console.log('☁️ Jogadores salvos no Firebase:', state.players.length);
                 }
                 
                 // Também salvar cache local (para carregamento mais rápido)
                 localStorage.setItem('fantasyPlayers2026', JSON.stringify({
-                    players: state.players,
-                    teams: state.teams,
+                    players: cleanedPlayers,
+                    teams: cleanedTeams,
                     lastSync: new Date().toISOString()
                 }));
             } catch (e) {
@@ -4296,8 +4411,10 @@
         // Escutar mudanças nos jogadores (Firebase) - FONTE DE VERDADE
         function listenToPlayers() {
             if (!db) return;
-            db.ref('gameData/players').on('value', (snapshot) => {
+            
+            db.ref('gameData/players').on('value', async (snapshot) => {
                 const data = snapshot.val();
+                
                 if (data && data.players && data.players.length > 0) {
                     // Sempre usar dados do Firebase se tiver jogadores
                     state.players = data.players;
@@ -4315,9 +4432,52 @@
                     
                     console.log('✓ Jogadores do Firebase:', state.players.length);
                     
-                    // Re-renderizar se estiver na tela certa
-                    if (state.screen === 'draft' || state.screen === 'lineup' || state.screen === 'market') {
+                    // Verificar se precisa atualizar (>24h desde última sync)
+                    const lastSync = data.lastSync ? new Date(data.lastSync) : null;
+                    const now = new Date();
+                    const hoursSinceSync = lastSync ? (now - lastSync) / (1000 * 60 * 60) : 999;
+                    
+                    if (hoursSinceSync > 24) {
+                        console.log(`⏰ Dados desatualizados (${Math.round(hoursSinceSync)}h), atualizando...`);
+                        // Atualizar em background sem bloquear
+                        setTimeout(() => autoSyncPlayers(false), 2000);
+                    }
+                    
+                    // Re-renderizar se estiver na tela certa e não estiver digitando
+                    if (!isUserTyping && (state.screen === 'draft' || state.screen === 'lineup' || state.screen === 'market' || state.screen === 'admin')) {
                         render();
+                    }
+                } else {
+                    // Firebase vazio - precisa sincronizar
+                    console.log('⚠️ Firebase vazio - verificando cache local...');
+                    
+                    // Tentar carregar do cache local primeiro
+                    const cachedPlayers = localStorage.getItem('fantasyPlayers2026');
+                    if (cachedPlayers) {
+                        try {
+                            const parsed = JSON.parse(cachedPlayers);
+                            if (parsed.players && parsed.players.length > 0) {
+                                state.players = parsed.players;
+                                state.teams = parsed.teams || [];
+                                mergeManualPlayers();
+                                console.log('📦 Usando cache local:', state.players.length, 'jogadores');
+                                
+                                // Salvar no Firebase para outros usuários
+                                savePlayers();
+                                
+                                // Só render se não estiver digitando
+                                if (!isUserTyping) {
+                                    render();
+                                }
+                                return;
+                            }
+                        } catch(e) {}
+                    }
+                    
+                    // Sem cache - precisa buscar da API (só se não está sincronizando)
+                    if (!state.isSyncingBackground) {
+                        console.log('🔄 Iniciando sincronização da API...');
+                        setTimeout(() => autoSyncPlayers(true), 1000);
                     }
                 }
             });
@@ -4950,7 +5110,7 @@
             state.teams = teamsData.response.map(t => ({
                 id: t.team.id,
                 name: t.team.name,
-                logo: t.team.logo
+                logo: t.team.logo || ''  // Evitar undefined
             }));
 
             addLog(`   ${state.teams.length} times encontrados! (temporada ${usedSeason})`, 'success');
@@ -4973,10 +5133,10 @@
                                 name: p.name,
                                 photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
                                 position: translatePosition(p.position, p.number),
-                                team: team.name,
+                                team: team.name || '',
                                 teamId: team.id,
-                                teamLogo: team.logo,
-                                number: p.number
+                                teamLogo: team.logo || '',
+                                number: p.number || 0  // Evitar undefined
                             });
                         });
                         addLog(`   ✓ ${squadData.response[0].players.length} jogadores (squad)`, 'success');
@@ -4988,14 +5148,14 @@
                             playersData.response.forEach(p => {
                                 allPlayers.push({
                                     id: p.player.id,
-                                    name: p.player.name,
-                                    photo: p.player.photo,
+                                    name: p.player.name || '',
+                                    photo: p.player.photo || '',
                                     position: translatePosition(p.statistics[0]?.games?.position),
-                                    team: team.name,
+                                    team: team.name || '',
                                     teamId: team.id,
-                                    teamLogo: team.logo,
-                                    age: p.player.age,
-                                    nationality: p.player.nationality
+                                    teamLogo: team.logo || '',
+                                    age: p.player.age || 0,
+                                    nationality: p.player.nationality || ''
                                 });
                             });
                             addLog(`   ✓ ${playersData.response.length} jogadores (season)`, 'success');
@@ -5831,6 +5991,13 @@
         function render() {
             const root = document.getElementById('root');
             
+            // IMPORTANTE: Não re-renderizar a tela de login durante sincronização
+            // Isso evita perder o texto que o usuário está digitando
+            if (state.screen === 'auth' && state.isSyncingBackground) {
+                console.log('⏳ Pulando render durante sync (tela de login)');
+                return;
+            }
+            
             // PRESERVAR FOCO - Salvar elemento focado antes do render
             const activeElement = document.activeElement;
             const activeId = activeElement?.id;
@@ -5839,6 +6006,11 @@
             const selectionStart = activeElement?.selectionStart;
             const selectionEnd = activeElement?.selectionEnd;
             const activeValue = activeElement?.value;
+            
+            // Preservar valores dos inputs de login
+            const nicknameValue = document.getElementById('nickname')?.value || '';
+            const passwordValue = document.getElementById('password')?.value || '';
+            const accessCodeValue = document.getElementById('accessCode')?.value || '';
             
             // AUTO-CARREGAR jogos se estiver na lineup e não tiver dados
             if (state.screen === 'lineup' && state.currentUser && 
@@ -5958,8 +6130,13 @@
                             elementToFocus = document.querySelector(`[name="${activeName}"]`);
                         }
                         
-                        // Se encontrou o elemento, restaurar foco
+                        // Se encontrou o elemento, restaurar foco e valor
                         if (elementToFocus && (activeType === 'INPUT' || activeType === 'TEXTAREA')) {
+                            // Restaurar valor se tinha
+                            if (activeValue) {
+                                elementToFocus.value = activeValue;
+                            }
+                            
                             elementToFocus.focus();
                             
                             // Restaurar posição do cursor
@@ -5970,6 +6147,17 @@
                                     // Alguns inputs não suportam setSelectionRange
                                 }
                             }
+                        }
+                        
+                        // Restaurar valores dos inputs de login (se estiver na tela de auth)
+                        if (state.screen === 'auth') {
+                            const nicknameEl = document.getElementById('nickname');
+                            const passwordEl = document.getElementById('password');
+                            const accessCodeEl = document.getElementById('accessCode');
+                            
+                            if (nicknameEl && nicknameValue) nicknameEl.value = nicknameValue;
+                            if (passwordEl && passwordValue) passwordEl.value = passwordValue;
+                            if (accessCodeEl && accessCodeValue) accessCodeEl.value = accessCodeValue;
                         }
                     }, 0);
                 }
@@ -10785,10 +10973,102 @@
                                     </div>
                                 </div>
                                 
-                                <!-- Editar Preços do Mercado -->
+                                <!-- 💰 GESTÃO DE PREÇOS DO MERCADO -->
+                                <div class="bg-gradient-to-r from-amber-900/30 to-yellow-900/30 rounded-xl p-6 border-2 border-amber-500/50">
+                                    <h4 class="text-amber-400 font-bold mb-4 flex items-center gap-2">
+                                        💰 GESTÃO DE PREÇOS DO MERCADO
+                                    </h4>
+                                    
+                                    <!-- Estatísticas de Preços -->
+                                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                                        ${(() => {
+                                            const stats = getMarketPriceStats();
+                                            return `
+                                                <div class="bg-zinc-800 rounded-lg p-3 text-center">
+                                                    <p class="text-zinc-500 text-xs">Preço Base</p>
+                                                    <p class="text-2xl font-bold text-amber-400">${state.marketBasePrice || 100}</p>
+                                                </div>
+                                                <div class="bg-zinc-800 rounded-lg p-3 text-center">
+                                                    <p class="text-zinc-500 text-xs">Multiplicador</p>
+                                                    <p class="text-2xl font-bold text-purple-400">${(state.marketPriceMultiplier || 1.0).toFixed(1)}x</p>
+                                                </div>
+                                                <div class="bg-zinc-800 rounded-lg p-3 text-center">
+                                                    <p class="text-zinc-500 text-xs">Média Mercado</p>
+                                                    <p class="text-2xl font-bold text-emerald-400">${stats.avg} pts</p>
+                                                </div>
+                                                <div class="bg-zinc-800 rounded-lg p-3 text-center">
+                                                    <p class="text-zinc-500 text-xs">Min / Max</p>
+                                                    <p class="text-lg font-bold text-white">${stats.min} - ${stats.max}</p>
+                                                </div>
+                                            `;
+                                        })()}
+                                    </div>
+                                    
+                                    <!-- Controles de Preço -->
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <!-- Preço Base -->
+                                        <div class="bg-zinc-800 rounded-lg p-4">
+                                            <label class="text-amber-400 text-sm font-medium mb-2 block">Preço Base (pts)</label>
+                                            <div class="flex gap-2">
+                                                <input type="number" id="adminBasePrice" value="${state.marketBasePrice || 100}" min="10" max="500"
+                                                    class="flex-1 px-3 py-2 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-center">
+                                                <button onclick="adminSetBasePrice()" 
+                                                    class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-medium">
+                                                    Aplicar
+                                                </button>
+                                            </div>
+                                            <p class="text-zinc-500 text-xs mt-2">Valor mínimo de qualquer jogador</p>
+                                        </div>
+                                        
+                                        <!-- Multiplicador Global -->
+                                        <div class="bg-zinc-800 rounded-lg p-4">
+                                            <label class="text-purple-400 text-sm font-medium mb-2 block">Multiplicador Global</label>
+                                            <div class="flex gap-2">
+                                                <input type="number" id="adminPriceMultiplier" value="${state.marketPriceMultiplier || 1.0}" min="0.5" max="3.0" step="0.1"
+                                                    class="flex-1 px-3 py-2 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-center">
+                                                <button onclick="adminSetPriceMultiplier()" 
+                                                    class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium">
+                                                    Aplicar
+                                                </button>
+                                            </div>
+                                            <p class="text-zinc-500 text-xs mt-2">1.0 = normal, 1.5 = +50%, 2.0 = dobro</p>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Ações Rápidas -->
+                                    <div class="flex flex-wrap gap-2 mb-4">
+                                        <button onclick="adminInflateMarket(1.2)" 
+                                            class="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium">
+                                            📈 Inflar +20%
+                                        </button>
+                                        <button onclick="adminInflateMarket(1.5)" 
+                                            class="px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">
+                                            📈 Inflar +50%
+                                        </button>
+                                        <button onclick="adminInflateMarket(0.8)" 
+                                            class="px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium">
+                                            📉 Deflacionar -20%
+                                        </button>
+                                        <button onclick="adminResetMarketPrices()" 
+                                            class="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm font-medium">
+                                            🔄 Resetar p/ Padrão
+                                        </button>
+                                        <button onclick="adminClearCustomPrices()" 
+                                            class="px-3 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-sm font-medium">
+                                            🗑️ Limpar Customizados
+                                        </button>
+                                    </div>
+                                    
+                                    <p class="text-amber-400/70 text-xs">
+                                        💡 O preço é calculado: <strong>Base + (Média de pts × fator) × Multiplicador</strong>. 
+                                        Jogadores com média alta custam mais!
+                                    </p>
+                                </div>
+                                
+                                <!-- Editar Preços Individuais -->
                                 <div class="bg-zinc-900 rounded-xl p-6 border border-blue-500/30">
-                                    <h4 class="text-blue-400 font-medium mb-4">💵 Editar Preços do Mercado</h4>
-                                    <p class="text-zinc-500 text-sm mb-4">Ajuste o valor de jogadores específicos</p>
+                                    <h4 class="text-blue-400 font-medium mb-4">✏️ Editar Preço Individual</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Defina um preço fixo para jogadores específicos (sobrescreve o cálculo automático)</p>
                                     
                                     <div class="flex gap-3 mb-4">
                                         <input type="text" id="pricePlayerSearch" placeholder="Buscar jogador..." 
@@ -10801,6 +11081,160 @@
                                     <div id="pricePlayerResults" class="max-h-60 overflow-y-auto space-y-2">
                                         <p class="text-zinc-600 text-sm">Digite o nome do jogador para buscar...</p>
                                     </div>
+                                    
+                                    <!-- Lista de preços customizados -->
+                                    ${Object.keys(state.customPrices || {}).length > 0 ? `
+                                        <div class="border-t border-zinc-700 pt-4 mt-4">
+                                            <p class="text-zinc-400 text-sm mb-2">Preços customizados (${Object.keys(state.customPrices || {}).length}):</p>
+                                            <div class="max-h-40 overflow-y-auto space-y-1">
+                                                ${Object.entries(state.customPrices || {}).map(([pid, price]) => {
+                                                    const player = state.players.find(p => p.id == pid);
+                                                    return player ? `
+                                                        <div class="flex items-center justify-between bg-zinc-800/50 rounded px-3 py-2">
+                                                            <span class="text-white text-sm">${player.name} <span class="text-zinc-500">(${player.team})</span></span>
+                                                            <div class="flex items-center gap-2">
+                                                                <span class="text-amber-400 font-bold">${price} pts</span>
+                                                                <button onclick="adminRemoveCustomPrice('${pid}')" 
+                                                                    class="text-red-400 hover:text-red-300 text-xs">✕</button>
+                                                            </div>
+                                                        </div>
+                                                    ` : '';
+                                                }).join('')}
+                                            </div>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                
+                                <!-- 📋 VER TODOS OS JOGADORES -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border border-emerald-500/30">
+                                    <h4 class="text-emerald-400 font-medium mb-4">📋 Lista de Jogadores</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Veja e edite preços de todos os jogadores</p>
+                                    
+                                    <!-- Filtros -->
+                                    <div class="flex flex-wrap gap-3 mb-4">
+                                        <select id="adminMarketFilterStatus" onchange="adminFilterMarketPlayers()" 
+                                            class="px-3 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm">
+                                            <option value="all">🔷 Todos os jogadores</option>
+                                            <option value="available">✅ Apenas disponíveis (mercado)</option>
+                                            <option value="used">🔴 Apenas escalados</option>
+                                        </select>
+                                        <select id="adminMarketFilterTeam" onchange="adminFilterMarketPlayers()" 
+                                            class="px-3 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm">
+                                            <option value="">Todos os times</option>
+                                            ${state.teams.map(t => `<option value="${t.name}">${t.name}</option>`).join('')}
+                                        </select>
+                                        <select id="adminMarketFilterPos" onchange="adminFilterMarketPlayers()" 
+                                            class="px-3 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm">
+                                            <option value="">Todas posições</option>
+                                            <option value="GOL">Goleiro</option>
+                                            <option value="DEF">Defensor</option>
+                                            <option value="MEI">Meia</option>
+                                            <option value="ATA">Atacante</option>
+                                        </select>
+                                        <select id="adminMarketSort" onchange="adminFilterMarketPlayers()" 
+                                            class="px-3 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm">
+                                            <option value="price_desc">Mais caros</option>
+                                            <option value="price_asc">Mais baratos</option>
+                                            <option value="name">Nome A-Z</option>
+                                            <option value="team">Por time</option>
+                                        </select>
+                                        <button onclick="adminFilterMarketPlayers()" 
+                                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium">
+                                            🔄 Atualizar
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Resumo -->
+                                    <div class="flex gap-4 mb-4 text-sm">
+                                        ${(() => {
+                                            const usedPlayerIds = new Map();
+                                            Object.entries(state.users).forEach(([nick, user]) => {
+                                                if (user.starters) user.starters.forEach(p => { if (p) usedPlayerIds.set(p.id, nick); });
+                                                if (user.reserves) user.reserves.forEach(p => { if (p) usedPlayerIds.set(p.id, nick); });
+                                            });
+                                            const totalPlayers = state.players.length;
+                                            const usedCount = usedPlayerIds.size;
+                                            const availableCount = totalPlayers - usedCount;
+                                            return `
+                                                <span class="text-zinc-400">Total: <strong class="text-white">${totalPlayers}</strong></span>
+                                                <span class="text-emerald-400">Disponíveis: <strong>${availableCount}</strong></span>
+                                                <span class="text-red-400">Escalados: <strong>${usedCount}</strong></span>
+                                            `;
+                                        })()}
+                                    </div>
+                                    
+                                    <!-- Lista de jogadores - CARREGA AUTOMATICAMENTE -->
+                                    <div id="adminMarketPlayersList" class="max-h-96 overflow-y-auto space-y-2">
+                                        ${(() => {
+                                            // Mapear jogadores escalados -> dono
+                                            const playerOwners = new Map();
+                                            Object.entries(state.users).forEach(([nick, user]) => {
+                                                if (user.starters) user.starters.forEach(p => { if (p) playerOwners.set(p.id, { nick, teamName: user.teamName || nick }); });
+                                                if (user.reserves) user.reserves.forEach(p => { if (p) playerOwners.set(p.id, { nick, teamName: user.teamName || nick }); });
+                                            });
+                                            
+                                            // Todos os jogadores com preço
+                                            let allPlayers = state.players
+                                                .map(p => ({ 
+                                                    ...p, 
+                                                    price: getPlayerPrice(p.id), 
+                                                    pos: normalizePosition(p.position),
+                                                    owner: playerOwners.get(p.id) || null,
+                                                    isAvailable: !playerOwners.has(p.id)
+                                                }))
+                                                .sort((a, b) => b.price - a.price)
+                                                .slice(0, 50);
+                                            
+                                            if (state.players.length === 0) {
+                                                return `
+                                                    <div class="text-center py-6">
+                                                        <p class="text-amber-400 text-sm mb-4">⚠️ Nenhum jogador carregado</p>
+                                                        <button onclick="syncAllData()" 
+                                                            class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium">
+                                                            🔄 Carregar Jogadores
+                                                        </button>
+                                                        <p class="text-zinc-600 text-xs mt-2">Isso vai buscar os jogadores da API e salvar no Firebase</p>
+                                                    </div>
+                                                `;
+                                            }
+                                            
+                                            if (allPlayers.length === 0) {
+                                                return '<p class="text-zinc-500 text-sm">Nenhum jogador encontrado</p>';
+                                            }
+                                            
+                                            return allPlayers.map((p, idx) => {
+                                                const customPrice = (state.customPrices || {})[p.id];
+                                                const teamTier = TEAM_TIERS[p.team] || 4;
+                                                
+                                                return `
+                                                    <div class="flex items-center justify-between bg-zinc-800 rounded-lg p-3 ${!p.isAvailable ? 'border-l-4 border-red-500/50' : 'border-l-4 border-emerald-500/50'}">
+                                                        <div class="flex items-center gap-3">
+                                                            <span class="text-zinc-600 text-xs w-6">#${idx + 1}</span>
+                                                            <img src="${p.photo || ''}" class="w-8 h-8 rounded-full object-cover bg-zinc-700"
+                                                                onerror="this.src='https://via.placeholder.com/32'">
+                                                            <div>
+                                                                <p class="text-white font-medium text-sm">${p.name}</p>
+                                                                <p class="text-zinc-500 text-xs">${p.team} • ${p.pos} • Tier ${teamTier}</p>
+                                                                ${p.owner ? `<p class="text-red-400 text-xs">🔴 ${p.owner.teamName}</p>` : '<p class="text-emerald-400 text-xs">✅ Disponível</p>'}
+                                                            </div>
+                                                        </div>
+                                                        <div class="flex items-center gap-2">
+                                                            <span class="text-amber-400 font-bold">${p.price} pts</span>
+                                                            ${customPrice ? '<span class="text-xs text-amber-400">✏️</span>' : ''}
+                                                            <input type="number" id="marketprice_${p.id}" value="${customPrice || p.price}" 
+                                                                class="w-16 px-2 py-1 bg-zinc-700 text-white rounded text-xs text-center">
+                                                            <button onclick="adminSetPlayerPrice('${p.id}', 'marketprice_')" 
+                                                                class="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs">
+                                                                ✓
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                `;
+                                            }).join('');
+                                        })()}
+                                    </div>
+                                    
+                                    <p class="text-zinc-600 text-xs mt-3">Mostrando os 50 mais caros. Use os filtros para ver mais ou filtrar.</p>
                                 </div>
                                 
                                 <!-- Estatísticas -->
@@ -12035,17 +12469,17 @@
             
             // Posições mais centralizadas para não cortar nas bordas
             const fieldPositions = [
-                { top: '12%', left: '50%' },   // GOL
-                { top: '32%', left: '20%' },   // LD
-                { top: '32%', left: '40%' },   // ZAG
-                { top: '32%', left: '60%' },   // ZAG
-                { top: '32%', left: '80%' },   // LE
-                { top: '55%', left: '28%' },   // MC
-                { top: '55%', left: '50%' },   // MEI
-                { top: '55%', left: '72%' },   // MC
-                { top: '78%', left: '25%' },   // PE
-                { top: '78%', left: '50%' },   // ATA
-                { top: '78%', left: '75%' },   // PD
+                { top: '88%', left: '50%' },   // GOL (embaixo)
+                { top: '68%', left: '20%' },   // LD
+                { top: '68%', left: '40%' },   // ZAG
+                { top: '68%', left: '60%' },   // ZAG
+                { top: '68%', left: '80%' },   // LE
+                { top: '45%', left: '28%' },   // MC
+                { top: '45%', left: '50%' },   // MEI
+                { top: '45%', left: '72%' },   // MC
+                { top: '22%', left: '25%' },   // PE (em cima)
+                { top: '22%', left: '50%' },   // ATA (em cima)
+                { top: '22%', left: '75%' },   // PD (em cima)
             ];
             
             const slotLabels = ['GOL', 'LD', 'ZAG', 'ZAG', 'LE', 'MC', 'MEI', 'MC', 'PE', 'ATA', 'PD'];
@@ -12977,7 +13411,7 @@
                 
                 // Carregar jogadores se ainda não carregou
                 if (state.players.length === 0) {
-                    syncPlayers();
+                    autoSyncPlayers();
                 }
                 return;
             }
@@ -13228,51 +13662,15 @@
         };
 
         window.openPlayerModal = function(index, type) {
-            // Se já confirmou, NÃO pode mais editar escalação - só substituir
-            if (state.isConfirmed) {
-                alert('Escalação confirmada! Use o botão "Fazer Substituição" para trocar titular por reserva.');
-                return;
-            }
-            
-            // Verificar se pode editar (entre rodadas)
-            if (!canEditTeam()) {
-                const status = getEditTeamStatus();
-                alert('Escalação Travada!\n\nStatus: ' + status.reason + '\n\nVocê poderá trocar jogadores:\n• 1 hora depois que todos os jogos terminarem\n• Até 30 minutos antes da próxima rodada\n\nUse "Fazer Substituição" para trocar titular por reserva.');
-                return;
-            }
-            
-            state.scrollY = window.scrollY;
-            state.modal = 'player';
-            state.slotIndex = index;
-            state.slotType = type;
-            state.filterTeam = '';
-            state.searchName = '';
-            // Inicializa com a posição sugerida para o slot (apenas para titulares)
-            state.filterPosition = type === 'starter' ? getPositionForSlot(index) : '';
-            document.body.classList.add('modal-open');
-            document.body.style.top = `-${state.scrollY}px`;
-            render();
+            // ESCALAÇÃO TRAVADA - Jogadores só podem ser adicionados no DRAFT
+            alert('⚠️ Escalação travada!\n\nOs jogadores serão escolhidos no DRAFT.\n\nAguarde o draft na segunda-feira!');
+            return;
         };
 
         window.openCoachModal = function() {
-            // Se já confirmou, não pode mais alterar técnico
-            if (state.isConfirmed) {
-                alert('Escalação confirmada! Não é possível alterar o técnico.');
-                return;
-            }
-            
-            // Verificar se pode editar (entre rodadas)
-            if (!canEditTeam()) {
-                const status = getEditTeamStatus();
-                alert('Escalação Travada!\n\nStatus: ' + status.reason + '\n\nVocê poderá trocar o técnico:\n• 1 hora depois que todos os jogos terminarem\n• Até 30 minutos antes da próxima rodada');
-                return;
-            }
-            
-            state.scrollY = window.scrollY;
-            state.modal = 'coach';
-            document.body.classList.add('modal-open');
-            document.body.style.top = `-${state.scrollY}px`;
-            render();
+            // ESCALAÇÃO TRAVADA - Técnico será escolhido no DRAFT
+            alert('⚠️ Escalação travada!\n\nO técnico será escolhido no DRAFT.\n\nAguarde o draft na segunda-feira!');
+            return;
         };
 
         window.openOffersModal = function() {
@@ -17022,43 +17420,66 @@ O usuário não poderá mais fazer login.
             if (!container) return;
             
             if (!query || query.length < 2) {
-                container.innerHTML = '<p class="text-zinc-600 text-sm">Digite pelo menos 2 caracteres...</p>';
+                container.innerHTML = '<p class="text-zinc-600 text-sm">Digite pelo menos 2 caracteres para buscar...</p>';
                 return;
             }
             
             const search = query.toLowerCase();
+            
+            // Buscar em TODOS os jogadores
             const results = state.players
-                .filter(p => p.name.toLowerCase().includes(search))
-                .slice(0, 10);
+                .filter(p => p.name.toLowerCase().includes(search) || p.team.toLowerCase().includes(search))
+                .slice(0, 15);
             
             if (results.length === 0) {
                 container.innerHTML = '<p class="text-zinc-500 text-sm">Nenhum jogador encontrado</p>';
                 return;
             }
             
+            // Verificar quais jogadores estão no mercado (disponíveis)
+            const usedPlayerIds = new Set();
+            Object.values(state.users).forEach(user => {
+                if (user.starters) user.starters.forEach(p => { if (p) usedPlayerIds.add(p.id); });
+                if (user.reserves) user.reserves.forEach(p => { if (p) usedPlayerIds.add(p.id); });
+            });
+            
             container.innerHTML = results.map(p => {
                 const customPrice = (state.customPrices || {})[p.id];
-                const basePrice = getPlayerBasePrice(p);
-                const currentPrice = customPrice || basePrice;
+                const calculatedPrice = getPlayerPrice(p.id);
+                const initialPrice = getInitialPlayerPrice(p);
+                const isAvailable = !usedPlayerIds.has(p.id);
+                const teamTier = TEAM_TIERS[p.team] || 4;
                 
                 return `
-                    <div class="flex items-center justify-between bg-zinc-800 rounded-lg p-3">
+                    <div class="flex items-center justify-between bg-zinc-800 rounded-lg p-3 ${!isAvailable ? 'opacity-60' : ''}">
                         <div class="flex items-center gap-3">
                             <img src="${p.photo || ''}" class="w-10 h-10 rounded-full object-cover bg-zinc-700"
                                 onerror="this.src='https://via.placeholder.com/40'">
                             <div>
                                 <p class="text-white font-medium">${p.name}</p>
                                 <p class="text-zinc-500 text-sm">${p.team} • ${p.position}</p>
+                                <div class="flex gap-2 text-xs mt-1">
+                                    <span class="text-zinc-600">Tier ${teamTier}</span>
+                                    <span class="text-zinc-600">|</span>
+                                    <span class="text-zinc-500">Base: ${initialPrice}</span>
+                                    <span class="text-zinc-600">|</span>
+                                    <span class="${isAvailable ? 'text-emerald-400' : 'text-red-400'}">${isAvailable ? '✓ Disponível' : '✗ Escalado'}</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <input type="number" id="price_${p.id}" value="${currentPrice}" 
-                                class="w-20 px-2 py-1 bg-zinc-700 text-white rounded text-sm text-center">
-                            <button onclick="adminSetPlayerPrice('${p.id}')" 
-                                class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm">
-                                Salvar
-                            </button>
-                            ${customPrice ? `<span class="text-amber-400 text-xs">✏️</span>` : ''}
+                        <div class="flex flex-col items-end gap-1">
+                            <div class="flex items-center gap-2">
+                                <span class="text-amber-400 font-bold">${calculatedPrice} pts</span>
+                                ${customPrice ? '<span class="text-xs text-amber-400">✏️</span>' : ''}
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <input type="number" id="price_${p.id}" value="${customPrice || calculatedPrice}" 
+                                    class="w-20 px-2 py-1 bg-zinc-700 text-white rounded text-sm text-center">
+                                <button onclick="adminSetPlayerPrice('${p.id}')" 
+                                    class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-sm">
+                                    Salvar
+                                </button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -17066,8 +17487,8 @@ O usuário não poderá mais fazer login.
         };
         
         // Definir preço customizado de jogador
-        window.adminSetPlayerPrice = function(playerId) {
-            const input = document.getElementById('price_' + playerId);
+        window.adminSetPlayerPrice = function(playerId, prefix = 'price_') {
+            const input = document.getElementById(prefix + playerId);
             if (!input) return;
             
             const price = parseInt(input.value);
@@ -17082,7 +17503,242 @@ O usuário não poderá mais fazer login.
                 db.ref('customPrices/' + playerId).set(price);
             }
             
-            alert(`Preço do jogador definido como ${price} pts!`);
+            const player = state.players.find(p => p.id == playerId);
+            showToast(`✅ ${player?.name || 'Jogador'}: ${price} pts`, 'success');
+            render();
+        };
+        
+        // Filtrar jogadores do mercado
+        window.adminFilterMarketPlayers = function() {
+            const filterStatus = document.getElementById('adminMarketFilterStatus')?.value || 'all';
+            const filterTeam = document.getElementById('adminMarketFilterTeam')?.value || '';
+            const filterPos = document.getElementById('adminMarketFilterPos')?.value || '';
+            const sortBy = document.getElementById('adminMarketSort')?.value || 'price_desc';
+            const container = document.getElementById('adminMarketPlayersList');
+            
+            if (!container) return;
+            
+            // Mapear jogadores escalados -> dono
+            const playerOwners = new Map();
+            Object.entries(state.users).forEach(([nick, user]) => {
+                if (user.starters) user.starters.forEach(p => { if (p) playerOwners.set(p.id, { nick, teamName: user.teamName || nick }); });
+                if (user.reserves) user.reserves.forEach(p => { if (p) playerOwners.set(p.id, { nick, teamName: user.teamName || nick }); });
+            });
+            
+            // Todos os jogadores com preço calculado
+            let allPlayers = state.players.map(p => ({ 
+                ...p, 
+                price: getPlayerPrice(p.id), 
+                pos: normalizePosition(p.position),
+                owner: playerOwners.get(p.id) || null,
+                isAvailable: !playerOwners.has(p.id)
+            }));
+            
+            // Filtrar por status
+            if (filterStatus === 'available') {
+                allPlayers = allPlayers.filter(p => p.isAvailable);
+            } else if (filterStatus === 'used') {
+                allPlayers = allPlayers.filter(p => !p.isAvailable);
+            }
+            
+            // Aplicar filtros
+            if (filterTeam) {
+                allPlayers = allPlayers.filter(p => p.team === filterTeam);
+            }
+            if (filterPos) {
+                allPlayers = allPlayers.filter(p => {
+                    const pos = p.pos;
+                    if (filterPos === 'GOL') return pos === 'GOL';
+                    if (filterPos === 'DEF') return ['ZAG', 'LD', 'LE', 'LAT', 'DEF'].includes(pos);
+                    if (filterPos === 'MEI') return ['VOL', 'MC', 'MEI', 'MO'].includes(pos);
+                    if (filterPos === 'ATA') return ['PE', 'PD', 'ATA', 'SA', 'CA'].includes(pos);
+                    return true;
+                });
+            }
+            
+            // Ordenar
+            if (sortBy === 'price_desc') {
+                allPlayers.sort((a, b) => b.price - a.price);
+            } else if (sortBy === 'price_asc') {
+                allPlayers.sort((a, b) => a.price - b.price);
+            } else if (sortBy === 'name') {
+                allPlayers.sort((a, b) => a.name.localeCompare(b.name));
+            } else if (sortBy === 'team') {
+                allPlayers.sort((a, b) => a.team.localeCompare(b.team) || b.price - a.price);
+            }
+            
+            // Limitar a 100
+            allPlayers = allPlayers.slice(0, 100);
+            
+            if (allPlayers.length === 0) {
+                container.innerHTML = '<p class="text-zinc-500 text-sm">Nenhum jogador encontrado com esses filtros</p>';
+                return;
+            }
+            
+            container.innerHTML = allPlayers.map((p, idx) => {
+                const customPrice = (state.customPrices || {})[p.id];
+                const teamTier = TEAM_TIERS[p.team] || 4;
+                
+                return `
+                    <div class="flex items-center justify-between bg-zinc-800 rounded-lg p-3 ${!p.isAvailable ? 'border-l-4 border-red-500/50' : 'border-l-4 border-emerald-500/50'}">
+                        <div class="flex items-center gap-3">
+                            <span class="text-zinc-600 text-xs w-6">#${idx + 1}</span>
+                            <img src="${p.photo || ''}" class="w-8 h-8 rounded-full object-cover bg-zinc-700"
+                                onerror="this.src='https://via.placeholder.com/32'">
+                            <div>
+                                <p class="text-white font-medium text-sm">${p.name}</p>
+                                <p class="text-zinc-500 text-xs">${p.team} • ${p.pos} • Tier ${teamTier}</p>
+                                ${p.owner ? `<p class="text-red-400 text-xs">🔴 ${p.owner.teamName}</p>` : '<p class="text-emerald-400 text-xs">✅ Disponível</p>'}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-amber-400 font-bold">${p.price} pts</span>
+                            ${customPrice ? '<span class="text-xs text-amber-400">✏️</span>' : ''}
+                            <input type="number" id="marketprice_${p.id}" value="${customPrice || p.price}" 
+                                class="w-16 px-2 py-1 bg-zinc-700 text-white rounded text-xs text-center">
+                            <button onclick="adminSetPlayerPrice('${p.id}', 'marketprice_')" 
+                                class="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs">
+                                ✓
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            // Mostrar contagem
+            const countText = document.createElement('p');
+            countText.className = 'text-zinc-500 text-xs mt-2';
+            countText.textContent = `Mostrando ${allPlayers.length} jogador(es)`;
+            container.appendChild(countText);
+        };
+        
+        // ==================== FUNÇÕES DE GESTÃO DE PREÇOS DO MERCADO ====================
+        
+        // Definir preço base do mercado
+        window.adminSetBasePrice = function() {
+            const input = document.getElementById('adminBasePrice');
+            if (!input) return;
+            
+            const basePrice = parseInt(input.value);
+            if (isNaN(basePrice) || basePrice < 10 || basePrice > 500) {
+                return alert('Preço base inválido! Deve ser entre 10 e 500.');
+            }
+            
+            state.marketBasePrice = basePrice;
+            
+            if (db) {
+                db.ref('settings/marketBasePrice').set(basePrice);
+            }
+            
+            alert(`✅ Preço base definido como ${basePrice} pts!\n\nTodos os preços serão recalculados.`);
+            render();
+        };
+        
+        // Definir multiplicador global de preços
+        window.adminSetPriceMultiplier = function() {
+            const input = document.getElementById('adminPriceMultiplier');
+            if (!input) return;
+            
+            const multiplier = parseFloat(input.value);
+            if (isNaN(multiplier) || multiplier < 0.5 || multiplier > 3.0) {
+                return alert('Multiplicador inválido! Deve ser entre 0.5 e 3.0.');
+            }
+            
+            state.marketPriceMultiplier = multiplier;
+            
+            if (db) {
+                db.ref('settings/marketPriceMultiplier').set(multiplier);
+            }
+            
+            alert(`✅ Multiplicador definido como ${multiplier.toFixed(1)}x!\n\nTodos os preços serão recalculados.`);
+            render();
+        };
+        
+        // Inflar/deflacionar mercado rapidamente
+        window.adminInflateMarket = function(factor) {
+            const currentMultiplier = state.marketPriceMultiplier || 1.0;
+            const newMultiplier = Math.round(currentMultiplier * factor * 10) / 10;
+            
+            if (newMultiplier < 0.5) {
+                return alert('Multiplicador ficaria muito baixo (mínimo 0.5x)!');
+            }
+            if (newMultiplier > 3.0) {
+                return alert('Multiplicador ficaria muito alto (máximo 3.0x)!');
+            }
+            
+            const action = factor > 1 ? 'AUMENTAR' : 'DIMINUIR';
+            const percent = Math.abs(Math.round((factor - 1) * 100));
+            
+            if (!confirm(`${action} todos os preços em ${percent}%?\n\nMultiplicador: ${currentMultiplier.toFixed(1)}x → ${newMultiplier.toFixed(1)}x`)) {
+                return;
+            }
+            
+            state.marketPriceMultiplier = newMultiplier;
+            
+            if (db) {
+                db.ref('settings/marketPriceMultiplier').set(newMultiplier);
+            }
+            
+            alert(`✅ Preços ${factor > 1 ? 'aumentados' : 'diminuídos'} em ${percent}%!\n\nNovo multiplicador: ${newMultiplier.toFixed(1)}x`);
+            render();
+        };
+        
+        // Resetar preços para padrão
+        window.adminResetMarketPrices = function() {
+            if (!confirm('Resetar configurações de preço para o padrão?\n\nPreço base: 100\nMultiplicador: 1.0x')) {
+                return;
+            }
+            
+            state.marketBasePrice = 100;
+            state.marketPriceMultiplier = 1.0;
+            
+            if (db) {
+                db.ref('settings/marketBasePrice').set(100);
+                db.ref('settings/marketPriceMultiplier').set(1.0);
+            }
+            
+            alert('✅ Configurações de preço resetadas para o padrão!');
+            render();
+        };
+        
+        // Limpar todos os preços customizados
+        window.adminClearCustomPrices = function() {
+            const count = Object.keys(state.customPrices || {}).length;
+            
+            if (count === 0) {
+                return alert('Não há preços customizados para limpar.');
+            }
+            
+            if (!confirm(`Remover ${count} preço(s) customizado(s)?\n\nOs jogadores voltarão a ter preço calculado automaticamente.`)) {
+                return;
+            }
+            
+            state.customPrices = {};
+            
+            if (db) {
+                db.ref('customPrices').set({});
+            }
+            
+            alert(`✅ ${count} preço(s) customizado(s) removido(s)!`);
+            render();
+        };
+        
+        // Remover preço customizado de um jogador específico
+        window.adminRemoveCustomPrice = function(playerId) {
+            const player = state.players.find(p => p.id == playerId);
+            const playerName = player ? player.name : 'Jogador';
+            
+            if (!confirm(`Remover preço customizado de ${playerName}?\n\nO preço voltará a ser calculado automaticamente.`)) {
+                return;
+            }
+            
+            delete state.customPrices[playerId];
+            
+            if (db) {
+                db.ref('customPrices/' + playerId).remove();
+            }
+            
+            alert(`✅ Preço customizado de ${playerName} removido!`);
             render();
         };
         
@@ -18163,6 +18819,16 @@ O usuário não poderá mais fazer login.
                 state.customPrices = snapshot.val() || {};
             });
             
+            // Carregar preço base do mercado
+            db.ref('settings/marketBasePrice').on('value', (snapshot) => {
+                state.marketBasePrice = snapshot.val() || 100;
+            });
+            
+            // Carregar multiplicador global de preços
+            db.ref('settings/marketPriceMultiplier').on('value', (snapshot) => {
+                state.marketPriceMultiplier = snapshot.val() || 1.0;
+            });
+            
             // Carregar desafios
             db.ref('challenges').on('value', (snapshot) => {
                 state.challenges = snapshot.val() || [];
@@ -18402,7 +19068,8 @@ O usuário não poderá mais fazer login.
                             
                             console.log('📦 Dados do Firebase:', userData ? 'encontrado' : 'vazio');
                             console.log('   teamName:', userData?.teamName);
-                            console.log('   starters:', userData?.starters?.filter(s => s)?.length || 0, 'jogadores');
+                            const startersArray = Array.isArray(userData?.starters) ? userData.starters : Object.values(userData?.starters || {});
+                            console.log('   starters:', startersArray.filter(s => s)?.length || 0, 'jogadores');
                             
                             if (userData) {
                                 // Carregar dados do usuário
@@ -18419,8 +19086,9 @@ O usuário não poderá mais fazer login.
                                 state.userBio = userData.userBio || '';
                                 
                                 // Verificar se tem time: pelo nome OU se já tem jogadores escalados
+                                const startersCheck = Array.isArray(userData.starters) ? userData.starters : Object.values(userData.starters || {});
                                 const hasTeam = userData.teamName || 
-                                               (userData.starters && userData.starters.filter(s => s).length > 0);
+                                               (startersCheck && startersCheck.filter(s => s).length > 0);
                                 
                                 state.screen = hasTeam ? 'lineup' : 'createTeam';
                                 console.log('📺 Tela:', state.screen, '| hasTeam:', hasTeam);
@@ -18537,11 +19205,19 @@ O usuário não poderá mais fazer login.
         
         // Sincronização automática em background (sem modal)
         async function autoSyncPlayers(forceSync = false) {
+            // Evitar múltiplas sincronizações simultâneas
+            if (state.isSyncingBackground) {
+                console.log('⏳ Já está sincronizando, aguarde...');
+                return;
+            }
+            
             console.log('🔄 Iniciando sincronização...');
             
             // Se já tiver jogadores em cache, fazer sync silencioso (sem mostrar mensagem)
+            // Também silencioso se estiver na tela de login ou se o usuário estiver digitando
             const hasCachedPlayers = state.players && state.players.length > 100;
-            const silentSync = !forceSync && hasCachedPlayers;
+            const isOnLoginScreen = state.screen === 'auth' || !state.currentUser;
+            const silentSync = !forceSync && (hasCachedPlayers || isOnLoginScreen || isUserTyping);
             
             // Se não é forçado, verificar se precisa sincronizar
             const needsSync = await shouldAutoSync();
@@ -18550,17 +19226,19 @@ O usuário não poderá mais fazer login.
                 return;
             }
             
+            // Marcar como sincronizando
+            state.isSyncingBackground = true;
+            
             console.log(silentSync ? '🔄 Sync silencioso em background...' : '🚀 Sincronizando dados...');
             
-            // Só mostrar indicador se NÃO for silencioso
-            if (!silentSync) {
-                state.isSyncingBackground = true;
+            // Só mostrar indicador se NÃO for silencioso E usuário não estiver digitando
+            if (!silentSync && !isUserTyping) {
                 state.syncProgress = 'Iniciando...';
                 render();
             }
             
             try {
-                if (!silentSync) {
+                if (!silentSync && !isUserTyping) {
                     state.syncProgress = '📡 API-Football...';
                     render();
                 }
@@ -18655,8 +19333,10 @@ O usuário não poderá mais fazer login.
         
         // Auto-sync via API-Football (sem modal)
         async function autoSyncViaApiFootball() {
-            // Só mostrar progresso se estiver em modo não-silencioso
-            if (state.isSyncingBackground) {
+            // Só mostrar progresso se não estiver digitando ou na tela de login
+            const shouldShowProgress = state.isSyncingBackground && !isUserTyping && state.screen !== 'auth' && state.currentUser;
+            
+            if (shouldShowProgress) {
                 state.syncProgress = '📡 Conectando API-Football...';
                 render();
             }
@@ -18682,7 +19362,7 @@ O usuário não poderá mais fazer login.
             state.teams = teamsData.response.map(t => ({
                 id: t.team.id,
                 name: t.team.name,
-                logo: t.team.logo
+                logo: t.team.logo || ''  // Evitar undefined
             }));
 
             const allPlayers = [];
@@ -18690,8 +19370,8 @@ O usuário não poderá mais fazer login.
             for (let i = 0; i < state.teams.length; i++) {
                 const team = state.teams[i];
                 
-                // Só mostrar progresso se estiver em modo não-silencioso
-                if (state.isSyncingBackground) {
+                // Só mostrar progresso se não estiver digitando
+                if (shouldShowProgress && !isUserTyping) {
                     state.syncProgress = `⚽ ${team.name} (${i + 1}/${state.teams.length})`;
                     render();
                 }
@@ -18704,13 +19384,13 @@ O usuário não poderá mais fazer login.
                         squadData.response[0].players.forEach(p => {
                             allPlayers.push({
                                 id: p.id,
-                                name: p.name,
+                                name: p.name || '',
                                 photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
                                 position: translatePosition(p.position, p.number),
-                                team: team.name,
+                                team: team.name || '',
                                 teamId: team.id,
-                                teamLogo: team.logo,
-                                number: p.number
+                                teamLogo: team.logo || '',
+                                number: p.number || 0  // Evitar undefined
                             });
                         });
                     }
@@ -18752,13 +19432,13 @@ O usuário não poderá mais fazer login.
             // O Firebase vai carregar automaticamente e salvar no cache
             console.log('⏳ Aguardando Firebase...');
             
-            // Se após 15 segundos ainda não tiver dados, significa que Firebase está vazio
-            // Nesse caso, admin precisa sincronizar manualmente
-            setTimeout(() => {
-                if (state.players.length === 0) {
-                    console.log('⚠️ Firebase vazio - Admin precisa sincronizar jogadores');
+            // Se após 10 segundos ainda não tiver dados, sincroniza automaticamente
+            setTimeout(async () => {
+                if (state.players.length === 0 && !state.isSyncingBackground) {
+                    console.log('🔄 Firebase vazio - iniciando sincronização automática...');
+                    await autoSyncPlayers(true);
                 }
-            }, 15000);
+            }, 10000);
         })();
 
         // ==================== ATUALIZAÇÃO INTELIGENTE DE PONTOS ====================
