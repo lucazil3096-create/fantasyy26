@@ -6800,8 +6800,8 @@
                                             const isFT = ['FT','AET','PEN'].includes(st);
                                             const homeLogo = g.teams?.home?.logo || '';
                                             const awayLogo = g.teams?.away?.logo || '';
-                                            const hName = (g.teams?.home?.name || '?').substring(0,12);
-                                            const aName = (g.teams?.away?.name || '?').substring(0,12);
+                                            const hName = capitalizeTeamName(g.teams?.home?.name || '?').substring(0,14);
+                                            const aName = capitalizeTeamName(g.teams?.away?.name || '?').substring(0,14);
                                             const matchDate = new Date(g.fixture.date);
                                             const dayStr = matchDate.toLocaleDateString('pt-BR', { weekday: 'short' }).substring(0,3);
                                             const timeStr = matchDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
@@ -7519,8 +7519,8 @@
                     
                     return {
                         id: f.fixture?.id || Math.random(),
-                        casa: f.teams?.home?.name || 'Time A',
-                        fora: f.teams?.away?.name || 'Time B',
+                        casa: capitalizeTeamName(f.teams?.home?.name || 'Time A'),
+                        fora: capitalizeTeamName(f.teams?.away?.name || 'Time B'),
                         casaLogo: f.teams?.home?.logo || '',
                         foraLogo: f.teams?.away?.logo || '',
                         data: dataStr,
