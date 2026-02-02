@@ -6196,8 +6196,8 @@
             const passwordValue = document.getElementById('password')?.value || '';
             const accessCodeValue = document.getElementById('accessCode')?.value || '';
             
-            // AUTO-CARREGAR jogos se estiver na lineup e não tiver dados
-            if (state.screen === 'lineup' && state.currentUser && 
+            // AUTO-CARREGAR jogos se estiver na home ou lineup e não tiver dados
+            if ((state.screen === 'lineup' || state.screen === 'home') && state.currentUser && 
                 (!state.liveFixtures || state.liveFixtures.length === 0) && 
                 !state.isLoadingFixtures && !autoLoadingFixtures) {
                 autoLoadingFixtures = true;
