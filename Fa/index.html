@@ -6165,7 +6165,20 @@
             }
         }
         
+        let renderTimeout = null;
+        let lastRenderTime = 0;
+        const RENDER_DEBOUNCE = 50; // ms
+        
         function render() {
+            // Debounce: evitar múltiplos renders em sequência
+            const now = Date.now();
+            if (now - lastRenderTime < RENDER_DEBOUNCE) {
+                clearTimeout(renderTimeout);
+                renderTimeout = setTimeout(render, RENDER_DEBOUNCE);
+                return;
+            }
+            lastRenderTime = now;
+            
             const root = document.getElementById('root');
             
             // IMPORTANTE: Não re-renderizar a tela de login durante sincronização
@@ -6716,11 +6729,12 @@
                             <div class="lg:col-span-1 rounded-2xl p-5 border border-zinc-800 bg-gradient-to-br from-zinc-900 to-zinc-950">
                                 <div class="text-center">
                                     ${me?.teamLogo 
-                                        ? '<img src="' + me.teamLogo + '" class="w-24 h-24 rounded-2xl border-2 border-zinc-700 object-cover mx-auto mb-3 shadow-lg shadow-purple-500/10">' 
-                                        : '<div class="w-24 h-24 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-4xl font-black text-white mx-auto mb-3 shadow-lg shadow-purple-500/20">' + (me?.teamName || '?').charAt(0).toUpperCase() + '</div>'
+                                        ? '<img src="' + me.teamLogo + '" class="w-36 h-36 rounded-2xl border-2 border-zinc-700 object-cover mx-auto mb-2 shadow-lg shadow-purple-500/10">' 
+                                        : '<div class="w-36 h-36 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-5xl font-black text-white mx-auto mb-2 shadow-lg shadow-purple-500/20">' + (me?.teamName || '?').charAt(0).toUpperCase() + '</div>'
                                     }
-                                    <h2 class="text-white font-black text-lg">${me?.teamName || 'Meu Time'}</h2>
-                                    <p class="text-zinc-500 text-xs mb-4">@${state.currentUser}</p>
+                                    <h2 class="text-white font-black text-xl">${me?.teamName || 'Meu Time'}</h2>
+                                    <p class="text-zinc-500 text-xs">@${state.currentUser}</p>
+                                    ${state.favoriteTeam ? '<div class="flex items-center justify-center gap-2 mt-2 mb-3">' + (getTeamLogo(state.favoriteTeam) ? '<img src="' + getTeamLogo(state.favoriteTeam) + '" class="w-12 h-12">' : '') + '<span class="text-zinc-300 text-base font-bold">' + state.favoriteTeam + '</span></div>' : '<div class="mb-4"></div>'}
                                     
                                     <div class="grid grid-cols-3 gap-2 mb-4">
                                         <div class="rounded-xl p-2 bg-amber-500/5 border border-amber-500/20">
