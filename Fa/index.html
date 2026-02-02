@@ -903,6 +903,7 @@
             screen: 'auth',
             authMode: 'login',
             currentUser: null,
+            initComplete: false, // NÃO USADO - mantido por compatibilidade
             users: {},
             teamName: '',
             teamLogo: null,
@@ -3072,7 +3073,7 @@
                 } else {
                     state.tradeOffers = [];
                 }
-                render();
+                if (state.screen !== 'auth') render();
             });
             
             // Carregar contador de trocas mensais
@@ -3703,7 +3704,7 @@
                     }
                     
                     // Re-render se houver mudanças significativas
-                    if (oldRound !== state.currentRound || oldSubsOpen !== state.substitutionsOpen) {
+                    if ((oldRound !== state.currentRound || oldSubsOpen !== state.substitutionsOpen) && state.screen !== 'auth') {
                         render();
                     }
                 }
@@ -3912,7 +3913,7 @@
             db.ref('offers').on('value', (snapshot) => {
                 const offers = snapshot.val();
                 state.offers = offers ? Object.values(offers) : [];
-                render();
+                if (state.screen !== 'auth') render();
             });
         }
 
@@ -4123,7 +4124,7 @@
                     }
                     
                     // Atualizar tela COM DEBOUNCE (evita re-render excessivo durante digitação)
-                    if (!isUserTyping && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
+                    if (!isUserTyping && state.screen !== 'auth' && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup' || state.screen === 'home')) {
                         if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
                         renderDebounceTimer = setTimeout(() => {
                             render();
@@ -4367,6 +4368,12 @@
                 if (saved) {
                     const data = JSON.parse(saved);
                     state.currentUser = data.currentUser || null;
+                    
+                    // IMPORTANTE: Se tem usuário logado, já setar tela como 'home'
+                    // Isso evita race condition com listeners chamando render() antes do init() terminar
+                    if (state.currentUser) {
+                        state.screen = 'home';
+                    }
                     
                     // NÃO carregar dados de usuário do localStorage!
                     // Todos os dados vêm do Firebase via listenToUsers()
@@ -6441,7 +6448,7 @@
                                 <div class="flex items-center gap-3 mt-2">
                                     <input type="checkbox" id="rememberDevice" 
                                         class="w-5 h-5 rounded border-zinc-600 bg-zinc-800 text-emerald-500 focus:ring-emerald-500 focus:ring-offset-0 cursor-pointer"
-                                        ${localStorage.getItem('fantasyRememberDevice') === 'true' ? 'checked' : ''}>
+                                        checked>
                                     <label for="rememberDevice" class="text-zinc-400 text-sm cursor-pointer select-none">
                                         Lembrar dispositivo (manter conectado)
                                     </label>
@@ -6622,7 +6629,7 @@
             return `
                 <div class="min-h-screen">
                     <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl sticky top-0 z-50">
-                        <div class="max-w-7xl mx-auto px-4 sm:px-6">
+                        <div class="max-w-[1600px] mx-auto px-4 sm:px-6">
                             <div class="flex items-center justify-between h-20">
                                 <div class="flex items-center gap-6">
                                     <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-16 sm:h-[72px]">
@@ -6707,7 +6714,7 @@
                         </div>
                     </div>
                     
-                    <div class="max-w-7xl mx-auto px-3 sm:px-6 pb-24 sm:pb-6 pt-4">
+                    <div class="max-w-[1600px] mx-auto px-3 sm:px-6 pb-24 sm:pb-6 pt-4">
                         
                         <!-- HERO: User + Countdown + Jogos -->
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
@@ -6888,7 +6895,7 @@
                 <div class="min-h-screen">
                     <!-- Top Navigation -->
                     <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl sticky top-0 z-50">
-                        <div class="max-w-7xl mx-auto px-4 sm:px-6">
+                        <div class="max-w-[1600px] mx-auto px-4 sm:px-6">
                             <div class="flex items-center justify-between h-20">
                                 <div class="flex items-center gap-6">
                                     <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-16 sm:h-[72px]">
@@ -6984,7 +6991,7 @@
                     </div>
 
                     <!-- Main Content -->
-                    <div class="max-w-7xl mx-auto px-3 sm:px-4 pb-24 sm:pb-4 pt-4">
+                    <div class="max-w-[1600px] mx-auto px-3 sm:px-4 pb-24 sm:pb-4 pt-4">
                         <!-- Countdown Timer -->
                         ${state.nextRoundDate ? `
                             <div class="card rounded-xl p-4 mb-4 border border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-transparent">
@@ -10601,7 +10608,7 @@
                 <div class="min-h-screen bg-[#0a0a0a]">
                     <!-- Header -->
                     <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl">
-                        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
+                        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
                             <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
                             <div class="flex items-center gap-4">
                                 <select onchange="state.selectedRound=parseInt(this.value);render()" class="px-4 py-2.5 input-dark rounded-lg text-white text-base">
@@ -10616,7 +10623,7 @@
                         </div>
                     </nav>
 
-                    <div class="max-w-7xl mx-auto p-4">
+                    <div class="max-w-[1600px] mx-auto p-4">
                         <!-- Cards de Destaque -->
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                             <!-- Top 1 Pontuador da Rodada -->
@@ -11102,7 +11109,7 @@
                 <div class="min-h-screen bg-[#0a0a0a]">
                     <!-- Header -->
                     <nav class="border-b border-purple-500/20 bg-purple-950/30 backdrop-blur-xl">
-                        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
+                        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
                             <div class="flex items-center gap-4">
                                 <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
                                 <span class="px-4 py-1.5 bg-purple-500/20 text-purple-400 text-sm font-display tracking-wider rounded-full">DRAFT</span>
@@ -11114,7 +11121,7 @@
                         </div>
                     </nav>
 
-                    <div class="max-w-7xl mx-auto p-4">
+                    <div class="max-w-[1600px] mx-auto p-4">
                         <!-- Aviso Principal -->
                         <div class="card rounded-2xl p-8 mb-6 border-2 ${state.draftStarted ? 'border-emerald-500/30 bg-gradient-to-br from-green-500/10' : 'border-purple-500/30 bg-gradient-to-br from-purple-500/10'} to-transparent text-center">
                             
@@ -11388,7 +11395,7 @@
                 <div class="min-h-screen bg-[#0a0a0a]">
                     <!-- Header Admin -->
                     <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl">
-                        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
+                        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
                             <div class="flex items-center gap-4">
                                 <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
                                 <span class="px-4 py-1.5 bg-purple-500/20 text-purple-400 text-sm font-display tracking-wider rounded">PAINEL ADMIN</span>
@@ -11404,7 +11411,7 @@
                         </div>
                     </nav>
 
-                    <div class="max-w-7xl mx-auto p-4">
+                    <div class="max-w-[1600px] mx-auto p-4">
                         <!-- Abas Reorganizadas -->
                         <div class="flex gap-2 mb-6 overflow-x-auto pb-2">
                             <button onclick="state.adminTab='users';render()" 
@@ -12799,7 +12806,7 @@
                 <div class="min-h-screen bg-[#0a0a0a]">
                     <!-- Header Admin -->
                     <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl">
-                        <div class="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
+                        <div class="max-w-[1600px] mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
                             <div class="flex items-center gap-4">
                                 <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
                                 <span class="px-4 py-1.5 bg-red-500/20 text-red-400 text-sm font-display tracking-wider rounded">ADMIN</span>
@@ -12815,7 +12822,7 @@
                         </div>
                     </nav>
 
-                    <div class="max-w-7xl mx-auto p-4">
+                    <div class="max-w-[1600px] mx-auto p-4">
                         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                             <h2 class="font-display text-3xl text-white">DRAFT - MONTE OS TIMES</h2>
                             
@@ -14295,28 +14302,28 @@
                 return;
             }
             
-            // Verificar se deve lembrar dispositivo
+            // Verificar se deve lembrar dispositivo (SEMPRE salvar por padrão)
             const rememberCheckbox = document.getElementById('rememberDevice');
-            const shouldRemember = rememberCheckbox ? rememberCheckbox.checked : false;
+            const shouldRemember = rememberCheckbox ? rememberCheckbox.checked : true;
             
             // Pegar a senha do input (mais confiável que userData.password)
             const passwordInput = document.getElementById('password');
             const typedPassword = passwordInput ? passwordInput.value : '';
             const passwordToSave = typedPassword || userData.password || '';
             
-            if (shouldRemember && passwordToSave) {
-                // Salvar credenciais para login automático
+            // SEMPRE salvar credenciais para manter logado
+            if (passwordToSave) {
                 localStorage.setItem('fantasyRememberDevice', 'true');
                 localStorage.setItem('fantasyRememberUser', nickname);
                 localStorage.setItem('fantasyRememberPass', btoa(passwordToSave));
                 console.log('🔐 Dispositivo lembrado para:', nickname);
-            } else if (!shouldRemember) {
-                // Usuário desmarcou - limpar credenciais
+            }
+            if (rememberCheckbox && !shouldRemember) {
+                // Só limpar se usuário EXPLICITAMENTE desmarcou
                 localStorage.removeItem('fantasyRememberDevice');
                 localStorage.removeItem('fantasyRememberUser');
                 localStorage.removeItem('fantasyRememberPass');
             }
-            // Se não tem checkbox (ex: login automático), manter credenciais existentes
             
             state.currentUser = nickname;
             state.isAdmin = false;
@@ -20435,9 +20442,9 @@ O usuário não poderá mais fazer login.
             // Buscar do Firebase com timeout
             if (db) {
                 try {
-                    // Timeout de 5 segundos
+                    // Timeout de 15 segundos (mais tolerante com redes lentas)
                     const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Timeout')), 5000)
+                        setTimeout(() => reject(new Error('Timeout')), 15000)
                     );
                     
                     const firebasePromise = db.ref('users/' + savedUser).once('value');
@@ -20518,8 +20525,13 @@ O usuário não poderá mais fazer login.
                     }
                 } catch (e) {
                     console.error('❌ Erro no login automático:', e.message);
-                    // Não limpar credenciais em caso de timeout/erro de rede
-                    // Usuário pode tentar de novo
+                    // Em caso de timeout/erro de rede, manter logado com dados em cache
+                    if (savedUser) {
+                        state.currentUser = savedUser;
+                        state.screen = 'home';
+                        console.log('⚠️ Firebase lento, mantendo sessão para:', savedUser);
+                        return true;
+                    }
                     return false;
                 }
             }
@@ -20537,6 +20549,14 @@ O usuário não poderá mais fazer login.
                 
                 loadState();
                 
+                // RENDERIZAR IMEDIATAMENTE com dados do cache
+                // Isso mostra a tela Home em menos de 100ms
+                if (state.currentUser) {
+                    console.log('👤 Usuário já logado:', state.currentUser);
+                    console.log('⚡ Renderizando com cache...');
+                    render(); // RENDER INSTANTÂNEO com dados em cache
+                }
+                
                 // Aguardar Firebase estar pronto (max 3 segundos)
                 let attempts = 0;
                 while (!db && attempts < 30) {
@@ -20544,80 +20564,48 @@ O usuário não poderá mais fazer login.
                     attempts++;
                 }
                 
-                // Se JÁ tem usuário logado (do localStorage), carregar dados do Firebase
+                // Se JÁ tem usuário logado (do localStorage), carregar dados frescos do Firebase em BACKGROUND
                 if (state.currentUser) {
-                    console.log('👤 Usuário já logado:', state.currentUser);
-                    
                     if (db) {
-                        try {
-                            // Migrar admin antigo para novo sistema se necessário
+                        // Verificar admin em background (não bloquear)
+                        (async () => {
                             try {
-                                const adminCheck = await db.ref('adminUsers').once('value');
-                                if (!adminCheck.val()) {
-                                    // Criar admin padrão com senha hashada
-                                    const defaultHash = 'sha256$938657235a6986a4d2df25d560d59db1838a0db5a29f8995d42da519b58d0a1c';
-                                    await db.ref('adminUsers/admin').set({ password: defaultHash, teamName: 'ADMIN', createdBy: 'system', createdAt: Date.now() });
-                                    console.log('🔐 Admin criado no novo sistema');
-                                }
-                            } catch(e) {}
-                            
-                            // Verificar se usuário logado é admin
-                            try {
-                                const aSnap = await db.ref('adminUsers/' + state.currentUser).once('value');
-                                if (aSnap.val()) state.isAdmin = true;
-                            } catch(e) {}
-                            // Buscar dados atualizados do Firebase
-                            const snapshot = await db.ref('users/' + state.currentUser).once('value');
-                            const userData = snapshot.val();
-                            
-                            console.log('📦 Dados do Firebase:', userData ? 'encontrado' : 'vazio');
-                            console.log('   teamName:', userData?.teamName);
-                            const startersArray = Array.isArray(userData?.starters) ? userData.starters : Object.values(userData?.starters || {});
-                            console.log('   starters:', startersArray.filter(s => s)?.length || 0, 'jogadores');
-                            
-                            if (userData) {
-                                // Carregar dados do usuário
-                                state.users[state.currentUser] = userData;
-                                state.teamName = userData.teamName || '';
-                                state.teamLogo = userData.teamLogo || null;
-                                state.formation = userData.formation || '4-3-3';
-                                state.starters = ensureArray(userData.starters, 11);
-                                state.reserves = ensureArray(userData.reserves, 7);
-                                state.coach = userData.coach || null;
-                                state.isConfirmed = userData.isConfirmed || false;
-                                state.scores = userData.scores || {};
-                                state.favoriteTeam = userData.favoriteTeam || null;
-                                state.userBio = userData.userBio || '';
+                                // Migrar admin antigo para novo sistema se necessário
+                                try {
+                                    const adminCheck = await db.ref('adminUsers').once('value');
+                                    if (!adminCheck.val()) {
+                                        const defaultHash = 'sha256$938657235a6986a4d2df25d560d59db1838a0db5a29f8995d42da519b58d0a1c';
+                                        await db.ref('adminUsers/admin').set({ password: defaultHash, teamName: 'ADMIN', createdBy: 'system', createdAt: Date.now() });
+                                        console.log('🔐 Admin criado no novo sistema');
+                                    }
+                                } catch(e) {}
                                 
-                                // Verificar se tem time: pelo nome OU se já tem jogadores escalados
-                                const startersCheck = Array.isArray(userData.starters) ? userData.starters : Object.values(userData.starters || {});
-                                const hasTeam = userData.teamName || 
-                                               (startersCheck && startersCheck.filter(s => s).length > 0);
-                                
-                                state.screen = hasTeam ? 'home' : 'createTeam';
-                                console.log('📺 Tela:', state.screen, '| hasTeam:', hasTeam);
-                                
-                                console.log('✅ Dados carregados do Firebase');
-                                
-                                // Iniciar listeners
-                                listenToDraftChat();
-                                listenToDraftStatus();
-                                listenToNextRound();
-                                listenToPrivateMessages();
-                            } else {
-                                // Usuário não existe mais no Firebase
-                                console.log('⚠️ Usuário não encontrado no Firebase');
-                                state.currentUser = null;
-                                state.screen = 'auth';
+                                // Verificar se usuário logado é admin
+                                try {
+                                    const aSnap = await db.ref('adminUsers/' + state.currentUser).once('value');
+                                    if (aSnap.val()) {
+                                        state.isAdmin = true;
+                                        render();
+                                    }
+                                } catch(e) {}
+                            } catch(e) {
+                                console.error('Erro ao verificar admin:', e);
                             }
-                        } catch (e) {
-                            console.error('Erro ao carregar usuário:', e);
-                            // Em caso de erro, manter na tela de auth
-                            state.screen = 'auth';
-                        }
+                        })();
+                        
+                        // Os listeners (listenToUsers, listenToGameState, etc.) já foram 
+                        // iniciados no loadState() e vão atualizar os dados automaticamente.
+                        // NÃO precisamos fazer db.ref('users/...').once('value') aqui!
+                        
+                        // Iniciar listeners extras
+                        listenToDraftChat();
+                        listenToDraftStatus();
+                        listenToNextRound();
+                        listenToPrivateMessages();
+                        
+                        console.log('✅ Init completo (listeners ativos)');
                     } else {
-                        console.log('⚠️ Firebase não conectou');
-                        state.screen = 'auth';
+                        console.log('⚠️ Firebase não conectou, mantendo sessão com cache');
                     }
                 } 
                 // Se NÃO tem usuário logado, tentar login automático (lembrar dispositivo)
@@ -20632,11 +20620,13 @@ O usuário não poderá mais fazer login.
                         console.log('⚠️ Firebase não conectou, indo para login');
                         state.screen = 'auth';
                     }
+                    render();
                 }
                 
-                render();
+                state.initComplete = true;
             } catch(e) {
                 console.error('Erro na inicialização:', e);
+                state.initComplete = true;
                 document.getElementById('root').innerHTML = '<div style="color:white;padding:20px;"><h1>Erro ao carregar</h1><p>' + e.message + '</p><button onclick="localStorage.clear();location.reload()">Limpar dados e recarregar</button></div>';
             }
         })();
