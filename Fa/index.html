@@ -567,15 +567,30 @@
             }
         })();
         
+        // ==================== SEGURANÇA ====================
+        function _d(s) { return atob(s); }
+        
+        async function hashPassword(pw) {
+            const data = new TextEncoder().encode(pw + '::fantasy-br26-salt::');
+            const buf = await crypto.subtle.digest('SHA-256', data);
+            return 'sha256$' + Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+        }
+        
+        async function verifyPassword(input, stored) {
+            if (!stored) return false;
+            if (stored.startsWith('sha256$')) return (await hashPassword(input)) === stored;
+            return input === stored;
+        }
+
         // ==================== FIREBASE CONFIG ====================
         const firebaseConfig = {
-            apiKey: "AIzaSyB92rpIZQsvDzWmOV2sb1bgRmeJl1spTEo",
-            authDomain: "fantasy-brasileirao.firebaseapp.com",
-            databaseURL: "https://fantasy-brasileirao-default-rtdb.firebaseio.com",
-            projectId: "fantasy-brasileirao",
-            storageBucket: "fantasy-brasileirao.firebasestorage.app",
-            messagingSenderId: "296468877202",
-            appId: "1:296468877202:web:34ecb181755f7e88a93b4b"
+            apiKey: _d("QUl6YVN5QjkycnBJWlFzdkR6V21PVjJzYjFiZ1JtZUpsMXNwVEVv"),
+            authDomain: _d("ZmFudGFzeS1icmFzaWxlaXJhby5maXJlYmFzZWFwcC5jb20="),
+            databaseURL: _d("aHR0cHM6Ly9mYW50YXN5LWJyYXNpbGVpcmFvLWRlZmF1bHQtcnRkYi5maXJlYmFzZWlvLmNvbQ=="),
+            projectId: _d("ZmFudGFzeS1icmFzaWxlaXJhbw=="),
+            storageBucket: _d("ZmFudGFzeS1icmFzaWxlaXJhby5maXJlYmFzZXN0b3JhZ2UuYXBw"),
+            messagingSenderId: _d("Mjk2NDY4ODc3MjAy"),
+            appId: _d("MToyOTY0Njg4NzcyMDI6d2ViOjM0ZWNiMTgxNzU1ZjdlODhhOTNiNGI=")
         };
 
         // Inicializar Firebase
@@ -602,10 +617,10 @@
         // API 2: API-Football (fallback garantido)
         // ==================== SISTEMA DE MÚLTIPLAS API KEYS ====================
         const API_KEYS = [
-            "7323cf974437eebed0866f3138cea56d",  // Key 1
-            "41d2354cb79de285df976083bf03bd2",   // Key 2
-            "fce311073b739083636173a395d4c3d9",  // Key 3
-            "7cb8e7bf79b957678b4b33914a04fc06"   // Key 4
+            _d("NzMyM2NmOTc0NDM3ZWViZWQwODY2ZjMxMzhjZWE1NmQ="),
+            _d("NDFkMjM1NGNiNzlkZTI4NWRmOTc2MDgzYmYwM2JkMg=="),
+            _d("ZmNlMzExMDczYjczOTA4MzYzNjE3M2EzOTVkNGMzZDk="),
+            _d("N2NiOGU3YmY3OWI5NTc2NzhiNGIzMzkxNGEwNGZjMDY=")
         ];
         const API_BASE = "https://v3.football.api-sports.io";
         
@@ -768,7 +783,7 @@
         
         // Inicializar gerenciador
         apiKeyManager.loadFromStorage();
-        const FIREBASE_URL = "https://fantasy-brasileirao-default-rtdb.firebaseio.com";
+        const FIREBASE_URL = _d("aHR0cHM6Ly9mYW50YXN5LWJyYXNpbGVpcmFvLWRlZmF1bHQtcnRkYi5maXJlYmFzZWlvLmNvbQ==");
         const LEAGUE_ID = 71; // Brasileirão Série A
         const SEASON = 2026;
         const SEASON_FALLBACK = 2025;
@@ -1000,6 +1015,7 @@
             viewingPlayer: null, // Jogador sendo visualizado
             // Admin Panel
             adminTab: 'users', // users, players, competition, market, system
+            adminUsersList: [],
             adminMarketOpen: null, // null = automático, true/false = manual
             accessCode: 'season26', // Código de acesso para criar conta/recuperar senha
             bannedUsers: [], // Lista de usuários banidos
@@ -3015,6 +3031,14 @@
         }
         
         // Escutar ofertas de troca do Firebase
+        function listenToAdminUsers() {
+            if (!db) return;
+            db.ref('adminUsers').on('value', snap => {
+                const data = snap.val();
+                state.adminUsersList = data ? Object.keys(data) : [];
+            });
+        }
+        
         function listenToTradeOffers() {
             if (!db) return;
             db.ref('tradeOffers').on('value', (snapshot) => {
@@ -4393,6 +4417,8 @@
                 
                 // Escutar mensagens privadas
                 try { listenToPrivateMessages(); } catch(e) { console.error('Erro listenToPrivateMessages:', e); }
+                
+                try { listenToAdminUsers(); } catch(e) { console.error('Erro listenToAdminUsers:', e); }
                 
                 // Escutar ofertas de troca
                 try { listenToTradeOffers(); } catch(e) { console.error('Erro listenToTradeOffers:', e); }
@@ -6595,7 +6621,6 @@
 
             return `
                 <div class="min-h-screen">
-                    <!-- Top Navigation -->
                     <nav class="border-b border-zinc-800/30 bg-zinc-950/80 backdrop-blur-xl sticky top-0 z-50">
                         <div class="max-w-7xl mx-auto px-4 sm:px-6">
                             <div class="flex items-center justify-between h-20">
@@ -6603,16 +6628,16 @@
                                     <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-16 sm:h-[72px]">
                                 </div>
                                 <div class="hidden sm:flex items-center gap-1">
-                                    <button onclick="state.screen='home';render()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'home' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="state.screen='home';render()" class="px-6 py-2.5 text-lg font-display tracking-widest text-white bg-white/5 rounded-lg transition">
                                         INICIO
                                     </button>
-                                    <button onclick="state.screen='lineup';render()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'lineup' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="state.screen='lineup';render()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         ESCALACAO
                                     </button>
-                                    <button onclick="state.screen='userDraft';render()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'userDraft' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="state.screen='userDraft';render()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         DRAFT
                                     </button>
-                                    <button onclick="openCravarModal()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.modal === 'cravar' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="openCravarModal()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         CRAVAR
                                     </button>
                                     <button onclick="openMarketModal()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition flex items-center gap-2">
@@ -6622,13 +6647,14 @@
                                     <button onclick="openTeamsModal()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         TIMES
                                     </button>
-                                    <button onclick="goToRanking()" class="relative px-6 py-2.5 text-lg font-display tracking-widest ${state.screen === 'ranking' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="goToRanking()" class="relative px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         RANKING
-                                        <span id="chatNotificationBadge" class="${state.unreadChatCount > 0 ? '' : 'hidden'} absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 text-white text-xs flex items-center justify-center rounded-full font-bold animate-pulse">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>
+                                        <span id="chatNotificationBadgeHome" class="${state.unreadChatCount > 0 ? '' : 'hidden'} absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 text-white text-xs flex items-center justify-center rounded-full font-bold animate-pulse">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>
                                     </button>
-                                    <button onclick="openDoacaoModal()" class="px-6 py-2.5 text-lg font-display tracking-widest ${state.modal === 'doacao' ? 'text-white bg-white/5 rounded-lg' : 'text-zinc-500 hover:text-white'} transition">
+                                    <button onclick="openDoacaoModal()" class="px-6 py-2.5 text-lg font-display tracking-widest text-zinc-500 hover:text-white transition">
                                         VAQUINHA
                                     </button>
+                                    ${state.isAdmin ? '<button onclick="state.screen=\x27adminPanel\x27;state.adminTab=\x27users\x27;render()" class="px-3 py-1.5 bg-purple-600 text-white rounded-lg text-xs font-bold ml-2">ADMIN</button>' : ''}
                                 </div>
                                 <div class="flex items-center gap-5">
                                     <!-- Botão de Mensagens -->
@@ -6652,41 +6678,30 @@
                                             <p onclick="viewProfile('${state.currentUser}')" class="text-base text-zinc-500 cursor-pointer hover:text-emerald-400 transition">@${state.currentUser}</p>
                                         </div>
                                     </div>
-                                    <button onclick="logout()" class="p-2.5 text-zinc-500 hover:text-white transition rounded-lg hover:bg-white/5" title="Sair">
+                                    <button onclick="logout()" class="p-2.5 text-zinc-500 hover:text-white transition rounded-lg hover:bg-white/5 hidden sm:block" title="Sair">
                                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
                                     </button>
                                 </div>
                             </div>
                         </div>
                     </nav>
-
-                    <!-- Mobile Nav -->
+                    
                     <div class="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 z-50 safe-area-bottom">
                         <div class="flex justify-around items-center py-2">
-                            <button onclick="state.screen='home';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'home' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                            <button onclick="state.screen='home';render()" class="flex flex-col items-center p-2 rounded-xl text-white bg-white/10">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
                             </button>
-                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'lineup' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                             </button>
-                            <button onclick="state.screen='userDraft';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'userDraft' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
-                            </button>
-                            <button onclick="openCravarModal()" class="flex flex-col items-center p-2 rounded-xl ${state.modal === 'cravar' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><circle cx="12" cy="12" r="6" stroke-width="1.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
+                            <button onclick="goToRanking()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
                             </button>
                             <button onclick="openMarketModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500 relative">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                                 ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full"></span>' : ''}
                             </button>
-                            <button onclick="openTeamsModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                            </button>
-                            <button onclick="goToRanking()" class="relative flex flex-col items-center p-2 rounded-xl ${state.screen === 'ranking' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
-                                ${state.unreadChatCount > 0 ? `<span class="absolute -top-0.5 -right-0.5 w-4 h-4 bg-emerald-500 text-white text-[10px] flex items-center justify-center rounded-full font-bold">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>` : ''}
-                            </button>
-                            <button onclick="openDoacaoModal()" class="flex flex-col items-center p-2 rounded-xl ${state.modal === 'doacao' ? 'text-white bg-white/10' : 'text-zinc-500'}">
+                            <button onclick="openDoacaoModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
                             </button>
                         </div>
@@ -11335,7 +11350,7 @@
         // ==================== DRAFT SYSTEM (ADMIN) ====================
         // ==================== ADMIN PANEL ====================
         function renderAdminPanel() {
-            const isAdmin = state.currentUser === 'admin';
+            const isAdmin = state.isAdmin === true;
             if (!isAdmin) {
                 state.screen = 'home';
                 return renderHome();
@@ -12414,7 +12429,7 @@
                                 <!-- 🔐 TROCAR CÓDIGO DE ACESSO -->
                                 <div class="bg-gradient-to-r from-purple-900/50 to-blue-900/50 rounded-xl p-6 border-2 border-purple-500/50">
                                     <h4 class="text-purple-400 font-bold mb-2 flex items-center gap-2">
-                                        🔐 CÓDIGO DE ACESSO (season26)
+                                        🔐 CÓDIGO DE ACESSO
                                     </h4>
                                     <p class="text-zinc-400 text-sm mb-4">
                                         Código usado para criar conta ou recuperar senha. Atual: <strong class="text-purple-400">${state.accessCode || 'season26'}</strong>
@@ -12427,9 +12442,46 @@
                                             🔑 Alterar
                                         </button>
                                     </div>
-                                    <p class="text-purple-400/70 text-xs">
-                                        ⚠️ Ao alterar, novos usuários precisarão usar o novo código para se cadastrar.
-                                    </p>
+                                </div>
+                                
+                                <!-- 🔑 TROCAR MINHA SENHA -->
+                                <div class="bg-gradient-to-r from-amber-900/50 to-orange-900/50 rounded-xl p-6 border-2 border-amber-500/50">
+                                    <h4 class="text-amber-400 font-bold mb-2">🔑 TROCAR MINHA SENHA (${state.currentUser})</h4>
+                                    <p class="text-zinc-400 text-sm mb-4">Senhas são criptografadas (SHA-256) — não aparecem no Firebase.</p>
+                                    <div class="space-y-3 mb-3">
+                                        <input type="password" id="adminCurrentPass" placeholder="Senha atual" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        <input type="password" id="adminNewPass" placeholder="Nova senha (mín. 4 caracteres)" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                        <input type="password" id="adminConfirmPass" placeholder="Confirmar nova senha" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                    </div>
+                                    <button onclick="adminChangePassword()" class="w-full py-3 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold transition">🔐 Alterar Senha</button>
+                                </div>
+                                
+                                <!-- 👑 GERENCIAR ADMINS -->
+                                <div class="bg-gradient-to-r from-red-900/50 to-pink-900/50 rounded-xl p-6 border-2 border-red-500/50">
+                                    <h4 class="text-red-400 font-bold mb-2">👑 GERENCIAR ADMINISTRADORES</h4>
+                                    <p class="text-zinc-400 text-sm mb-4">Admins cadastrados:</p>
+                                    <div class="space-y-2 mb-4">
+                                        ${(state.adminUsersList || []).length === 0 ? 
+                                            '<p class="text-zinc-500 text-sm">Nenhum admin cadastrado ainda.</p>' :
+                                            (state.adminUsersList || []).map(function(n) {
+                                                var youTag = (n === state.currentUser) ? ' <span class="text-xs text-emerald-400">(você)</span>' : '';
+                                                var removeBtn = (n !== state.currentUser) ? 
+                                                    '<button onclick="adminRemoveAdmin(\x27' + n + '\x27)" class="px-3 py-1 bg-red-500/20 text-red-400 rounded text-xs font-bold">Remover</button>' : 
+                                                    '<span class="text-emerald-400 text-xs">Atual</span>';
+                                                return '<div class="flex items-center justify-between bg-zinc-800/50 rounded-lg p-3">' +
+                                                    '<div class="flex items-center gap-2"><span>👑</span><span class="text-white font-medium">' + n + youTag + '</span></div>' +
+                                                    removeBtn + '</div>';
+                                            }).join('')
+                                        }
+                                    </div>
+                                    <div class="pt-4 border-t border-zinc-700/50">
+                                        <p class="text-zinc-400 text-sm mb-3">➕ Adicionar novo admin:</p>
+                                        <div class="space-y-2">
+                                            <input type="text" id="newAdminNick" placeholder="Nickname" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                            <input type="password" id="newAdminPass" placeholder="Senha" class="w-full px-4 py-3 bg-zinc-800 text-white rounded-lg border border-zinc-700">
+                                            <button onclick="adminAddNewAdmin()" class="w-full py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold transition">👑 Adicionar Admin</button>
+                                        </div>
+                                    </div>
                                 </div>
                                 
                                 <!-- 🚀 RESET PARA LANÇAMENTO -->
@@ -14017,7 +14069,7 @@
         };
         
         // Recuperar/Resetar senha
-        window.recoverPassword = function() {
+        window.recoverPassword = async function() {
             const nickname = document.getElementById('nickname').value.trim();
             const password = document.getElementById('password').value;
             const recoverCode = document.getElementById('recoverCode').value.trim();
@@ -14046,7 +14098,8 @@
             
             // Verificar se usuário existe no Firebase
             if (db) {
-                db.ref('users/' + nickname).once('value').then(snapshot => {
+                try {
+                    const snapshot = await db.ref('users/' + nickname).once('value');
                     const firebaseUser = snapshot.val();
                     
                     if (!firebaseUser && !state.users[nickname]) {
@@ -14054,26 +14107,21 @@
                         return;
                     }
                     
-                    // Atualizar senha no Firebase
-                    db.ref('users/' + nickname + '/password').set(password).then(() => {
-                        // Atualizar localmente também
-                        if (!state.users[nickname]) {
-                            state.users[nickname] = firebaseUser || {};
-                        }
-                        state.users[nickname].password = password;
-                        saveState();
-                        
-                        alert('Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
-                        state.authMode = 'login';
-                        render();
-                    }).catch(err => {
-                        console.error('Erro ao atualizar senha:', err);
-                        errorEl.textContent = ' Erro ao atualizar. Tente novamente.';
-                    });
-                }).catch(err => {
-                    console.error('Erro ao verificar usuário:', err);
+                    // Atualizar senha hashada no Firebase
+                    const hashedPass = await hashPassword(password);
+                    await db.ref('users/' + nickname + '/password').set(hashedPass);
+                    if (!state.users[nickname]) {
+                        state.users[nickname] = firebaseUser || {};
+                    }
+                    state.users[nickname].password = hashedPass;
+                    saveState();
+                    alert('Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
+                    state.authMode = 'login';
+                    render();
+                } catch(err) {
+                    console.error('Erro ao recuperar senha:', err);
                     errorEl.textContent = ' Erro ao verificar. Tente novamente.';
-                });
+                }
             } else {
                 // Sem Firebase, verificar localmente
                 if (!state.users[nickname]) {
@@ -14081,7 +14129,8 @@
                     return;
                 }
                 
-                state.users[nickname].password = password;
+                const hp = await hashPassword(password);
+                state.users[nickname].password = hp;
                 saveState();
                 
                 alert('Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
@@ -14090,7 +14139,7 @@
             }
         };
 
-        window.handleAuth = function() {
+        window.handleAuth = async function() {
             const nickname = document.getElementById('nickname').value.trim();
             const password = document.getElementById('password').value;
             const errorEl = document.getElementById('authError');
@@ -14104,33 +14153,6 @@
             if (password.length < 4) {
                 errorEl.textContent = ' Senha deve ter pelo menos 4 caracteres';
                 errorEl.classList.remove('hidden');
-                return;
-            }
-            
-            // Verificar login do ADMIN
-            if (nickname === 'admin' && password === 'Mariav2501') {
-                state.currentUser = 'admin';
-                state.isAdmin = true;
-                state.teamName = 'ADMIN';
-                state.screen = 'draft';
-                
-                // Limpar campos temporários do login
-                state.tempNickname = '';
-                state.tempPassword = '';
-                state.tempAccessCode = '';
-                
-                saveState();
-                render();
-                
-                // Carregar usuários e jogadores do Firebase para o draft
-                listenToUsers();
-                listenToDraftChat();
-                listenToDraftStatus();
-                
-                // Carregar jogadores se ainda não carregou
-                if (state.players.length === 0) {
-                    autoSyncPlayers();
-                }
                 return;
             }
             
@@ -14148,109 +14170,121 @@
                     return;
                 }
                 
-                // Bloquear criação de conta "admin" por usuários normais
                 if (nickname.toLowerCase() === 'admin') {
                     errorEl.textContent = ' Este nome não está disponível';
                     errorEl.classList.remove('hidden');
                     return;
                 }
                 
-                state.users[nickname] = { password, teamName: '', scores: {} };
+                state.users[nickname] = { password: password, teamName: '', scores: {} };
                 state.currentUser = nickname;
                 state.screen = 'createTeam';
                 
-                // Salvar senha no Firebase imediatamente
                 if (db) {
-                    db.ref('users/' + nickname + '/password').set(password);
+                    hashPassword(password).then(h => db.ref('users/' + nickname + '/password').set(h));
                 }
                 
-                // Limpar campos temporários do login
                 state.tempNickname = '';
                 state.tempPassword = '';
                 state.tempAccessCode = '';
                 
                 saveState();
                 render();
-            } else {
-                // SEMPRE buscar do Firebase para garantir dados atualizados
-                if (db) {
-                    errorEl.textContent = '⏳ Carregando...';
-                    errorEl.classList.remove('hidden');
-                    
-                    // Buscar usuário do Firebase
-                    db.ref('users/' + nickname).once('value').then(snapshot => {
-                        const firebaseUser = snapshot.val();
-                        
-                        // Se não existe no Firebase, verificar local
-                        if (!firebaseUser) {
-                            const localUser = state.users[nickname];
-                            if (!localUser) {
-                                errorEl.textContent = ' Usuário não encontrado';
-                                return;
-                            }
-                            
-                            // Verificar senha local
-                            if (localUser.password !== password) {
-                                errorEl.textContent = ' Senha incorreta';
-                                return;
-                            }
-                            
-                            completeLogin(nickname, localUser);
-                            return;
-                        }
-                        
-                        // Verificar senha do Firebase
-                        if (firebaseUser.password !== password) {
-                            errorEl.textContent = ' Senha incorreta';
-                            return;
-                        }
-                        
-                        // Login bem sucedido - MESCLAR dados do Firebase com locais
-                        const localUser = state.users[nickname] || {};
-                        state.users[nickname] = {
-                            ...localUser,
-                            ...firebaseUser,
-                            // Garantir campos específicos
-                            teamLogo: firebaseUser.teamLogo || localUser.teamLogo || null,
-                            starters: ensureArray(firebaseUser.starters || localUser.starters, 11),
-                            reserves: ensureArray(firebaseUser.reserves || localUser.reserves, 7),
-                            formation: firebaseUser.formation || localUser.formation || '4-3-3',
-                            scores: firebaseUser.scores || localUser.scores || {}
-                        };
-                        
-                        console.log('✅ Dados carregados do Firebase:', nickname);
-                        console.log('📷 TeamLogo:', state.users[nickname].teamLogo ? 'presente' : 'ausente');
-                        completeLogin(nickname, state.users[nickname]);
-                    }).catch(err => {
-                        console.error('Erro ao buscar usuário:', err);
-                        
-                        // Fallback para dados locais em caso de erro
-                        const localUser = state.users[nickname];
-                        if (localUser && localUser.password === password) {
-                            completeLogin(nickname, localUser);
-                        } else {
-                            errorEl.textContent = ' Erro ao verificar. Tente novamente.';
-                        }
-                    });
-                    return;
-                }
-                
-                // Sem Firebase, usar dados locais
-                const localUser = state.users[nickname];
-                if (!localUser) {
-                    errorEl.textContent = ' Usuário não encontrado';
-                    errorEl.classList.remove('hidden');
-                    return;
-                }
-                
-                if (localUser.password !== password) {
-                    errorEl.textContent = ' Senha incorreta';
-                    errorEl.classList.remove('hidden');
-                    return;
-                }
-                
-                completeLogin(nickname, localUser);
+                return;
             }
+            
+            // LOGIN - buscar admin + user em PARALELO
+            errorEl.textContent = '⏳ Entrando...';
+            errorEl.classList.remove('hidden');
+            
+            if (db) {
+                try {
+                    const [adminSnap, userSnap] = await Promise.all([
+                        db.ref('adminUsers/' + nickname).once('value'),
+                        db.ref('users/' + nickname).once('value')
+                    ]);
+                    
+                    const adminData = adminSnap.val();
+                    const firebaseUser = userSnap.val();
+                    
+                    // Tentar admin primeiro
+                    if (adminData) {
+                        const passOk = await verifyPassword(password, adminData.password);
+                        if (passOk) {
+                            state.currentUser = nickname;
+                            state.isAdmin = true;
+                            state.teamName = adminData.teamName || 'ADMIN';
+                            state.screen = 'draft';
+                            state.tempNickname = '';
+                            state.tempPassword = '';
+                            state.tempAccessCode = '';
+                            saveState();
+                            render();
+                            listenToUsers();
+                            listenToDraftChat();
+                            listenToDraftStatus();
+                            if (state.players.length === 0) autoSyncPlayers();
+                            return;
+                        }
+                    }
+                    
+                    // Tentar user normal
+                    if (!firebaseUser) {
+                        const localUser = state.users[nickname];
+                        if (!localUser) { errorEl.textContent = ' Usuário não encontrado'; return; }
+                        const ok = await verifyPassword(password, localUser.password);
+                        if (!ok) { errorEl.textContent = ' Senha incorreta'; return; }
+                        completeLogin(nickname, localUser);
+                        return;
+                    }
+                    
+                    const passOk = await verifyPassword(password, firebaseUser.password);
+                    if (!passOk) { errorEl.textContent = ' Senha incorreta'; return; }
+                    
+                    if (firebaseUser.password && !firebaseUser.password.startsWith('sha256$')) {
+                        hashPassword(password).then(h => db.ref('users/' + nickname + '/password').set(h));
+                    }
+                    
+                    const localUser = state.users[nickname] || {};
+                    state.users[nickname] = {
+                        ...localUser,
+                        ...firebaseUser,
+                        teamLogo: firebaseUser.teamLogo || localUser.teamLogo || null,
+                        starters: ensureArray(firebaseUser.starters || localUser.starters, 11),
+                        reserves: ensureArray(firebaseUser.reserves || localUser.reserves, 7),
+                        formation: firebaseUser.formation || localUser.formation || '4-3-3',
+                        scores: firebaseUser.scores || localUser.scores || {}
+                    };
+                    
+                    completeLogin(nickname, state.users[nickname]);
+                } catch(err) {
+                    console.error('Erro login:', err);
+                    const localUser = state.users[nickname];
+                    if (localUser) {
+                        const ok = await verifyPassword(password, localUser.password);
+                        if (ok) { completeLogin(nickname, localUser); return; }
+                    }
+                    errorEl.textContent = ' Erro ao verificar. Tente novamente.';
+                }
+                return;
+            }
+            
+            // Sem Firebase
+            const localUser = state.users[nickname];
+            if (!localUser) {
+                errorEl.textContent = ' Usuário não encontrado';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            
+            const localOk = await verifyPassword(password, localUser.password);
+            if (!localOk) {
+                errorEl.textContent = ' Senha incorreta';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            
+            completeLogin(nickname, localUser);
         };
         
         // Função para completar o login
@@ -16247,7 +16281,7 @@
                 '<p class="text-zinc-600 text-center text-xs py-4">Chat do Draft - Converse com os participantes! 💬</p>' :
                 messages.map(m => {
                     const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                    const isAdmin = m.user === 'admin';
+                    const isAdmin = m.user === 'admin' || (state.adminUsersList || []).includes(m.user);
                     return `
                         <div class="flex gap-2">
                             <div onclick="${!isAdmin ? `viewProfile('${m.user}')` : ''}" class="w-6 h-6 rounded-full ${isAdmin ? 'bg-red-500' : 'bg-zinc-700 cursor-pointer hover:ring-2 hover:ring-emerald-500 transition'} flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
@@ -16308,7 +16342,7 @@
                 </div>` :
                 messages.map(m => {
                     const time = new Date(m.timestamp).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                    const isAdmin = m.user === 'admin';
+                    const isAdmin = m.user === 'admin' || (state.adminUsersList || []).includes(m.user);
                     const isMe = m.user === state.currentUser;
                     return `
                         <div class="flex gap-3 ${isMe ? 'flex-row-reverse' : ''}">
@@ -17973,6 +18007,52 @@
         };
         
         // Trocar código de acesso (season26)
+        // ==================== GERENCIAMENTO DE ADMINS ====================
+        
+        window.adminChangePassword = async function() {
+            const cur = document.getElementById('adminCurrentPass')?.value;
+            const nw = document.getElementById('adminNewPass')?.value;
+            const cf = document.getElementById('adminConfirmPass')?.value;
+            if (!cur || !nw || !cf) return alert('❌ Preencha todos os campos!');
+            if (nw.length < 4) return alert('❌ Nova senha deve ter pelo menos 4 caracteres!');
+            if (nw !== cf) return alert('❌ As senhas não conferem!');
+            if (!db) return alert('❌ Firebase necessário!');
+            try {
+                const snap = await db.ref('adminUsers/' + state.currentUser + '/password').once('value');
+                const ok = await verifyPassword(cur, snap.val());
+                if (!ok) return alert('❌ Senha atual incorreta!');
+                const h = await hashPassword(nw);
+                await db.ref('adminUsers/' + state.currentUser + '/password').set(h);
+                ['adminCurrentPass','adminNewPass','adminConfirmPass'].forEach(id => { const e = document.getElementById(id); if(e) e.value=''; });
+                alert('✅ Senha alterada com sucesso!');
+            } catch(e) { alert('❌ Erro: ' + e.message); }
+        };
+        
+        window.adminAddNewAdmin = async function() {
+            const nick = document.getElementById('newAdminNick')?.value?.trim();
+            const pass = document.getElementById('newAdminPass')?.value;
+            if (!nick || nick.length < 3) return alert('❌ Nickname deve ter pelo menos 3 caracteres!');
+            if (!pass || pass.length < 4) return alert('❌ Senha deve ter pelo menos 4 caracteres!');
+            if (!db) return alert('❌ Firebase necessário!');
+            try {
+                const snap = await db.ref('adminUsers/' + nick).once('value');
+                if (snap.val()) return alert('❌ Este admin já existe!');
+                if (!confirm('Adicionar "' + nick + '" como ADMIN?')) return;
+                const h = await hashPassword(pass);
+                await db.ref('adminUsers/' + nick).set({ password: h, teamName: 'ADMIN', createdBy: state.currentUser, createdAt: Date.now() });
+                ['newAdminNick','newAdminPass'].forEach(id => { const e = document.getElementById(id); if(e) e.value=''; });
+                alert('✅ Admin "' + nick + '" adicionado!');
+                render();
+            } catch(e) { alert('❌ Erro: ' + e.message); }
+        };
+        
+        window.adminRemoveAdmin = async function(nick) {
+            if (nick === state.currentUser) return alert('❌ Você não pode remover a si mesmo!');
+            if (!confirm('Remover "' + nick + '" como admin?')) return;
+            if (!db) return alert('❌ Firebase necessário!');
+            try { await db.ref('adminUsers/' + nick).remove(); alert('✅ Admin removido!'); render(); } catch(e) { alert('❌ Erro: ' + e.message); }
+        };
+        
         window.adminChangeAccessCode = function() {
             const newCode = document.getElementById('newAccessCode')?.value?.trim();
             
@@ -20362,10 +20442,33 @@ O usuário não poderá mais fazer login.
                     
                     const firebasePromise = db.ref('users/' + savedUser).once('value');
                     
+                    // Checar se é admin primeiro
+                    try {
+                        const adminSnap = await Promise.race([db.ref('adminUsers/' + savedUser).once('value'), timeoutPromise]);
+                        const adminData = adminSnap.val();
+                        if (adminData) {
+                            const adminPassOk = await verifyPassword(password, adminData.password);
+                            if (adminPassOk) {
+                                state.currentUser = savedUser;
+                                state.isAdmin = true;
+                                state.teamName = adminData.teamName || 'ADMIN';
+                                state.screen = 'draft';
+                                console.log('✅ Login automático admin!');
+                                listenToDraftChat();
+                                listenToDraftStatus();
+                                listenToNextRound();
+                                listenToPrivateMessages();
+                                return true;
+                            }
+                        }
+                    } catch(ae) {}
+                    
                     const snapshot = await Promise.race([firebasePromise, timeoutPromise]);
                     const userData = snapshot.val();
                     
-                    if (userData && userData.password === password) {
+                    if (userData) {
+                        const passOk = await verifyPassword(password, userData.password);
+                        if (passOk) {
                         // Atualizar state.users
                         if (!state.users[savedUser]) {
                             state.users[savedUser] = userData;
@@ -20399,8 +20502,15 @@ O usuário não poderá mais fazer login.
                         listenToPrivateMessages();
                         
                         return true;
-                    } else {
+                        }
+                        // passOk was false
                         console.log('⚠️ Senha alterada ou usuário não encontrado');
+                        localStorage.removeItem('fantasyRememberDevice');
+                        localStorage.removeItem('fantasyRememberUser');
+                        localStorage.removeItem('fantasyRememberPass');
+                        return false;
+                    } else {
+                        console.log('⚠️ Usuário não encontrado no Firebase');
                         localStorage.removeItem('fantasyRememberDevice');
                         localStorage.removeItem('fantasyRememberUser');
                         localStorage.removeItem('fantasyRememberPass');
@@ -20440,6 +20550,22 @@ O usuário não poderá mais fazer login.
                     
                     if (db) {
                         try {
+                            // Migrar admin antigo para novo sistema se necessário
+                            try {
+                                const adminCheck = await db.ref('adminUsers').once('value');
+                                if (!adminCheck.val()) {
+                                    // Criar admin padrão com senha hashada
+                                    const defaultHash = 'sha256$938657235a6986a4d2df25d560d59db1838a0db5a29f8995d42da519b58d0a1c';
+                                    await db.ref('adminUsers/admin').set({ password: defaultHash, teamName: 'ADMIN', createdBy: 'system', createdAt: Date.now() });
+                                    console.log('🔐 Admin criado no novo sistema');
+                                }
+                            } catch(e) {}
+                            
+                            // Verificar se usuário logado é admin
+                            try {
+                                const aSnap = await db.ref('adminUsers/' + state.currentUser).once('value');
+                                if (aSnap.val()) state.isAdmin = true;
+                            } catch(e) {}
                             // Buscar dados atualizados do Firebase
                             const snapshot = await db.ref('users/' + state.currentUser).once('value');
                             const userData = snapshot.val();
