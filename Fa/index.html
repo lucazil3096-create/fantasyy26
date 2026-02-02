@@ -11,6 +11,7 @@
     <style>
         * { font-family: 'Outfit', sans-serif; }
         .font-display { font-family: 'Bebas Neue', sans-serif; letter-spacing: 0.1em; }
+        img { image-rendering: -webkit-optimize-contrast; }
         body { 
             background: #0a0a0a;
             background-image: 
@@ -4373,13 +4374,8 @@
                     
                     // Carregar foto do cache temporário (sessionStorage) enquanto Firebase carrega
                     if (state.currentUser) {
-                        try {
-                            const photoCache = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}');
-                            if (photoCache[state.currentUser]) {
-                                state.teamLogo = photoCache[state.currentUser];
-                                console.log('📷 Foto carregada do cache');
-                            }
-                        } catch(e) {}
+                        // Limpar cache antigo para forçar recarregar do Firebase
+                        try { sessionStorage.removeItem('fantasy_photos_cache'); } catch(e) {}
                     }
                 }
                 
@@ -6289,6 +6285,14 @@
                     }
                 }
                 
+                // Renderizar modal de configurações GLOBAL
+                if (state.modal === 'settings') {
+                    const settingsHtml = renderSettingsModal();
+                    if (settingsHtml) {
+                        root.innerHTML += settingsHtml;
+                    }
+                }
+                
                 // Renderizar modal de jogador GLOBAL
                 if (state.viewingPlayer) {
                     const playerHtml = renderPlayerInfoModal();
@@ -6683,7 +6687,7 @@
                                     </button>
                                     
                                     <div class="flex items-center gap-4">
-                                        <div class="relative cursor-pointer group" onclick="openSettingsModal()">
+                                        <div class="relative cursor-pointer group" onclick="triggerHomePhotoUpload()">
                                             ${state.teamLogo ? 
                                                 `<img src="${state.teamLogo}" class="w-14 h-14 rounded-xl object-cover border border-zinc-700 group-hover:border-emerald-500/50 transition">` :
                                                 `<div class="w-14 h-14 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-500 text-lg font-bold group-hover:bg-zinc-700 transition">${(state.currentUser || 'U')[0].toUpperCase()}</div>`
@@ -6693,12 +6697,15 @@
                                             ` : ''}
                                         </div>
                                         <div class="hidden sm:block">
-                                            <p class="text-lg font-semibold text-white">${state.teamName || 'Meu Time'}</p>
+                                            <p onclick="openSettingsModal()" class="text-lg font-semibold text-white cursor-pointer hover:text-emerald-400 transition">${state.teamName || 'Meu Time'}</p>
                                             <p onclick="viewProfile('${state.currentUser}')" class="text-base text-zinc-500 cursor-pointer hover:text-emerald-400 transition">@${state.currentUser}</p>
                                         </div>
                                     </div>
                                     <button onclick="logout()" class="p-2.5 text-zinc-500 hover:text-white transition rounded-lg hover:bg-white/5 hidden sm:block" title="Sair">
                                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+                                    </button>
+                                    <button onclick="openSettingsModal()" class="p-2.5 text-zinc-500 hover:text-white transition rounded-lg hover:bg-white/5 sm:hidden" title="Configurações">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                                     </button>
                                 </div>
                             </div>
@@ -6734,9 +6741,9 @@
                             <!-- User Card -->
                             <div class="lg:col-span-1 rounded-2xl p-5 border border-zinc-800 bg-gradient-to-br from-zinc-900 to-zinc-950">
                                 <div class="text-center">
-                                    ${me?.teamLogo 
-                                        ? '<img src="' + me.teamLogo + '" class="w-36 h-36 rounded-2xl border-2 border-zinc-700 object-cover mx-auto mb-2 shadow-lg shadow-purple-500/10">' 
-                                        : '<div class="w-36 h-36 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-5xl font-black text-white mx-auto mb-2 shadow-lg shadow-purple-500/20">' + (me?.teamName || '?').charAt(0).toUpperCase() + '</div>'
+                                    ${(state.teamLogo || me?.teamLogo)
+                                        ? '<div class="relative inline-block cursor-pointer group" onclick="triggerHomePhotoUpload()"><img src="' + (state.teamLogo || me.teamLogo) + '" class="w-36 h-36 rounded-2xl border-2 border-zinc-700 object-cover mx-auto mb-2 shadow-lg shadow-purple-500/10 group-hover:brightness-75 transition"><div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition"><svg class="w-8 h-8 text-white drop-shadow-lg" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"/></svg></div></div>' 
+                                        : '<div class="w-36 h-36 rounded-2xl bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center text-5xl font-black text-white mx-auto mb-2 shadow-lg shadow-purple-500/20 cursor-pointer hover:brightness-110 transition" onclick="triggerHomePhotoUpload()">' + (me?.teamName || '?').charAt(0).toUpperCase() + '</div>'
                                     }
                                     <h2 class="text-white font-black text-xl">${me?.teamName || 'Meu Time'}</h2>
                                     <p class="text-zinc-500 text-xs">@${state.currentUser}</p>
@@ -6949,7 +6956,7 @@
                                     </button>
                                     
                                     <div class="flex items-center gap-4">
-                                        <div class="relative cursor-pointer group" onclick="openSettingsModal()">
+                                        <div class="relative cursor-pointer group" onclick="triggerHomePhotoUpload()">
                                             ${state.teamLogo ? 
                                                 `<img src="${state.teamLogo}" class="w-14 h-14 rounded-xl object-cover border border-zinc-700 group-hover:border-emerald-500/50 transition">` :
                                                 `<div class="w-14 h-14 bg-zinc-800 rounded-xl flex items-center justify-center text-zinc-500 text-lg font-bold group-hover:bg-zinc-700 transition">${(state.currentUser || 'U')[0].toUpperCase()}</div>`
@@ -6959,7 +6966,7 @@
                                             ` : ''}
                                         </div>
                                         <div class="hidden sm:block">
-                                            <p class="text-lg font-semibold text-white">${state.teamName || 'Meu Time'}</p>
+                                            <p onclick="openSettingsModal()" class="text-lg font-semibold text-white cursor-pointer hover:text-emerald-400 transition">${state.teamName || 'Meu Time'}</p>
                                             <p onclick="viewProfile('${state.currentUser}')" class="text-base text-zinc-500 cursor-pointer hover:text-emerald-400 transition">@${state.currentUser}</p>
                                         </div>
                                     </div>
@@ -7337,9 +7344,8 @@
                 <!-- Modal Substituição -->
                 ${state.modal === 'substitution' ? renderSubstitutionModal() : ''}
 
-                <!-- Modal Configurações -->
-                ${state.modal === 'settings' ? renderSettingsModal() : ''}
-
+                <!-- Modal Configurações - movido para render global -->
+                
                 <!-- Modal Cravar Resultado -->
                 ${state.modal === 'cravar' ? renderCravarModal() : ''}
 
@@ -13987,62 +13993,58 @@
                     
                     const reader = new FileReader();
                     reader.onload = (ev) => {
-                        const img = new Image();
-                        img.onload = function() {
-                            // Função para comprimir agressivamente
-                            function compressImage(size, quality) {
+                        // Usar a imagem ORIGINAL sem nenhuma compressão
+                        let photoData = ev.target.result;
+                        let finalSize = Math.round(photoData.length / 1024);
+                        
+                        console.log('📷 Foto original: ' + finalSize + 'KB');
+                        
+                        // Só comprimir se for absurdamente grande (>1500KB base64)
+                        if (finalSize > 1500) {
+                            const img = new Image();
+                            img.onload = function() {
                                 const canvas = document.createElement('canvas');
                                 const ctx = canvas.getContext('2d');
-                                
                                 let w = img.width, h = img.height;
-                                const ratio = Math.min(size / w, size / h);
-                                if (ratio < 1) { w *= ratio; h *= ratio; }
-                                
-                                canvas.width = Math.round(w);
-                                canvas.height = Math.round(h);
-                                
-                                ctx.fillStyle = '#1a1a1a';
-                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                const ratio = Math.min(1200 / w, 1200 / h, 1);
+                                canvas.width = Math.round(w * ratio);
+                                canvas.height = Math.round(h * ratio);
+                                ctx.imageSmoothingEnabled = true;
+                                ctx.imageSmoothingQuality = 'high';
                                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                                
-                                return canvas.toDataURL('image/jpeg', quality);
-                            }
+                                photoData = canvas.toDataURL('image/jpeg', 0.95);
+                                finalSize = Math.round(photoData.length / 1024);
+                                console.log('📷 Reduzido: ' + canvas.width + 'x' + canvas.height + ' = ' + finalSize + 'KB');
+                                salvarFoto(photoData, finalSize);
+                            };
+                            img.src = photoData;
+                            return;
+                        }
+                        
+                        salvarFoto(photoData, finalSize);
+                        
+                        function salvarFoto(data, size) {
+                            alert('📷 Foto: ' + size + 'KB - salvando...');
                             
-                            // Comprimir com boa qualidade (~30-50KB)
-                            const attempts = [
-                                { size: 150, quality: 0.8 },  // Boa qualidade
-                                { size: 120, quality: 0.7 },  // Média
-                                { size: 100, quality: 0.6 }   // Mínima aceitável
-                            ];
-                            
-                            let compressed, finalSize;
-                            for (const attempt of attempts) {
-                                compressed = compressImage(attempt.size, attempt.quality);
-                                finalSize = Math.round(compressed.length / 1024);
-                                if (finalSize <= 50) break;
-                            }
-                            
-                            console.log('📷 Comprimido: ' + originalSizeKB + 'KB → ' + finalSize + 'KB');
-                            
-                            state.teamLogo = compressed;
+                            state.teamLogo = data;
                             
                             if (state.users[state.currentUser]) {
-                                state.users[state.currentUser].teamLogo = compressed;
+                                state.users[state.currentUser].teamLogo = data;
                             }
                             
                             // Atualizar cache de fotos
                             try {
                                 let photoCache = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}');
                                 delete photoCache[state.currentUser];
-                                photoCache[state.currentUser] = compressed;
+                                photoCache[state.currentUser] = data;
                                 sessionStorage.setItem('fantasy_photos_cache', JSON.stringify(photoCache));
                             } catch(e) {}
                             
-                            // Salvar no Firebase (substitui a antiga automaticamente)
+                            // Salvar no Firebase
                             if (db && state.currentUser) {
-                                db.ref('users/' + state.currentUser + '/teamLogo').set(compressed)
+                                db.ref('users/' + state.currentUser + '/teamLogo').set(data)
                                     .then(() => {
-                                        alert('✅ Foto salva!');
+                                        alert('✅ Foto salva! (' + size + 'KB)');
                                     })
                                     .catch(err => {
                                         console.error('❌ Erro Firebase:', err);
@@ -14052,11 +14054,7 @@
                             
                             saveState();
                             render();
-                        };
-                        img.onerror = () => {
-                            alert('❌ Erro ao processar imagem');
-                        };
-                        img.src = ev.target.result;
+                        }
                     };
                     reader.onerror = () => {
                         alert('❌ Erro ao ler arquivo');
@@ -14508,6 +14506,19 @@
             render();
         };
         
+        // Input persistente para upload de foto (não é destruído pelo render)
+        const _homePhotoInput = document.createElement('input');
+        _homePhotoInput.type = 'file';
+        _homePhotoInput.accept = 'image/*';
+        _homePhotoInput.style.display = 'none';
+        _homePhotoInput.onchange = function(e) { handleSettingsLogoUpload(e); };
+        document.body.appendChild(_homePhotoInput);
+        
+        window.triggerHomePhotoUpload = function() {
+            _homePhotoInput.value = '';
+            _homePhotoInput.click();
+        };
+
         window.handleSettingsLogoUpload = function(event) {
             const file = event.target.files[0];
             if (!file) return;
@@ -14524,64 +14535,58 @@
             
             const reader = new FileReader();
             reader.onload = function(ev) {
-                const img = new Image();
-                img.onload = function() {
-                    // Função para comprimir agressivamente
-                    function compressImage(size, quality) {
+                // Usar a imagem ORIGINAL sem compressão
+                let photoData = ev.target.result;
+                let finalSize = Math.round(photoData.length / 1024);
+                
+                console.log('📷 Foto original: ' + finalSize + 'KB');
+                
+                // Só comprimir se for muito grande (>1500KB base64)
+                if (finalSize > 1500) {
+                    const img = new Image();
+                    img.onload = function() {
                         const canvas = document.createElement('canvas');
                         const ctx = canvas.getContext('2d');
-                        
-                        // Calcular dimensões mantendo proporção
                         let w = img.width, h = img.height;
-                        const ratio = Math.min(size / w, size / h);
-                        if (ratio < 1) { w *= ratio; h *= ratio; }
-                        
-                        canvas.width = Math.round(w);
-                        canvas.height = Math.round(h);
-                        
-                        // Fundo escuro e desenhar imagem
-                        ctx.fillStyle = '#1a1a1a';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        const ratio = Math.min(1200 / w, 1200 / h, 1);
+                        canvas.width = Math.round(w * ratio);
+                        canvas.height = Math.round(h * ratio);
+                        ctx.imageSmoothingEnabled = true;
+                        ctx.imageSmoothingQuality = 'high';
                         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        
-                        return canvas.toDataURL('image/jpeg', quality);
-                    }
-                    
-                    // Comprimir com boa qualidade (~30-50KB)
-                    const attempts = [
-                        { size: 150, quality: 0.8 },  // Boa qualidade
-                        { size: 120, quality: 0.7 },  // Média
-                        { size: 100, quality: 0.6 }   // Mínima aceitável
-                    ];
-                    
-                    let compressed, finalSize;
-                    for (const attempt of attempts) {
-                        compressed = compressImage(attempt.size, attempt.quality);
-                        finalSize = Math.round(compressed.length / 1024);
-                        if (finalSize <= 50) break;
-                    }
-                    
-                    console.log('✅ Foto: ' + originalSizeKB + 'KB → ' + finalSize + 'KB');
+                        photoData = canvas.toDataURL('image/jpeg', 0.95);
+                        finalSize = Math.round(photoData.length / 1024);
+                        console.log('📷 Reduzido: ' + canvas.width + 'x' + canvas.height + ' = ' + finalSize + 'KB');
+                        salvarFotoSettings(photoData, finalSize);
+                    };
+                    img.src = photoData;
+                    return;
+                }
+                
+                salvarFotoSettings(photoData, finalSize);
+                
+                function salvarFotoSettings(data, size) {
+                    console.log('📷 Salvando foto: ' + size + 'KB');
                     
                     // Limpar foto antiga do cache
                     try {
                         let photoCache = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}');
-                        delete photoCache[state.currentUser]; // Remove antiga
-                        photoCache[state.currentUser] = compressed; // Adiciona nova
+                        delete photoCache[state.currentUser];
+                        photoCache[state.currentUser] = data;
                         sessionStorage.setItem('fantasy_photos_cache', JSON.stringify(photoCache));
                     } catch(e) {}
                     
                     // Atualizar state
-                    state.teamLogo = compressed;
+                    state.teamLogo = data;
                     if (state.users[state.currentUser]) {
-                        state.users[state.currentUser].teamLogo = compressed;
+                        state.users[state.currentUser].teamLogo = data;
                     }
                     
-                    // Salvar no Firebase (substitui a antiga automaticamente)
+                    // Salvar no Firebase
                     if (db && state.currentUser) {
-                        db.ref('users/' + state.currentUser + '/teamLogo').set(compressed)
+                        db.ref('users/' + state.currentUser + '/teamLogo').set(data)
                             .then(() => {
-                                alert('✅ Foto salva!');
+                                alert('✅ Foto salva! (' + size + 'KB)');
                                 render();
                             })
                             .catch(err => {
@@ -14592,13 +14597,7 @@
                     
                     event.target.value = '';
                     render();
-                };
-                
-                img.onerror = function() {
-                    alert('❌ Erro ao carregar imagem.');
-                    event.target.value = '';
-                };
-                img.src = ev.target.result;
+                }
             };
             reader.readAsDataURL(file);
         };
