@@ -2260,6 +2260,19 @@
                     const timeSinceSync = Date.now() - gameState.lastApiSync;
                     const hoursAgo = Math.round(timeSinceSync / 1000 / 60 / 60);
                     
+                    // Se admin travou a rodada manualmente, SEMPRE respeitar
+                    if (gameState.manualLock) {
+                        const roundNum = toRoundNumber(gameState.currentRound);
+                        state.currentRound = roundNum;
+                        state.selectedRound = roundNum;
+                        state.substitutionsOpen = gameState.substitutionsOpen !== false;
+                        state.roundStatus = gameState.roundStatus || 'waiting';
+                        state.captainEnabled = gameState.captainEnabled === true;
+                        state.delayedGamesRounds = gameState.delayedGamesRounds || [];
+                        console.log(`🔒 Rodada travada pelo admin: Rodada ${roundNum}`);
+                        return;
+                    }
+                    
                     if (timeSinceSync < CACHE_24H) {
                         // Cache válido! Usar dados do Firebase
                         const roundNum = toRoundNumber(gameState.currentRound);
@@ -2286,30 +2299,25 @@
                 const today = new Date().toISOString().split('T')[0];
                 
                 // ========== PASSO 1: BUSCAR PRÓXIMO JOGO (DEFINE A RODADA DO FANTASY) ==========
-                // Esta é a rodada "oficial" do Fantasy - independente de jogos atrasados
-                // Tenta 2026 primeiro, se não achar tenta 2025
-                const seasonsToTry = [SEASON, SEASON_FALLBACK];
+                // IMPORTANTE: Só usar a temporada atual (2026) para detectar rodada!
+                // O fallback (2025) tem rodadas diferentes e causa erro.
                 
-                for (const season of seasonsToTry) {
-                    if (foundRound) break;
-                    
-                    try {
-                        const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
-                        if (nextRes.response && nextRes.response.length > 0) {
-                            const roundStr = nextRes.response[0].league.round;
-                            const match = roundStr.match(/Regular Season - (\d+)/);
-                            if (match) {
-                                currentRound = parseInt(match[1]);
-                                foundRound = true;
-                                const nextDate = new Date(nextRes.response[0].fixture.date);
-                                const dayName = nextDate.toLocaleDateString('pt-BR', { weekday: 'long' });
-                                detectionMethod = `⏭️ Próxima rodada (${dayName})${season !== SEASON ? ' [fallback]' : ''}`;
-                                console.log(`📌 Rodada do Fantasy: ${currentRound} (${detectionMethod})`);
-                            }
+                try {
+                    const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&next=1`);
+                    if (nextRes.response && nextRes.response.length > 0) {
+                        const roundStr = nextRes.response[0].league.round;
+                        const match = roundStr.match(/Regular Season - (\d+)/);
+                        if (match) {
+                            currentRound = parseInt(match[1]);
+                            foundRound = true;
+                            const nextDate = new Date(nextRes.response[0].fixture.date);
+                            const dayName = nextDate.toLocaleDateString('pt-BR', { weekday: 'long' });
+                            detectionMethod = `⏭️ Próxima rodada (${dayName})`;
+                            console.log(`📌 Rodada do Fantasy: ${currentRound} (${detectionMethod})`);
                         }
-                    } catch (e) {
-                        console.log(`Erro ao buscar próximo jogo (season ${season})`);
                     }
+                } catch (e) {
+                    console.log('Erro ao buscar próximo jogo da temporada', SEASON);
                 }
                 
                 // ========== PASSO 2: VERIFICAR JOGOS AO VIVO (podem ser atrasados) ==========
@@ -2408,6 +2416,7 @@
                     if (db) {
                         await db.ref('gameState').update({
                             currentRound: currentRound,
+                            manualLock: false, // Auto-detectado, não travado
                             delayedGamesRounds: delayedGamesRounds,
                             lastApiSync: Date.now(),
                             detectedFrom: detectionMethod,
@@ -3832,6 +3841,7 @@
                 
                 await db.ref('gameState').update({
                     currentRound: Math.min(newRound, 38),
+                    manualLock: false, // Auto-avançado, não travado por admin
                     roundStatus: newRoundStatus,
                     roundEndedAt: allGamesFinished ? lastGameEndTime : null,
                     substitutionsOpen: newSubstitutionsOpen,
@@ -17391,11 +17401,19 @@
         // Definir rodada atual
         window.adminSetRound = function() {
             const round = parseInt(document.getElementById('adminCurrentRound')?.value) || 1;
+            state.currentRound = round;
             state.selectedRound = round;
             
-            // Salvar no Firebase
+            // Salvar no Firebase - TANTO em settings quanto em gameState
             if (db) {
                 db.ref('settings/currentRound').set(round);
+                db.ref('gameState').update({
+                    currentRound: round,
+                    manualLock: true, // Flag para auto-detecção não sobrescrever
+                    lastApiSync: Date.now(),
+                    updatedAt: Date.now(),
+                    detectedFrom: '🔧 Admin manual'
+                });
             }
             
             alert(`Rodada atual definida como ${round}!`);
