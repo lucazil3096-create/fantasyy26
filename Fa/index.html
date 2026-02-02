@@ -6119,7 +6119,13 @@
         let autoLoadingFixtures = false;
         
         // Sincronizar fotos atualizadas de state.players com cópias em starters/reserves
+        let lastPhotoSync = 0;
         function syncPlayerPhotos() {
+            // Só sincronizar fotos a cada 10 segundos (não a cada render)
+            const now = Date.now();
+            if (now - lastPhotoSync < 10000) return;
+            lastPhotoSync = now;
+            
             // Criar mapa rápido de fotos atuais
             const photoMap = {};
             state.players.forEach(p => {
@@ -6167,7 +6173,7 @@
         
         let renderTimeout = null;
         let lastRenderTime = 0;
-        const RENDER_DEBOUNCE = 50; // ms
+        const RENDER_DEBOUNCE = 100; // ms
         
         function render() {
             // Debounce: evitar múltiplos renders em sequência
@@ -20564,22 +20570,21 @@ O usuário não poderá mais fazer login.
                     
                     if (db) {
                         try {
-                            // Migrar admin antigo para novo sistema se necessário
-                            try {
-                                const adminCheck = await db.ref('adminUsers').once('value');
-                                if (!adminCheck.val()) {
-                                    // Criar admin padrão com senha hashada
-                                    const defaultHash = 'sha256$938657235a6986a4d2df25d560d59db1838a0db5a29f8995d42da519b58d0a1c';
-                                    await db.ref('adminUsers/admin').set({ password: defaultHash, teamName: 'ADMIN', createdBy: 'system', createdAt: Date.now() });
-                                    console.log('🔐 Admin criado no novo sistema');
-                                }
-                            } catch(e) {}
+                            // Admin check em background (não bloqueia)
+                            (async () => {
+                                try {
+                                    const adminCheck = await db.ref('adminUsers').once('value');
+                                    if (!adminCheck.val()) {
+                                        const defaultHash = 'sha256$938657235a6986a4d2df25d560d59db1838a0db5a29f8995d42da519b58d0a1c';
+                                        await db.ref('adminUsers/admin').set({ password: defaultHash, teamName: 'ADMIN', createdBy: 'system', createdAt: Date.now() });
+                                    }
+                                } catch(e) {}
+                                try {
+                                    const aSnap = await db.ref('adminUsers/' + state.currentUser).once('value');
+                                    if (aSnap.val()) { state.isAdmin = true; render(); }
+                                } catch(e) {}
+                            })();
                             
-                            // Verificar se usuário logado é admin
-                            try {
-                                const aSnap = await db.ref('adminUsers/' + state.currentUser).once('value');
-                                if (aSnap.val()) state.isAdmin = true;
-                            } catch(e) {}
                             // Buscar dados atualizados do Firebase
                             const snapshot = await db.ref('users/' + state.currentUser).once('value');
                             const userData = snapshot.val();
