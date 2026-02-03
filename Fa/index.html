@@ -3986,9 +3986,6 @@
                     teamName: userData.teamName || '',
                     teamLogo: userData.teamLogo || null,
                     formation: userData.formation || '4-3-3',
-                    starters: userData.starters || [],
-                    reserves: userData.reserves || [],
-                    coach: userData.coach || null,
                     isConfirmed: userData.isConfirmed || false,
                     scores: userData.scores || {},
                     favoriteTeam: userData.favoriteTeam || null,
@@ -4003,7 +4000,24 @@
                     seenNotifications: userData.seenNotifications || [],
                     lastUpdate: new Date().toISOString()
                 };
-                db.ref('users/' + nickname).set(dataToSave);
+                
+                // 🛡️ PROTEÇÃO DO DRAFT: Só salvar starters/reserves/coach se tiverem dados reais
+                // Isso impede que dados vazios sobrescrevam escalações existentes
+                const hasStarters = userData.starters && (Array.isArray(userData.starters) ? userData.starters : Object.values(userData.starters)).filter(s => s && s.id).length > 0;
+                const hasReserves = userData.reserves && (Array.isArray(userData.reserves) ? userData.reserves : Object.values(userData.reserves)).filter(s => s && s.id).length > 0;
+                
+                if (hasStarters) {
+                    dataToSave.starters = userData.starters;
+                }
+                if (hasReserves) {
+                    dataToSave.reserves = userData.reserves;
+                }
+                if (userData.coach && userData.coach.id) {
+                    dataToSave.coach = userData.coach;
+                }
+                
+                // Usar update() em vez de set() para NÃO apagar campos que não estão sendo enviados
+                db.ref('users/' + nickname).update(dataToSave);
                 console.log(' Salvo na nuvem:', nickname);
             } catch (e) {
                 console.error('Erro ao salvar na nuvem:', e);
@@ -7188,7 +7202,10 @@
                             <div class="card rounded-xl p-3">
                                 <div onclick="openCoachModal()" class="cursor-pointer flex items-center gap-3">
                                     ${state.coach ? `
-                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/20 to-orange-600/10 flex items-center justify-center text-xs font-bold text-orange-400 flex-shrink-0 border border-orange-500/30">
+                                        <img src="${state.coach.photo}" alt="${state.coach.name}" 
+                                            class="w-10 h-10 rounded-lg object-cover border border-orange-500/30 flex-shrink-0"
+                                            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/20 to-orange-600/10 items-center justify-center text-xs font-bold text-orange-400 flex-shrink-0 border border-orange-500/30" style="display:none">
                                             ${state.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                         </div>
                                         <div class="flex-1 min-w-0">
@@ -9555,7 +9572,10 @@
                                 ${state.coaches.map(c => `
                                     <div onclick="selectCoach(${c.id})" 
                                         class="bg-white/5 hover:bg-white/10 rounded-lg p-3 cursor-pointer transition flex items-center gap-3 ${state.coach?.id === c.id ? 'border border-emerald-500/50' : 'border border-transparent'}">
-                                        <div class="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">
+                                        <img src="${c.photo}" alt="${c.name}" 
+                                            class="w-12 h-12 rounded-lg object-cover bg-white/10 flex-shrink-0"
+                                            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                        <div class="w-12 h-12 rounded-lg bg-white/10 items-center justify-center text-sm font-bold text-white flex-shrink-0" style="display:none">
                                             ${c.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                         </div>
                                         <div class="flex-1 min-w-0">
@@ -10286,7 +10306,10 @@
                             <!-- Técnico -->
                             ${user.coach ? `
                                 <div class="bg-white/5 rounded-lg p-3 mb-4 flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center text-sm font-bold text-white">
+                                    <img src="${user.coach.photo}" alt="${user.coach.name}" 
+                                        class="w-10 h-10 rounded-lg object-cover bg-white/10 flex-shrink-0"
+                                        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                    <div class="w-10 h-10 rounded-lg bg-white/10 items-center justify-center text-sm font-bold text-white" style="display:none">
                                         ${user.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                     </div>
                                     <div>
@@ -11060,9 +11083,11 @@
                     // Mostrar técnico primeiro
                     if (coach) {
                         const initials = coach.name.split(' ').map(n => n[0]).join('').slice(0,2);
+                        const coachPhoto = coach.photo || '';
                         html += '<div class="p-3 border-b border-zinc-800/30 flex items-center gap-3 bg-orange-500/5">';
                         html += '<span class="w-8 h-8 bg-orange-500/20 text-orange-400 rounded font-bold flex items-center justify-center">👔</span>';
-                        html += '<div class="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold">' + initials + '</div>';
+                        html += '<img src="' + coachPhoto + '" alt="' + coach.name + '" class="w-10 h-10 rounded-full object-cover bg-orange-500/20" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">';
+                        html += '<div class="w-10 h-10 rounded-full bg-orange-500/20 items-center justify-center text-orange-400 font-bold" style="display:none">' + initials + '</div>';
                         html += '<div class="flex-1 min-w-0">';
                         html += '<p class="text-white truncate">👔 ' + coach.name + '</p>';
                         html += '<p class="text-zinc-500 text-sm">' + (coach.team || 'Técnico') + '</p>';
@@ -11644,6 +11669,41 @@
                                     
                                     <div id="photoSearchResults" class="max-h-80 overflow-y-auto space-y-2">
                                         <p class="text-zinc-600 text-sm text-center py-4">Digite o nome do jogador para buscar...</p>
+                                    </div>
+                                </div>
+                                
+                                <!-- 👔 EDITAR FOTO DE TÉCNICOS -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border border-orange-500/30">
+                                    <h4 class="text-orange-400 font-medium mb-4">👔 Editar Foto de Técnicos</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Trocar a foto de qualquer técnico. A foto fica salva no Firebase.</p>
+                                    
+                                    <div class="mb-4">
+                                        <input type="text" placeholder="Buscar técnico pelo nome..." 
+                                            class="w-full px-4 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700"
+                                            oninput="document.querySelectorAll('.coach-photo-item').forEach(el=>{el.style.display=el.dataset.name.includes(this.value.toLowerCase())?'':'none'})">
+                                    </div>
+                                    
+                                    <div class="max-h-96 overflow-y-auto space-y-2">
+                                        ${TECNICOS_2026.map(c => `
+                                            <div class="flex items-center gap-3 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50 coach-photo-item" data-name="${c.name.toLowerCase()}">
+                                                <label class="cursor-pointer relative flex-shrink-0 group">
+                                                    <img src="${c.photo || ''}" alt="${c.name}" id="coachPrev_${c.id}"
+                                                        class="w-14 h-14 rounded-full object-cover bg-zinc-700 border-2 border-orange-500/50" 
+                                                        onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(c.name)}&background=random&size=128'">
+                                                    <div class="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100" style="transition:opacity 0.2s">
+                                                        <span class="text-white text-lg">📷</span>
+                                                    </div>
+                                                    <input type="file" accept="image/*" class="hidden" 
+                                                        onchange="adminUploadCoachPhoto(${c.id}, this)">
+                                                </label>
+                                                <div class="flex-1 min-w-0">
+                                                    <span class="text-white text-sm font-medium">${c.name}</span>
+                                                    <span class="text-xs text-orange-400" id="coachSt_${c.id}"></span>
+                                                    <p class="text-zinc-500 text-xs">${c.team} • ${c.country}</p>
+                                                    <p class="text-zinc-600 text-xs">Clique na foto para trocar</p>
+                                                </div>
+                                            </div>
+                                        `).join('')}
                                     </div>
                                 </div>
                                 
@@ -13225,7 +13285,10 @@
                         <button onclick="addCoachToDraftUser(${c.id})"
                             ${disabled ? 'disabled' : ''}
                             class="w-full p-2 rounded-lg text-left transition flex items-center gap-2 ${disabled ? 'opacity-50 cursor-not-allowed bg-zinc-800/50' : 'bg-zinc-800 hover:bg-zinc-700 hover:bg-orange-500/10'}">
-                            <div class="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold text-sm flex-shrink-0 border-2 border-orange-500/50">
+                            <img src="${c.photo}" alt="${c.name}" 
+                                class="w-10 h-10 rounded-full object-cover border-2 border-orange-500/50 flex-shrink-0 bg-orange-500/20"
+                                onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                            <div class="w-10 h-10 rounded-full bg-orange-500/20 items-center justify-center text-orange-400 font-bold text-sm flex-shrink-0 border-2 border-orange-500/50" style="display:none">
                                 ${initials}
                             </div>
                             <div class="flex-1 min-w-0">
@@ -13373,7 +13436,10 @@
                         <p class="text-orange-400 text-xs mb-2 font-medium">👔 TÉCNICO</p>
                         ${user.coach ? `
                             <div class="flex items-center gap-3 bg-zinc-800 rounded-lg p-2 relative group">
-                                <div class="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold border-2 border-orange-500">
+                                <img src="${user.coach.photo}" alt="${user.coach.name}" 
+                                    class="w-12 h-12 rounded-full object-cover border-2 border-orange-500"
+                                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                <div class="w-12 h-12 rounded-full bg-orange-500/20 items-center justify-center text-orange-400 font-bold border-2 border-orange-500" style="display:none">
                                     ${user.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                 </div>
                                 <div>
@@ -16251,14 +16317,32 @@
         window.resetUserTeam = function(nick) {
             if (!nick) return;
             
-            if (!confirm(`ATENÇÃO!\n\nIsso vai APAGAR todos os jogadores e técnico do time de @${nick}.\n\nTem certeza?`)) {
+            if (!confirm(`⚠️ ATENÇÃO MÁXIMA!\n\nIsso vai APAGAR PERMANENTEMENTE todos os jogadores e técnico do time de @${nick}.\n\nEssa ação NÃO pode ser desfeita!\n\nTem CERTEZA ABSOLUTA?`)) {
                 return;
+            }
+            
+            const confirmText = prompt(`Para confirmar, digite o nickname: ${nick}`);
+            if (confirmText !== nick) {
+                return alert('❌ Nickname não confere. Operação cancelada.');
             }
             
             const user = state.users[nick];
             if (!user) {
                 alert('Usuário não encontrado!');
                 return;
+            }
+            
+            // 🛡️ BACKUP antes de resetar
+            if (db && user.starters) {
+                const backupData = {
+                    starters: user.starters,
+                    reserves: user.reserves,
+                    coach: user.coach,
+                    teamName: user.teamName,
+                    backedUpAt: new Date().toISOString()
+                };
+                db.ref('backups/' + nick + '/' + Date.now()).set(backupData);
+                console.log('🛡️ Backup criado para @' + nick);
             }
             
             // Resetar arrays com null explícito
@@ -18165,14 +18249,20 @@ A conta continuará existindo com nome e senha.
                 return alert('❌ Não é possível excluir a conta admin!');
             }
             
+            // 🛡️ Verificar se tem draft (escalação)
+            const starters = Array.isArray(user.starters) ? user.starters : Object.values(user.starters || {});
+            const hasTeam = starters.filter(s => s && s.id).length > 0;
+            
             const info = `
 🗑️ EXCLUIR CONTA DE @${nick}
 
 Time: ${user.teamName || 'Sem nome'}
 Pontos: ${calculateUserScore(user)}
+${hasTeam ? '⚠️ ESTE USUÁRIO TEM ESCALAÇÃO DO DRAFT!' : ''}
 
 ⚠️ ATENÇÃO: Isso vai DELETAR a conta PERMANENTEMENTE!
 O usuário não poderá mais fazer login.
+${hasTeam ? '\n🛡️ PROTEÇÃO: Usuário com escalação do draft. Tem CERTEZA?' : ''}
             `;
             
             if (!confirm(info + '\n\nTem certeza?')) return;
@@ -18180,6 +18270,16 @@ O usuário não poderá mais fazer login.
             const confirmText = prompt(`Para confirmar, digite o nickname: ${nick}`);
             if (confirmText !== nick) {
                 return alert('❌ Nickname não confere. Operação cancelada.');
+            }
+            
+            // 🛡️ BACKUP COMPLETO antes de deletar
+            if (db) {
+                db.ref('backups/' + nick + '/' + Date.now()).set({
+                    ...user,
+                    deletedAt: new Date().toISOString(),
+                    action: 'DELETE'
+                });
+                console.log('🛡️ Backup completo criado para @' + nick);
             }
             
             // Remover do state local
@@ -19802,6 +19902,47 @@ O usuário não poderá mais fazer login.
         };
         // ==================== FIM EDITAR FOTO ====================
         
+        // ==================== 👔 UPLOAD FOTO TÉCNICO ====================
+        window.adminUploadCoachPhoto = function(coachId, fileInput) {
+            if (!fileInput.files || !fileInput.files[0]) return;
+            
+            coachId = Number(coachId);
+            const coach = TECNICOS_2026.find(c => c.id === coachId);
+            if (!coach) { alert('Técnico não encontrado!'); return; }
+            
+            resizeImageToBase64(fileInput.files[0]).then(function(base64) {
+                // Atualizar localmente em TODOS os lugares
+                coach.photo = base64;
+                var sc = state.coaches.find(function(c) { return c.id === coachId; });
+                if (sc) sc.photo = base64;
+                if (state.coach && state.coach.id === coachId) state.coach.photo = base64;
+                Object.values(state.users).forEach(function(u) {
+                    if (u.coach && u.coach.id === coachId) u.coach.photo = base64;
+                });
+                
+                // Salvar no Firebase em customPhotos/coach_X (mesmo nó dos jogadores, já tem permissão)
+                if (db) {
+                    db.ref('customPhotos/coach_' + coachId).set(base64).then(function() {
+                        console.log('👔 Foto salva no Firebase:', coach.name);
+                    }).catch(function(err) {
+                        console.error('❌ Erro Firebase:', err.message);
+                        alert('❌ Erro ao salvar no Firebase: ' + err.message);
+                    });
+                }
+                
+                // Atualizar preview
+                var prev = document.getElementById('coachPrev_' + coachId);
+                if (prev) prev.src = base64;
+                var st = document.getElementById('coachSt_' + coachId);
+                if (st) { st.textContent = '✅ Salvo!'; }
+                
+                alert('✅ Foto de "' + coach.name + '" salva!');
+            }).catch(function(err) {
+                alert('Erro ao processar imagem: ' + err.message);
+            });
+        };
+        // ==================== FIM FOTO TÉCNICO ====================
+        
         // ==================== 📋 RELATÓRIO DE JOGADORES ====================
         window.adminGeneratePlayerReport = function() {
             const container = document.getElementById('playerReportResults');
@@ -20362,9 +20503,23 @@ O usuário não poderá mais fazer login.
                 const customPhotos = snapshot.val();
                 if (customPhotos) {
                     Object.entries(customPhotos).forEach(([playerId, photoUrl]) => {
+                        // Fotos de jogadores (chaves numéricas)
                         const player = state.players.find(p => String(p.id) === String(playerId));
                         if (player && photoUrl) {
                             player.photo = photoUrl;
+                        }
+                        
+                        // Fotos de técnicos (chaves coach_X)
+                        if (typeof playerId === 'string' && playerId.startsWith('coach_') && photoUrl) {
+                            const cId = playerId.replace('coach_', '');
+                            const tc = TECNICOS_2026.find(c => String(c.id) === cId);
+                            if (tc) tc.photo = photoUrl;
+                            const sc = state.coaches.find(c => String(c.id) === cId);
+                            if (sc) sc.photo = photoUrl;
+                            if (state.coach && String(state.coach.id) === cId) state.coach.photo = photoUrl;
+                            Object.values(state.users).forEach(u => {
+                                if (u.coach && String(u.coach.id) === cId) u.coach.photo = photoUrl;
+                            });
                         }
                     });
                     console.log('📷 Fotos customizadas aplicadas:', Object.keys(customPhotos).length);
