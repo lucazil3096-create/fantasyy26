@@ -4088,6 +4088,8 @@
                             if (cloudUsers[nick].coach) {
                                 state.coach = cloudUsers[nick].coach;
                             }
+                            // Aplicar fotos customizadas dos técnicos
+                            applyCustomCoachPhotos();
                             if (cloudUsers[nick].formation) {
                                 state.formation = cloudUsers[nick].formation;
                             }
@@ -6113,6 +6115,34 @@
         // Flag para evitar carregamento duplicado
         let autoLoadingFixtures = false;
         
+        // Cache global de fotos customizadas de técnicos (preenchido pelo listener do Firebase)
+        let _customCoachPhotosCache = {};
+        
+        // Aplica fotos customizadas dos técnicos em TODOS os lugares
+        function applyCustomCoachPhotos() {
+            if (Object.keys(_customCoachPhotosCache).length === 0) return;
+            
+            Object.entries(_customCoachPhotosCache).forEach(([coachId, photoUrl]) => {
+                if (!photoUrl) return;
+                // Atualizar no array TECNICOS_2026
+                const coach = TECNICOS_2026.find(c => String(c.id) === String(coachId));
+                if (coach) coach.photo = photoUrl;
+                // Atualizar no state.coaches
+                const stateCoach = state.coaches.find(c => String(c.id) === String(coachId));
+                if (stateCoach) stateCoach.photo = photoUrl;
+                // Atualizar técnico selecionado do usuário atual
+                if (state.coach && String(state.coach.id) === String(coachId)) {
+                    state.coach.photo = photoUrl;
+                }
+                // Atualizar técnicos de todos os usuários
+                Object.values(state.users).forEach(user => {
+                    if (user.coach && String(user.coach.id) === String(coachId)) {
+                        user.coach.photo = photoUrl;
+                    }
+                });
+            });
+        }
+
         // Sincronizar fotos atualizadas de state.players com cópias em starters/reserves
         let lastPhotoSync = 0;
         function syncPlayerPhotos() {
@@ -6164,6 +6194,9 @@
                     }
                 });
             }
+            
+            // Aplicar fotos customizadas dos técnicos (garante que fotos do Firebase prevaleçam)
+            applyCustomCoachPhotos();
         }
         
         let renderTimeout = null;
@@ -7188,7 +7221,10 @@
                             <div class="card rounded-xl p-3">
                                 <div onclick="openCoachModal()" class="cursor-pointer flex items-center gap-3">
                                     ${state.coach ? `
-                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/20 to-orange-600/10 flex items-center justify-center text-xs font-bold text-orange-400 flex-shrink-0 border border-orange-500/30">
+                                        <img src="${state.coach.photo}" alt="${state.coach.name}" 
+                                            class="w-10 h-10 rounded-lg object-cover border border-orange-500/30 flex-shrink-0"
+                                            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                        <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/20 to-orange-600/10 items-center justify-center text-xs font-bold text-orange-400 flex-shrink-0 border border-orange-500/30" style="display:none">
                                             ${state.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                         </div>
                                         <div class="flex-1 min-w-0">
@@ -9555,7 +9591,10 @@
                                 ${state.coaches.map(c => `
                                     <div onclick="selectCoach(${c.id})" 
                                         class="bg-white/5 hover:bg-white/10 rounded-lg p-3 cursor-pointer transition flex items-center gap-3 ${state.coach?.id === c.id ? 'border border-emerald-500/50' : 'border border-transparent'}">
-                                        <div class="w-12 h-12 rounded-lg bg-white/10 flex items-center justify-center text-sm font-bold text-white flex-shrink-0">
+                                        <img src="${c.photo}" alt="${c.name}" 
+                                            class="w-12 h-12 rounded-lg object-cover bg-white/10 flex-shrink-0"
+                                            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                        <div class="w-12 h-12 rounded-lg bg-white/10 items-center justify-center text-sm font-bold text-white flex-shrink-0" style="display:none">
                                             ${c.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                         </div>
                                         <div class="flex-1 min-w-0">
@@ -10286,7 +10325,10 @@
                             <!-- Técnico -->
                             ${user.coach ? `
                                 <div class="bg-white/5 rounded-lg p-3 mb-4 flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center text-sm font-bold text-white">
+                                    <img src="${user.coach.photo}" alt="${user.coach.name}" 
+                                        class="w-10 h-10 rounded-lg object-cover bg-white/10 flex-shrink-0"
+                                        onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                    <div class="w-10 h-10 rounded-lg bg-white/10 items-center justify-center text-sm font-bold text-white" style="display:none">
                                         ${user.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                     </div>
                                     <div>
@@ -11060,9 +11102,11 @@
                     // Mostrar técnico primeiro
                     if (coach) {
                         const initials = coach.name.split(' ').map(n => n[0]).join('').slice(0,2);
+                        const coachPhoto = coach.photo || '';
                         html += '<div class="p-3 border-b border-zinc-800/30 flex items-center gap-3 bg-orange-500/5">';
                         html += '<span class="w-8 h-8 bg-orange-500/20 text-orange-400 rounded font-bold flex items-center justify-center">👔</span>';
-                        html += '<div class="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold">' + initials + '</div>';
+                        html += '<img src="' + coachPhoto + '" alt="' + coach.name + '" class="w-10 h-10 rounded-full object-cover bg-orange-500/20" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">';
+                        html += '<div class="w-10 h-10 rounded-full bg-orange-500/20 items-center justify-center text-orange-400 font-bold" style="display:none">' + initials + '</div>';
                         html += '<div class="flex-1 min-w-0">';
                         html += '<p class="text-white truncate">👔 ' + coach.name + '</p>';
                         html += '<p class="text-zinc-500 text-sm">' + (coach.team || 'Técnico') + '</p>';
@@ -11567,8 +11611,32 @@
                             <div class="space-y-4">
                                 <h3 class="text-xl font-bold text-white">⚽ Gerenciar Jogadores</h3>
                                 
+                                <!-- Navegação rápida -->
+                                <div class="flex flex-wrap gap-2 mb-2">
+                                    <button onclick="document.getElementById('section-add-player').scrollIntoView({behavior:'smooth'})" 
+                                        class="px-3 py-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg text-xs font-medium hover:bg-emerald-500/30 border border-emerald-500/30">
+                                        ➕ Adicionar Jogador
+                                    </button>
+                                    <button onclick="document.getElementById('section-photo-player').scrollIntoView({behavior:'smooth'})" 
+                                        class="px-3 py-1.5 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-medium hover:bg-cyan-500/30 border border-cyan-500/30">
+                                        📷 Foto Jogadores
+                                    </button>
+                                    <button onclick="document.getElementById('section-photo-coach').scrollIntoView({behavior:'smooth'})" 
+                                        class="px-3 py-1.5 bg-orange-500/20 text-orange-400 rounded-lg text-xs font-medium hover:bg-orange-500/30 border border-orange-500/30">
+                                        👔 Foto Técnicos
+                                    </button>
+                                    <button onclick="document.getElementById('section-report').scrollIntoView({behavior:'smooth'})" 
+                                        class="px-3 py-1.5 bg-orange-500/20 text-orange-300 rounded-lg text-xs font-medium hover:bg-orange-500/30 border border-orange-500/30">
+                                        📋 Relatório
+                                    </button>
+                                    <button onclick="document.getElementById('section-prices').scrollIntoView({behavior:'smooth'})" 
+                                        class="px-3 py-1.5 bg-amber-500/20 text-amber-400 rounded-lg text-xs font-medium hover:bg-amber-500/30 border border-amber-500/30">
+                                        💰 Preços
+                                    </button>
+                                </div>
+                                
                                 <!-- Adicionar Jogador Manual -->
-                                <div class="bg-zinc-900 rounded-xl p-6 border border-emerald-500/30">
+                                <div id="section-add-player" class="bg-zinc-900 rounded-xl p-6 border border-emerald-500/30">
                                     <h4 class="text-emerald-400 font-medium mb-4">➕ Adicionar Jogador Manualmente</h4>
                                     <p class="text-zinc-500 text-sm mb-4">Para jogadores que não aparecem na API (contratações recentes)</p>
                                     
@@ -11627,7 +11695,7 @@
                                 </div>
                                 
                                 <!-- 📷 EDITAR FOTO DE JOGADORES -->
-                                <div class="bg-zinc-900 rounded-xl p-6 border border-cyan-500/30">
+                                <div id="section-photo-player" class="bg-zinc-900 rounded-xl p-6 border border-cyan-500/30">
                                     <h4 class="text-cyan-400 font-medium mb-4">📷 Editar Foto de Jogadores</h4>
                                     <p class="text-zinc-500 text-sm mb-4">Trocar ou adicionar foto de qualquer jogador (API ou manual)</p>
                                     
@@ -11647,8 +11715,49 @@
                                     </div>
                                 </div>
                                 
+                                <!-- 👔 EDITAR FOTO DE TÉCNICOS -->
+                                <div id="section-photo-coach" class="bg-zinc-900 rounded-xl p-6 border border-orange-500/30">
+                                    <h4 class="text-orange-400 font-medium mb-4">👔 Editar Foto de Técnicos</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Trocar ou adicionar foto de qualquer técnico</p>
+                                    
+                                    <div class="mb-4">
+                                        <input type="text" id="photoSearchCoach" placeholder="Buscar técnico pelo nome..." 
+                                            class="w-full px-4 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700"
+                                            oninput="adminSearchCoachPhoto(this.value)">
+                                    </div>
+                                    
+                                    <div id="coachPhotoSearchResults" class="max-h-80 overflow-y-auto space-y-2">
+                                        ${TECNICOS_2026.map(c => {
+                                            const hasPhoto = c.photo && !c.photo.includes('placeholder');
+                                            const photoStatus = hasPhoto ? '✅' : '⚠️ Sem foto';
+                                            return `
+                                                <div class="flex items-center gap-3 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50" id="coachPhotoRow_${c.id}">
+                                                    <label class="cursor-pointer relative flex-shrink-0 group">
+                                                        <img src="${c.photo || ''}" alt="${c.name}" id="coachPhotoPreview_${c.id}"
+                                                            class="w-14 h-14 rounded-full object-cover bg-zinc-700 border-2 ${hasPhoto ? 'border-orange-500/50' : 'border-red-500/50'}" 
+                                                            onerror="this.src=getAvatarUrl(this.alt)">
+                                                        <div class="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100" style="transition:opacity 0.2s">
+                                                            <span class="text-white text-lg">📷</span>
+                                                        </div>
+                                                        <input type="file" accept="image/*" class="hidden" 
+                                                            onchange="adminUploadCoachPhoto('${c.id}', this)">
+                                                    </label>
+                                                    <div class="flex-1 min-w-0">
+                                                        <div class="flex items-center gap-2">
+                                                            <span class="text-white text-sm font-medium truncate">${c.name}</span>
+                                                            <span class="text-xs ${hasPhoto ? 'text-orange-400' : 'text-red-400'}" id="coachPhotoStatus_${c.id}">${photoStatus}</span>
+                                                        </div>
+                                                        <p class="text-zinc-500 text-xs">${c.team} • ${c.country}</p>
+                                                        <p class="text-zinc-600 text-xs mt-1">Clique na foto para trocar</p>
+                                                    </div>
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                </div>
+                                
                                 <!-- 📋 RELATÓRIO DE JOGADORES - NOVOS DA API / DUPLICADOS -->
-                                <div class="bg-zinc-900 rounded-xl p-6 border border-orange-500/30">
+                                <div id="section-report" class="bg-zinc-900 rounded-xl p-6 border border-orange-500/30">
                                     <h4 class="text-orange-400 font-medium mb-2">📋 Relatório de Jogadores</h4>
                                     <p class="text-zinc-500 text-sm mb-4">Veja jogadores novos da API e possíveis duplicados com jogadores manuais</p>
                                     
@@ -11665,7 +11774,7 @@
                                 </div>
                                 
                                 <!-- 💰 GESTÃO DE PREÇOS DO MERCADO -->
-                                <div class="bg-gradient-to-r from-amber-900/30 to-yellow-900/30 rounded-xl p-6 border-2 border-amber-500/50">
+                                <div id="section-prices" class="bg-gradient-to-r from-amber-900/30 to-yellow-900/30 rounded-xl p-6 border-2 border-amber-500/50">
                                     <h4 class="text-amber-400 font-bold mb-4 flex items-center gap-2">
                                         💰 GESTÃO DE PREÇOS DO MERCADO
                                     </h4>
@@ -13225,7 +13334,10 @@
                         <button onclick="addCoachToDraftUser(${c.id})"
                             ${disabled ? 'disabled' : ''}
                             class="w-full p-2 rounded-lg text-left transition flex items-center gap-2 ${disabled ? 'opacity-50 cursor-not-allowed bg-zinc-800/50' : 'bg-zinc-800 hover:bg-zinc-700 hover:bg-orange-500/10'}">
-                            <div class="w-10 h-10 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold text-sm flex-shrink-0 border-2 border-orange-500/50">
+                            <img src="${c.photo}" alt="${c.name}" 
+                                class="w-10 h-10 rounded-full object-cover border-2 border-orange-500/50 flex-shrink-0 bg-orange-500/20"
+                                onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                            <div class="w-10 h-10 rounded-full bg-orange-500/20 items-center justify-center text-orange-400 font-bold text-sm flex-shrink-0 border-2 border-orange-500/50" style="display:none">
                                 ${initials}
                             </div>
                             <div class="flex-1 min-w-0">
@@ -13373,7 +13485,10 @@
                         <p class="text-orange-400 text-xs mb-2 font-medium">👔 TÉCNICO</p>
                         ${user.coach ? `
                             <div class="flex items-center gap-3 bg-zinc-800 rounded-lg p-2 relative group">
-                                <div class="w-12 h-12 rounded-full bg-orange-500/20 flex items-center justify-center text-orange-400 font-bold border-2 border-orange-500">
+                                <img src="${user.coach.photo}" alt="${user.coach.name}" 
+                                    class="w-12 h-12 rounded-full object-cover border-2 border-orange-500"
+                                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+                                <div class="w-12 h-12 rounded-full bg-orange-500/20 items-center justify-center text-orange-400 font-bold border-2 border-orange-500" style="display:none">
                                     ${user.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                 </div>
                                 <div>
@@ -14343,6 +14458,8 @@
             state.starters = ensureArray(userData.starters, 11);
             state.reserves = ensureArray(userData.reserves, 7);
             state.coach = userData.coach || null;
+            // Aplicar fotos customizadas dos técnicos
+            applyCustomCoachPhotos();
             state.isConfirmed = userData.isConfirmed || false;
             state.scores = userData.scores || {};
             state.favoriteTeam = userData.favoriteTeam || null;
@@ -15713,6 +15830,8 @@
 
         window.selectCoach = function(coachId) {
             state.coach = state.coaches.find(c => c.id === coachId);
+            // Garantir foto customizada
+            applyCustomCoachPhotos();
             document.body.classList.remove('modal-open');
             document.body.style.top = '';
             window.scrollTo(0, state.scrollY || 0);
@@ -19802,6 +19921,124 @@ O usuário não poderá mais fazer login.
         };
         // ==================== FIM EDITAR FOTO ====================
         
+        // ==================== 👔 EDITAR FOTO DE TÉCNICOS ====================
+        window.adminSearchCoachPhoto = function(query) {
+            const container = document.getElementById('coachPhotoSearchResults');
+            if (!container) return;
+            
+            query = (query || '').trim().toLowerCase();
+            
+            let results = TECNICOS_2026;
+            if (query.length >= 1) {
+                results = TECNICOS_2026.filter(c => 
+                    c.name.toLowerCase().includes(query) || c.team.toLowerCase().includes(query)
+                );
+            }
+            
+            if (results.length === 0) {
+                container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-4">Nenhum técnico encontrado</p>';
+                return;
+            }
+            
+            container.innerHTML = results.map(c => {
+                const hasPhoto = c.photo && !c.photo.includes('placeholder');
+                const photoStatus = hasPhoto ? '✅' : '⚠️ Sem foto';
+                return `
+                    <div class="flex items-center gap-3 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50" id="coachPhotoRow_${c.id}">
+                        <label class="cursor-pointer relative flex-shrink-0 group">
+                            <img src="${c.photo || ''}" alt="${c.name}" id="coachPhotoPreview_${c.id}"
+                                class="w-14 h-14 rounded-full object-cover bg-zinc-700 border-2 ${hasPhoto ? 'border-orange-500/50' : 'border-red-500/50'}" 
+                                onerror="this.src=getAvatarUrl(this.alt)">
+                            <div class="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100" style="transition:opacity 0.2s">
+                                <span class="text-white text-lg">📷</span>
+                            </div>
+                            <input type="file" accept="image/*" class="hidden" 
+                                onchange="adminUploadCoachPhoto('${c.id}', this)">
+                        </label>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="text-white text-sm font-medium truncate">${c.name}</span>
+                                <span class="text-xs ${hasPhoto ? 'text-orange-400' : 'text-red-400'}" id="coachPhotoStatus_${c.id}">${photoStatus}</span>
+                            </div>
+                            <p class="text-zinc-500 text-xs">${c.team} • ${c.country}</p>
+                            <p class="text-zinc-600 text-xs mt-1">Clique na foto para trocar</p>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        };
+        
+        // Upload de foto para técnico
+        window.adminUploadCoachPhoto = function(coachId, fileInput) {
+            if (!fileInput.files || !fileInput.files[0]) return;
+            
+            coachId = Number(coachId);
+            const coach = TECNICOS_2026.find(c => c.id === coachId);
+            if (!coach) {
+                alert('Técnico não encontrado!');
+                return;
+            }
+            
+            resizeImageToBase64(fileInput.files[0]).then(base64 => {
+                // Atualizar no cache global
+                _customCoachPhotosCache[String(coachId)] = base64;
+                
+                // Atualizar no array local
+                coach.photo = base64;
+                
+                // Atualizar no state.coaches
+                const stateCoach = state.coaches.find(c => c.id === coachId);
+                if (stateCoach) stateCoach.photo = base64;
+                
+                // Atualizar técnico selecionado do usuário (se for o mesmo)
+                if (state.coach && state.coach.id === coachId) {
+                    state.coach.photo = base64;
+                }
+                
+                // Atualizar técnico de todos os usuários que têm esse técnico
+                Object.values(state.users).forEach(user => {
+                    if (user.coach && user.coach.id === coachId) {
+                        user.coach.photo = base64;
+                    }
+                });
+                
+                // Salvar no Firebase (usando customPhotos que tem permissão)
+                if (db) {
+                    db.ref('customPhotos/coach_' + coachId).set(base64).then(() => {
+                        console.log('👔 Foto do técnico salva no Firebase:', coach.name);
+                        
+                        // Também salvar a foto atualizada nos dados dos usuários que têm esse técnico
+                        Object.keys(state.users).forEach(nick => {
+                            const u = state.users[nick];
+                            if (u.coach && u.coach.id === coachId) {
+                                db.ref('users/' + nick + '/coach/photo').set(base64).catch(() => {});
+                            }
+                        });
+                    }).catch(err => {
+                        console.error('❌ Erro ao salvar foto no Firebase:', err.message);
+                        alert('❌ Erro ao salvar: ' + err.message + '\n\nVerifique as regras do Firebase.');
+                    });
+                }
+                
+                // Atualizar preview na lista
+                const preview = document.getElementById('coachPhotoPreview_' + coachId);
+                if (preview) {
+                    preview.src = base64;
+                    preview.style.borderColor = 'rgba(249, 115, 22, 0.5)';
+                }
+                const status = document.getElementById('coachPhotoStatus_' + coachId);
+                if (status) {
+                    status.textContent = '✅';
+                    status.className = 'text-xs text-orange-400';
+                }
+                
+                alert(`✅ Foto de "${coach.name}" salva!`);
+            }).catch(err => {
+                alert('Erro ao processar imagem: ' + err.message);
+            });
+        };
+        // ==================== FIM EDITAR FOTO TÉCNICOS ====================
+        
         // ==================== 📋 RELATÓRIO DE JOGADORES ====================
         window.adminGeneratePlayerReport = function() {
             const container = document.getElementById('playerReportResults');
@@ -20357,20 +20594,37 @@ O usuário não poderá mais fazer login.
                 }
             });
             
-            // 📷 Carregar fotos customizadas do Firebase (para jogadores da API)
+            // 📷 Carregar fotos customizadas do Firebase (jogadores E técnicos)
             db.ref('customPhotos').on('value', (snapshot) => {
                 const customPhotos = snapshot.val();
                 if (customPhotos) {
-                    Object.entries(customPhotos).forEach(([playerId, photoUrl]) => {
-                        const player = state.players.find(p => String(p.id) === String(playerId));
-                        if (player && photoUrl) {
-                            player.photo = photoUrl;
+                    const coachPhotos = {};
+                    Object.entries(customPhotos).forEach(([key, photoUrl]) => {
+                        if (key.startsWith('coach_')) {
+                            // Foto de técnico (coach_1, coach_2, etc.)
+                            const coachId = key.replace('coach_', '');
+                            coachPhotos[coachId] = photoUrl;
+                        } else {
+                            // Foto de jogador
+                            const player = state.players.find(p => String(p.id) === String(key));
+                            if (player && photoUrl) {
+                                player.photo = photoUrl;
+                            }
                         }
                     });
+                    
+                    // Aplicar fotos de técnicos
+                    if (Object.keys(coachPhotos).length > 0) {
+                        _customCoachPhotosCache = coachPhotos;
+                        applyCustomCoachPhotos();
+                        console.log('👔 Fotos de técnicos aplicadas:', Object.keys(coachPhotos).length);
+                    }
+                    
                     console.log('📷 Fotos customizadas aplicadas:', Object.keys(customPhotos).length);
                     
                     // Atualizar cache local
                     savePlayers();
+                    render();
                 }
             });
         }
@@ -20513,6 +20767,9 @@ O usuário não poderá mais fazer login.
                         
                         console.log('✅ Login automático bem sucedido!');
                         
+                        // Aplicar fotos customizadas dos técnicos
+                        applyCustomCoachPhotos();
+                        
                         // Iniciar listeners
                         listenToDraftChat();
                         listenToDraftStatus();
@@ -20615,6 +20872,9 @@ O usuário não poderá mais fazer login.
                                 console.log('📺 Tela:', state.screen, '| hasTeam:', hasTeam);
                                 
                                 console.log('✅ Dados carregados do Firebase');
+                                
+                                // Aplicar fotos customizadas dos técnicos (Firebase pode ter carregado antes)
+                                applyCustomCoachPhotos();
                                 
                                 // Iniciar listeners
                                 listenToDraftChat();
