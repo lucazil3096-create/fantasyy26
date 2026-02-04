@@ -4420,19 +4420,6 @@
                     state.players = parsed.players || [];
                     state.teams = parsed.teams || [];
                     
-                    // Atualizar TEAM_LOGOS com logos dos times do cache
-                    if (state.teams.length > 0) {
-                        state.teams.forEach(t => {
-                            if (t.name && t.logo) {
-                                TEAM_LOGOS[t.name] = t.logo;
-                                const capitalized = capitalizeTeamName(t.name);
-                                if (capitalized && capitalized !== t.name) {
-                                    TEAM_LOGOS[capitalized] = t.logo;
-                                }
-                            }
-                        });
-                    }
-                    
                     // Mesclar jogadores manuais (contratações recentes)
                     mergeManualPlayers();
                 }
@@ -4531,6 +4518,19 @@
                 const cleanedPlayers = cleanUndefined(state.players);
                 const cleanedTeams = cleanUndefined(state.teams);
                 
+                // PROTEÇÃO: Não salvar dados corrompidos no Firebase
+                // Se temos menos de 100 jogadores, algo está errado
+                if (cleanedPlayers.length < 100) {
+                    console.warn(`⚠️ savePlayers BLOQUEADO: apenas ${cleanedPlayers.length} jogadores (mínimo 100). Dados possivelmente corrompidos.`);
+                    // Salvar só no cache local (não propagar dados ruins para outros usuários)
+                    localStorage.setItem('fantasyPlayers2026', JSON.stringify({
+                        players: cleanedPlayers,
+                        teams: cleanedTeams,
+                        lastSync: new Date().toISOString()
+                    }));
+                    return;
+                }
+                
                 // Salvar no Firebase (fonte de verdade para todos os usuários)
                 if (db) {
                     db.ref('gameData/players').set({
@@ -4563,6 +4563,16 @@
                 const data = snapshot.val();
                 
                 if (data && data.players && data.players.length > 0) {
+                    // PROTEÇÃO: Se Firebase tem poucos jogadores, dados estão corrompidos
+                    // Forçar re-sync da API
+                    if (data.players.length < 100) {
+                        console.warn(`⚠️ Firebase tem apenas ${data.players.length} jogadores - DADOS CORROMPIDOS! Forçando sync...`);
+                        if (!state.isSyncingBackground) {
+                            setTimeout(() => autoSyncPlayers(true), 2000);
+                        }
+                        return; // Não usar esses dados
+                    }
+                    
                     // Preservar jogadores escalados que não estejam nos novos dados
                     const rosteredIds = new Set();
                     Object.values(state.users).forEach(u => {
@@ -4583,6 +4593,18 @@
                     state.players = [...data.players, ...playersToPreserve];
                     state.teams = data.teams || [];
                     
+                    // ATUALIZAR TEAM_LOGOS com dados do Firebase
+                    // Garante escudos corretos em TODAS plataformas (mobile incluso)
+                    if (state.teams && state.teams.length > 0) {
+                        state.teams.forEach(t => {
+                            if (t.name && t.logo) {
+                                TEAM_LOGOS[t.name] = t.logo;
+                                const cap = capitalizeTeamName(t.name);
+                                if (cap !== t.name) TEAM_LOGOS[cap] = t.logo;
+                            }
+                        });
+                    }
+                    
                     // Mesclar jogadores manuais
                     mergeManualPlayers();
                     
@@ -4594,19 +4616,6 @@
                     localStorage.setItem('fantasy_players_sync', data.lastSync || new Date().toISOString());
                     
                     console.log('✓ Jogadores do Firebase:', state.players.length);
-                    
-                    // Atualizar TEAM_LOGOS com logos dos times carregados (corrige escudos hardcoded incorretos)
-                    if (state.teams && state.teams.length > 0) {
-                        state.teams.forEach(t => {
-                            if (t.name && t.logo) {
-                                TEAM_LOGOS[t.name] = t.logo;
-                                const capitalized = capitalizeTeamName(t.name);
-                                if (capitalized && capitalized !== t.name) {
-                                    TEAM_LOGOS[capitalized] = t.logo;
-                                }
-                            }
-                        });
-                    }
                     
                     // Corrigir escudos de TODOS os jogadores baseado no TEAM_LOGOS
                     state.players.forEach(p => {
@@ -4623,8 +4632,8 @@
                     
                     if (hoursSinceSync > 24) {
                         console.log(`⏰ Dados desatualizados (${Math.round(hoursSinceSync)}h), atualizando...`);
-                        // Atualizar em background sem bloquear
-                        setTimeout(() => autoSyncPlayers(false), 2000);
+                        // Primeiro usuário do dia atualiza para todos via Firebase
+                        setTimeout(() => autoSyncPlayers(true), 2000);
                     }
                     
                     // Re-renderizar se estiver na tela certa e não estiver digitando
@@ -4640,19 +4649,17 @@
                     if (cachedPlayers) {
                         try {
                             const parsed = JSON.parse(cachedPlayers);
-                            if (parsed.players && parsed.players.length > 0) {
+                            if (parsed.players && parsed.players.length >= 100) {
                                 state.players = parsed.players;
                                 state.teams = parsed.teams || [];
                                 
-                                // Atualizar TEAM_LOGOS com logos dos times do cache
+                                // Atualizar TEAM_LOGOS do cache
                                 if (state.teams.length > 0) {
                                     state.teams.forEach(t => {
                                         if (t.name && t.logo) {
                                             TEAM_LOGOS[t.name] = t.logo;
-                                            const capitalized = capitalizeTeamName(t.name);
-                                            if (capitalized && capitalized !== t.name) {
-                                                TEAM_LOGOS[capitalized] = t.logo;
-                                            }
+                                            const cap = capitalizeTeamName(t.name);
+                                            if (cap !== t.name) TEAM_LOGOS[cap] = t.logo;
                                         }
                                     });
                                 }
@@ -5344,18 +5351,15 @@
                 name: t.team.name,
                 logo: t.team.logo || ''  // Evitar undefined
             }));
-
-            // Atualizar TEAM_LOGOS com logos da API (corrige escudos incorretos hardcoded)
+            
+            // ATUALIZAR TEAM_LOGOS com dados reais da API
             state.teams.forEach(t => {
                 if (t.name && t.logo) {
                     TEAM_LOGOS[t.name] = t.logo;
-                    const capitalized = capitalizeTeamName(t.name);
-                    if (capitalized && capitalized !== t.name) {
-                        TEAM_LOGOS[capitalized] = t.logo;
-                    }
+                    const cap = capitalizeTeamName(t.name);
+                    if (cap !== t.name) TEAM_LOGOS[cap] = t.logo;
                 }
             });
-            console.log('✓ TEAM_LOGOS atualizado com logos da API');
 
             addLog(`   ${state.teams.length} times encontrados! (temporada ${usedSeason})`, 'success');
 
@@ -21275,9 +21279,15 @@ O usuário não poderá mais fazer login.
             
             // Se não é forçado, verificar se precisa sincronizar
             const needsSync = await shouldAutoSync();
-            if (!forceSync && !needsSync && state.players.length > 0) {
+            const tooFewPlayers = state.players.length < 100;
+            
+            if (!forceSync && !needsSync && !tooFewPlayers && state.players.length > 0) {
                 console.log('✓ Já sincronizou hoje, pulando...');
                 return;
+            }
+            
+            if (tooFewPlayers) {
+                console.log(`⚠️ Apenas ${state.players.length} jogadores - forçando sync!`);
             }
             
             // Marcar como sincronizando
@@ -21325,6 +21335,14 @@ O usuário não poderá mais fazer login.
                     state.players = [...allPlayers, ...playersToPreserve];
                     currentApiSource = 'api-football';
                     mergeManualPlayers();
+                    
+                    // Corrigir escudos de TODOS os jogadores com TEAM_LOGOS atualizado
+                    state.players.forEach(p => {
+                        if (p && p.team) {
+                            const correctLogo = TEAM_LOGOS[p.team] || getTeamLogo(p.team);
+                            if (correctLogo) p.teamLogo = correctLogo;
+                        }
+                    });
                     
                     // Salvar no Firebase (atualiza para TODOS os usuários)
                     savePlayers();
@@ -21440,17 +21458,17 @@ O usuário não poderá mais fazer login.
                 name: t.team.name,
                 logo: t.team.logo || ''  // Evitar undefined
             }));
-
-            // Atualizar TEAM_LOGOS com logos da API (corrige escudos incorretos hardcoded)
+            
+            // ATUALIZAR TEAM_LOGOS com dados reais da API
+            // Corrige escudos errados em TODAS as plataformas (desktop + mobile)
             state.teams.forEach(t => {
                 if (t.name && t.logo) {
                     TEAM_LOGOS[t.name] = t.logo;
-                    const capitalized = capitalizeTeamName(t.name);
-                    if (capitalized && capitalized !== t.name) {
-                        TEAM_LOGOS[capitalized] = t.logo;
-                    }
+                    const cap = capitalizeTeamName(t.name);
+                    if (cap !== t.name) TEAM_LOGOS[cap] = t.logo;
                 }
             });
+            console.log('🛡️ TEAM_LOGOS atualizado da API:', state.teams.length, 'times');
 
             const allPlayers = [];
             
@@ -21503,40 +21521,43 @@ O usuário não poderá mais fazer login.
             if (cachedPlayers) {
                 try {
                     const parsed = JSON.parse(cachedPlayers);
-                    if (parsed.players && parsed.players.length > 0) {
+                    if (parsed.players && parsed.players.length >= 100) {
                         state.players = parsed.players;
                         state.teams = parsed.teams || [];
                         
-                        // Atualizar TEAM_LOGOS com logos dos times do cache (corrige escudos hardcoded incorretos)
+                        // Atualizar TEAM_LOGOS do cache
                         if (state.teams.length > 0) {
                             state.teams.forEach(t => {
                                 if (t.name && t.logo) {
                                     TEAM_LOGOS[t.name] = t.logo;
-                                    const capitalized = capitalizeTeamName(t.name);
-                                    if (capitalized && capitalized !== t.name) {
-                                        TEAM_LOGOS[capitalized] = t.logo;
-                                    }
+                                    const cap = capitalizeTeamName(t.name);
+                                    if (cap !== t.name) TEAM_LOGOS[cap] = t.logo;
                                 }
                             });
                         }
                         
                         mergeManualPlayers();
                         console.log('✓ Cache local:', state.players.length, 'jogadores');
-                        return; // ✅ Tem cache, não fazer mais nada!
+                        return; // ✅ Tem cache bom, não fazer mais nada!
+                    } else if (parsed.players) {
+                        console.warn(`⚠️ Cache local corrompido: apenas ${parsed.players.length} jogadores. Limpando...`);
+                        localStorage.removeItem('fantasyPlayers2026');
+                        localStorage.removeItem('fantasy_last_sync');
                     }
                 } catch (e) {
-                    console.log('⚠️ Cache inválido');
+                    console.log('⚠️ Cache inválido, limpando...');
+                    localStorage.removeItem('fantasyPlayers2026');
+                    localStorage.removeItem('fantasy_last_sync');
                 }
             }
             
-            // 2. Sem cache local - aguardar Firebase carregar (via listenToPlayers)
-            // O Firebase vai carregar automaticamente e salvar no cache
+            // 2. Sem cache local válido - aguardar Firebase carregar (via listenToPlayers)
             console.log('⏳ Aguardando Firebase...');
             
-            // Se após 10 segundos ainda não tiver dados, sincroniza automaticamente
+            // Se após 10 segundos ainda não tiver dados suficientes, sincroniza
             setTimeout(async () => {
-                if (state.players.length === 0 && !state.isSyncingBackground) {
-                    console.log('🔄 Firebase vazio - iniciando sincronização automática...');
+                if (state.players.length < 100 && !state.isSyncingBackground) {
+                    console.log(`🔄 Poucos jogadores (${state.players.length}) - forçando sincronização da API...`);
                     await autoSyncPlayers(true);
                 }
             }, 10000);
