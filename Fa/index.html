@@ -6151,7 +6151,7 @@
                                 // Jogador tem dados - calcular pontuação (50% para reserva)
                                 const playerData = allPlayerStats[player.id].data;
                                 const fixtureData = allPlayerStats[player.id].fixture;
-                                const score = Math.round(calculatePlayerScore(playerData, fixtureData) * 0.5);
+                                const score = Math.round(calculatePlayerScore(playerData, fixtureData) * 0.5 * 10) / 10;
                                 user.scores[round].players[player.id] = score;
                                 
                                 // Verificar novos gols apenas para o usuário atual
@@ -6235,7 +6235,7 @@
                     total += (round && round.coach) || 0;
                 }
             });
-            return total;
+            return Math.round(total * 10) / 10;
         }
 
         function getRoundScore(round) {
@@ -10747,7 +10747,7 @@
                         nick,
                         team: u.teamName,
                         logo: u.teamLogo,
-                        score: roundScore
+                        score: Math.round(roundScore * 10) / 10
                     };
                 })
                 .sort((a, b) => b.score - a.score);
