@@ -4100,6 +4100,11 @@
                             seenNotifications: cloudUsers[nick].seenNotifications || []
                         };
                         
+                        // DEBUG: Log scores carregados
+                        if (cloudUsers[nick].scores) {
+                            console.log(`📥 LOAD DEBUG - ${nick} scores:`, cloudUsers[nick].scores);
+                        }
+                        
                         // Aplicar foto custom do técnico de cada usuário
                         if (state.users[nick].coach && state.users[nick].coach.id) {
                             var _utc = TECNICOS_2026.find(function(c){return c.id === state.users[nick].coach.id;});
@@ -5696,167 +5701,322 @@
         }
 
         // Calcular pontuação de um jogador
-        function calculatePlayerScore(stats, fixture = null) {
+        function calculatePlayerScore(stats, fixture = null, debug = false) {
             let score = 0;
+            let breakdown = [];
             
             if (!stats || !stats.statistics || !stats.statistics[0]) return 0;
             
             const s = stats.statistics[0];
             const position = stats.player?.position; // G = Goleiro, D = Defensor, M = Meia, F = Atacante
+            const playerName = stats.player?.name || 'Unknown';
+            
+            // LOG RAW DATA para debug
+            console.log(`📊 RAW DATA ${playerName}:`, {
+                position: position,
+                minutes: s.games?.minutes,
+                rating: s.games?.rating,
+                goals: s.goals,
+                assists: s.goals?.assists,
+                cards: s.cards,
+                tackles: s.tackles,
+                dribbles: s.dribbles,
+                passes: s.passes,
+                shots: s.shots,
+                fouls: s.fouls,
+                duels: s.duels,
+                penalty: s.penalty
+            });
             
             // ==================== TODOS OS JOGADORES ====================
             
             // Jogou (+2)
-            if (s.games?.minutes > 0) score += 2;
+            if (s.games?.minutes > 0) {
+                score += 2;
+                breakdown.push(`Jogou(+2)`);
+            }
             
             // Nota do jogo (rating)
             const rating = parseFloat(s.games?.rating) || 0;
-            if (rating >= 8.0) score += 2;
-            else if (rating >= 7.0) score += 1;
+            if (rating >= 8.0) {
+                score += 2;
+                breakdown.push(`Rating ${rating}(+2)`);
+            } else if (rating >= 7.0) {
+                score += 1;
+                breakdown.push(`Rating ${rating}(+1)`);
+            }
             
             // Assistências (+4 para todos)
-            score += (s.goals?.assists || 0) * 4;
+            const assists = s.goals?.assists || 0;
+            if (assists > 0) {
+                score += assists * 4;
+                breakdown.push(`Assist x${assists}(+${assists * 4})`);
+            }
             
             // Cartão amarelo (-1)
-            score -= (s.cards?.yellow || 0) * 1;
+            const yellowCards = s.cards?.yellow || 0;
+            if (yellowCards > 0) {
+                score -= yellowCards * 1;
+                breakdown.push(`Amarelo x${yellowCards}(-${yellowCards})`);
+            }
             
             // Cartão vermelho (-3)
-            score -= (s.cards?.red || 0) * 3;
+            const redCards = s.cards?.red || 0;
+            if (redCards > 0) {
+                score -= redCards * 3;
+                breakdown.push(`Vermelho x${redCards}(-${redCards * 3})`);
+            }
             
             // Segundo amarelo = vermelho (-3)
-            score -= (s.cards?.yellowred || 0) * 3;
+            const yellowRedCards = s.cards?.yellowred || 0;
+            if (yellowRedCards > 0) {
+                score -= yellowRedCards * 3;
+                breakdown.push(`2º Amarelo x${yellowRedCards}(-${yellowRedCards * 3})`);
+            }
             
             // Gol contra (-3)
-            score -= (s.goals?.own || 0) * 3;
+            const ownGoals = s.goals?.own || 0;
+            if (ownGoals > 0) {
+                score -= ownGoals * 3;
+                breakdown.push(`GolContra x${ownGoals}(-${ownGoals * 3})`);
+            }
             
             // Pênalti perdido (-3)
-            score -= (s.penalty?.missed || 0) * 3;
+            const penaltyMissed = s.penalty?.missed || 0;
+            if (penaltyMissed > 0) {
+                score -= penaltyMissed * 3;
+                breakdown.push(`PenaltiPerdido x${penaltyMissed}(-${penaltyMissed * 3})`);
+            }
             
             // ==================== GOLS (por posição) ====================
             const goals = s.goals?.total || 0;
             if (goals > 0) {
-                if (position === 'G') score += goals * 10;      // Goleiro - raridade!
-                else if (position === 'D') score += goals * 6;  // Defensor
-                else score += goals * 6;                         // Meia e Atacante
+                if (position === 'G') {
+                    score += goals * 10;
+                    breakdown.push(`Gol(GOL) x${goals}(+${goals * 10})`);
+                } else if (position === 'D') {
+                    score += goals * 6;
+                    breakdown.push(`Gol(DEF) x${goals}(+${goals * 6})`);
+                } else {
+                    score += goals * 6;
+                    breakdown.push(`Gol x${goals}(+${goals * 6})`);
+                }
             }
             
             // ==================== GOLEIRO (G) ====================
             if (position === 'G') {
                 // Defesas
                 const saves = s.goals?.saves || 0;
-                if (saves >= 6) score += 4;
-                else if (saves >= 3) score += 2;
-                else if (saves >= 1) score += 1;
+                if (saves >= 6) {
+                    score += 4;
+                    breakdown.push(`Defesas(6+)(+4)`);
+                } else if (saves >= 3) {
+                    score += 2;
+                    breakdown.push(`Defesas(3-5)(+2)`);
+                } else if (saves >= 1) {
+                    score += 1;
+                    breakdown.push(`Defesas(1-2)(+1)`);
+                }
                 
                 // Pênalti defendido (+7)
-                score += (s.penalty?.saved || 0) * 7;
+                const penSaved = s.penalty?.saved || 0;
+                if (penSaved > 0) {
+                    score += penSaved * 7;
+                    breakdown.push(`PenDefendido x${penSaved}(+${penSaved * 7})`);
+                }
                 
                 // Saldo de gols (SG)
                 const conceded = s.goals?.conceded || 0;
-                if (conceded === 0) score += 4;        // Não sofreu gol
-                else if (conceded >= 2) score -= 1;    // Sofreu 2+ gols
+                if (conceded === 0) {
+                    score += 4;
+                    breakdown.push(`SG(+4)`);
+                } else if (conceded >= 2) {
+                    score -= 1;
+                    breakdown.push(`Gols Sofridos(2+)(-1)`);
+                }
                 
                 // Pênalti sofrido (+1)
-                score += (s.penalty?.won || 0) * 1;
+                const penWon = s.penalty?.won || 0;
+                if (penWon > 0) {
+                    score += penWon * 1;
+                    breakdown.push(`PenSofrido x${penWon}(+${penWon})`);
+                }
                 
                 // Precisão de passe (goleiro que sai jogando)
                 const passAccuracy = parseInt(s.passes?.accuracy) || 0;
-                if (passAccuracy >= 85) score += 1;
+                if (passAccuracy >= 85) {
+                    score += 1;
+                    breakdown.push(`Passes(85%+)(+1)`);
+                }
             }
             
             // ==================== DEFENSOR (D) ====================
             if (position === 'D') {
                 // Desarmes (+0.5 cada)
                 const tackles = s.tackles?.total || 0;
-                score += tackles * 0.5;
+                if (tackles > 0) {
+                    score += tackles * 0.5;
+                    breakdown.push(`Desarmes x${tackles}(+${tackles * 0.5})`);
+                }
                 
                 // Interceptações (+0.5 cada)
                 const interceptions = s.tackles?.interceptions || 0;
-                score += interceptions * 0.5;
+                if (interceptions > 0) {
+                    score += interceptions * 0.5;
+                    breakdown.push(`Intercep x${interceptions}(+${interceptions * 0.5})`);
+                }
                 
                 // Bloqueios (+0.5 cada)
                 const blocks = s.tackles?.blocks || 0;
-                score += blocks * 0.5;
+                if (blocks > 0) {
+                    score += blocks * 0.5;
+                    breakdown.push(`Bloqueios x${blocks}(+${blocks * 0.5})`);
+                }
                 
                 // Dribles certos (+0.5 cada)
                 const dribbles = s.dribbles?.success || 0;
-                score += dribbles * 0.5;
+                if (dribbles > 0) {
+                    score += dribbles * 0.5;
+                    breakdown.push(`Dribles x${dribbles}(+${dribbles * 0.5})`);
+                }
                 
                 // Passe decisivo (+1)
                 const keyPasses = s.passes?.key || 0;
-                score += keyPasses * 1;
+                if (keyPasses > 0) {
+                    score += keyPasses * 1;
+                    breakdown.push(`PasseDecisivo x${keyPasses}(+${keyPasses})`);
+                }
                 
                 // Duelos ganhos (+0.5 a cada 2)
                 const duelsWon = s.duels?.won || 0;
-                score += Math.floor(duelsWon / 2) * 0.5;
+                const duelsBonus = Math.floor(duelsWon / 2) * 0.5;
+                if (duelsBonus > 0) {
+                    score += duelsBonus;
+                    breakdown.push(`Duelos ${duelsWon}(+${duelsBonus})`);
+                }
                 
                 // Saldo de gols (SG)
                 const conceded = s.goals?.conceded || 0;
-                if (conceded === 0) score += 3;        // Não sofreu gol
-                else if (conceded >= 2) score -= 1;    // Sofreu 2+ gols
+                if (conceded === 0) {
+                    score += 3;
+                    breakdown.push(`SG(+3)`);
+                } else if (conceded >= 2) {
+                    score -= 1;
+                    breakdown.push(`Gols Sofridos(2+)(-1)`);
+                }
                 
                 // Pênalti sofrido (+1)
-                score += (s.penalty?.won || 0) * 1;
+                const penWon = s.penalty?.won || 0;
+                if (penWon > 0) {
+                    score += penWon * 1;
+                    breakdown.push(`PenSofrido x${penWon}(+${penWon})`);
+                }
             }
             
             // ==================== MEIA (M) ====================
             if (position === 'M') {
                 // Passe decisivo (+1 cada)
                 const keyPasses = s.passes?.key || 0;
-                score += keyPasses * 1;
+                if (keyPasses > 0) {
+                    score += keyPasses * 1;
+                    breakdown.push(`PasseDecisivo x${keyPasses}(+${keyPasses})`);
+                }
                 
                 // Precisão de passe
                 const accuracy = parseInt(s.passes?.accuracy) || 0;
-                if (accuracy >= 85) score += 1;
+                if (accuracy >= 85) {
+                    score += 1;
+                    breakdown.push(`Passes(85%+)(+1)`);
+                }
                 
                 // Desarmes (+0.5 cada)
                 const tackles = s.tackles?.total || 0;
-                score += tackles * 0.5;
+                if (tackles > 0) {
+                    score += tackles * 0.5;
+                    breakdown.push(`Desarmes x${tackles}(+${tackles * 0.5})`);
+                }
                 
                 // Dribles certos (+0.5 cada)
                 const dribbles = s.dribbles?.success || 0;
-                score += dribbles * 0.5;
+                if (dribbles > 0) {
+                    score += dribbles * 0.5;
+                    breakdown.push(`Dribles x${dribbles}(+${dribbles * 0.5})`);
+                }
                 
                 // Finalizações no gol (+0.5 cada)
                 const shotsOn = s.shots?.on || 0;
-                score += shotsOn * 0.5;
+                if (shotsOn > 0) {
+                    score += shotsOn * 0.5;
+                    breakdown.push(`Chutes(gol) x${shotsOn}(+${shotsOn * 0.5})`);
+                }
                 
                 // Faltas sofridas (+0.5 cada)
                 const foulsDrawn = s.fouls?.drawn || 0;
-                score += foulsDrawn * 0.5;
+                if (foulsDrawn > 0) {
+                    score += foulsDrawn * 0.5;
+                    breakdown.push(`FaltasSofridas x${foulsDrawn}(+${foulsDrawn * 0.5})`);
+                }
                 
                 // Duelos ganhos (+0.5 a cada 2)
                 const duelsWon = s.duels?.won || 0;
-                score += Math.floor(duelsWon / 2) * 0.5;
+                const duelsBonus = Math.floor(duelsWon / 2) * 0.5;
+                if (duelsBonus > 0) {
+                    score += duelsBonus;
+                    breakdown.push(`Duelos ${duelsWon}(+${duelsBonus})`);
+                }
                 
                 // Pênalti sofrido (+1)
-                score += (s.penalty?.won || 0) * 1;
+                const penWon = s.penalty?.won || 0;
+                if (penWon > 0) {
+                    score += penWon * 1;
+                    breakdown.push(`PenSofrido x${penWon}(+${penWon})`);
+                }
             }
             
             // ==================== ATACANTE (F) ====================
             if (position === 'F') {
                 // Finalizações no gol (+1 cada)
                 const shotsOn = s.shots?.on || 0;
-                score += shotsOn * 1;
+                if (shotsOn > 0) {
+                    score += shotsOn * 1;
+                    breakdown.push(`Chutes(gol) x${shotsOn}(+${shotsOn})`);
+                }
                 
                 // Passe decisivo (+1 cada)
                 const keyPasses = s.passes?.key || 0;
-                score += keyPasses * 1;
+                if (keyPasses > 0) {
+                    score += keyPasses * 1;
+                    breakdown.push(`PasseDecisivo x${keyPasses}(+${keyPasses})`);
+                }
                 
                 // Dribles certos (+0.5 cada)
                 const dribbles = s.dribbles?.success || 0;
-                score += dribbles * 0.5;
+                if (dribbles > 0) {
+                    score += dribbles * 0.5;
+                    breakdown.push(`Dribles x${dribbles}(+${dribbles * 0.5})`);
+                }
                 
                 // Faltas sofridas (+0.5 cada)
                 const foulsDrawn = s.fouls?.drawn || 0;
-                score += foulsDrawn * 0.5;
+                if (foulsDrawn > 0) {
+                    score += foulsDrawn * 0.5;
+                    breakdown.push(`FaltasSofridas x${foulsDrawn}(+${foulsDrawn * 0.5})`);
+                }
                 
                 // Duelos ganhos (+0.5 a cada 2)
                 const duelsWon = s.duels?.won || 0;
-                score += Math.floor(duelsWon / 2) * 0.5;
+                const duelsBonus = Math.floor(duelsWon / 2) * 0.5;
+                if (duelsBonus > 0) {
+                    score += duelsBonus;
+                    breakdown.push(`Duelos ${duelsWon}(+${duelsBonus})`);
+                }
                 
                 // Pênalti sofrido (+2) - atacante ganha mais
-                score += (s.penalty?.won || 0) * 2;
+                const penWon = s.penalty?.won || 0;
+                if (penWon > 0) {
+                    score += penWon * 2;
+                    breakdown.push(`PenSofrido x${penWon}(+${penWon * 2})`);
+                }
             }
             
             // ==================== PONTOS POR RESULTADO DO TIME ====================
@@ -5872,16 +6032,23 @@
                     const opponentGoals = isHome ? awayGoals : homeGoals;
                     
                     if (teamGoals > opponentGoals) {
-                        score += 3; // Vitória
+                        score += 3;
+                        breakdown.push(`Vitória(+3)`);
                     } else if (teamGoals === opponentGoals) {
-                        score += 1; // Empate
+                        score += 1;
+                        breakdown.push(`Empate(+1)`);
+                    } else {
+                        breakdown.push(`Derrota(0)`);
                     }
-                    // Derrota = 0 pontos (não precisa adicionar nada)
                 }
             }
             
+            // Log detalhado para debug
+            const finalScore = Math.round(score * 10) / 10;
+            console.log(`⚽ ${playerName} [${position}]: ${finalScore} pts = ${breakdown.join(' + ')}`);
+            
             // Arredondar para evitar decimais estranhos
-            return Math.round(score * 10) / 10;
+            return finalScore;
         }
 
         // Calcular pontuação do técnico
@@ -6102,10 +6269,17 @@
                     // Inicializar scores do usuário se não existir
                     if (!user.scores) user.scores = {};
                     if (!user.scores[round]) {
-                        user.scores[round] = { players: {}, coach: 0, live: false };
+                        user.scores[round] = { players: {}, coach: 0, live: false, manualPlayers: {} };
+                    }
+                    // Garantir que manualPlayers existe
+                    if (!user.scores[round].manualPlayers) {
+                        user.scores[round].manualPlayers = {};
                     }
                     
                     user.scores[round].live = hasLiveGames;
+                    
+                    // Scores calculados neste sync (para salvar no Firebase)
+                    const calculatedScores = {};
                     
                     // Calcular pontos dos jogadores escalados
                     const userStarters = ensureArray(user.starters, 11);
@@ -6114,62 +6288,93 @@
                     
                     userStarters.forEach(player => {
                         if (player && player.id) {
+                            // Converter ID para número (Firebase pode ter salvo como string)
+                            const playerId = Number(player.id);
+                            
+                            // PROTEÇÃO AGRESSIVA: IDs negativos são SEMPRE manuais
+                            // Não importa se manualPlayers está carregado ou não
+                            if (playerId < 0) {
+                                console.log(`   🛡️ ${player.name} (ID negativo): PROTEGIDO - não sobrescrever`);
+                                // Não fazer nada - manter pontuação existente
+                                return;
+                            }
+                            
                             // PROTEGER pontuação manual (não sobrescrever)
-                            const isManual = user.scores[round]?.manualPlayers?.[player.id];
+                            // Verificar por ID como number E como string (Firebase converte)
+                            const manualByNumber = user.scores[round]?.manualPlayers?.[playerId];
+                            const manualByString = user.scores[round]?.manualPlayers?.[String(playerId)];
+                            const isManual = manualByNumber || manualByString;
                             
                             if (isManual) {
-                                console.log(`   🛡️ ${player.name}: pontuação manual protegida (${user.scores[round].players[player.id]} pts)`);
-                            } else if (allPlayerStats[player.id]) {
+                                console.log(`   🛡️ ${player.name}: pontuação manual protegida (${user.scores[round].players[playerId] ?? user.scores[round].players[String(playerId)]} pts)`);
+                            } else if (allPlayerStats[playerId] || allPlayerStats[player.id]) {
                                 // Jogador tem dados - calcular pontuação normal
-                                const playerData = allPlayerStats[player.id].data;
-                                const fixtureData = allPlayerStats[player.id].fixture;
+                                const statsKey = allPlayerStats[playerId] ? playerId : player.id;
+                                const playerData = allPlayerStats[statsKey].data;
+                                const fixtureData = allPlayerStats[statsKey].fixture;
                                 const score = calculatePlayerScore(playerData, fixtureData);
-                                user.scores[round].players[player.id] = score;
+                                user.scores[round].players[playerId] = score;
+                                calculatedScores[playerId] = score; // Marcar como calculado
                                 
                                 // Verificar novos gols apenas para o usuário atual
                                 if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
                                     const goals = playerData.statistics[0].goals.total;
-                                    const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
-                                        ? allPlayerStats[player.id].fixture?.teams?.home?.name 
-                                        : allPlayerStats[player.id].fixture?.teams?.away?.name;
-                                    const fixtureTs = allPlayerStats[player.id].fixture?.fixture?.timestamp 
-                                        ? allPlayerStats[player.id].fixture.fixture.timestamp * 1000 : null;
-                                    checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals, fixtureTs);
+                                    const teamName = allPlayerStats[statsKey].fixture?.teams?.home?.id === player.teamId 
+                                        ? allPlayerStats[statsKey].fixture?.teams?.home?.name 
+                                        : allPlayerStats[statsKey].fixture?.teams?.away?.name;
+                                    const fixtureTs = allPlayerStats[statsKey].fixture?.fixture?.timestamp 
+                                        ? allPlayerStats[statsKey].fixture.fixture.timestamp * 1000 : null;
+                                    checkNewGoals(playerId, player.name, player.photo, teamName || player.team, goals, fixtureTs);
                                 }
-                            } else if (player.teamId && teamsWithGames.has(player.teamId)) {
-                                // Time jogou mas jogador não tem dados = não entrou em campo = 0 pontos
-                                user.scores[round].players[player.id] = 0;
+                            } else if (player.teamId && teamsWithGames.has(player.teamId) && !isManual && playerId > 0) {
+                                // Time jogou mas jogador não tem dados e NÃO é manual = não entrou em campo = 0 pontos
+                                user.scores[round].players[playerId] = 0;
+                                calculatedScores[playerId] = 0; // Marcar como calculado
                             }
                         }
                     });
                     
                     userReserves.forEach(player => {
                         if (player && player.id) {
+                            // Converter ID para número (Firebase pode ter salvo como string)
+                            const playerId = Number(player.id);
+                            
+                            // PROTEÇÃO AGRESSIVA: IDs negativos são SEMPRE manuais
+                            if (playerId < 0) {
+                                console.log(`   🛡️ ${player.name} (ID negativo reserva): PROTEGIDO - não sobrescrever`);
+                                return;
+                            }
+                            
                             // PROTEGER pontuação manual (não sobrescrever)
-                            const isManual = user.scores[round]?.manualPlayers?.[player.id];
+                            // Verificar por ID como number E como string (Firebase converte)
+                            const isManual = user.scores[round]?.manualPlayers?.[playerId] || 
+                                           user.scores[round]?.manualPlayers?.[String(playerId)];
                             
                             if (isManual) {
-                                console.log(`   🛡️ ${player.name}: pontuação manual protegida (${user.scores[round].players[player.id]} pts)`);
-                            } else if (allPlayerStats[player.id]) {
+                                console.log(`   🛡️ ${player.name}: pontuação manual protegida (${user.scores[round].players[playerId] ?? user.scores[round].players[String(playerId)]} pts)`);
+                            } else if (allPlayerStats[playerId] || allPlayerStats[player.id]) {
                                 // Jogador tem dados - calcular pontuação (50% para reserva)
-                                const playerData = allPlayerStats[player.id].data;
-                                const fixtureData = allPlayerStats[player.id].fixture;
+                                const statsKey = allPlayerStats[playerId] ? playerId : player.id;
+                                const playerData = allPlayerStats[statsKey].data;
+                                const fixtureData = allPlayerStats[statsKey].fixture;
                                 const score = Math.round(calculatePlayerScore(playerData, fixtureData) * 0.5 * 10) / 10;
-                                user.scores[round].players[player.id] = score;
+                                user.scores[round].players[playerId] = score;
+                                calculatedScores[playerId] = score; // Marcar como calculado
                                 
                                 // Verificar novos gols apenas para o usuário atual
                                 if (isCurrentUser && playerData.statistics?.[0]?.goals?.total) {
                                     const goals = playerData.statistics[0].goals.total;
-                                    const teamName = allPlayerStats[player.id].fixture?.teams?.home?.id === player.teamId 
-                                        ? allPlayerStats[player.id].fixture?.teams?.home?.name 
-                                        : allPlayerStats[player.id].fixture?.teams?.away?.name;
-                                    const fixtureTs = allPlayerStats[player.id].fixture?.fixture?.timestamp 
-                                        ? allPlayerStats[player.id].fixture.fixture.timestamp * 1000 : null;
-                                    checkNewGoals(player.id, player.name, player.photo, teamName || player.team, goals, fixtureTs);
+                                    const teamName = allPlayerStats[statsKey].fixture?.teams?.home?.id === player.teamId 
+                                        ? allPlayerStats[statsKey].fixture?.teams?.home?.name 
+                                        : allPlayerStats[statsKey].fixture?.teams?.away?.name;
+                                    const fixtureTs = allPlayerStats[statsKey].fixture?.fixture?.timestamp 
+                                        ? allPlayerStats[statsKey].fixture.fixture.timestamp * 1000 : null;
+                                    checkNewGoals(playerId, player.name, player.photo, teamName || player.team, goals, fixtureTs);
                                 }
-                            } else if (player.teamId && teamsWithGames.has(player.teamId)) {
-                                // Time jogou mas jogador não tem dados = não entrou em campo = 0 pontos
-                                user.scores[round].players[player.id] = 0;
+                            } else if (player.teamId && teamsWithGames.has(player.teamId) && !isManual && playerId > 0) {
+                                // Time jogou mas jogador não tem dados e NÃO é manual = não entrou em campo = 0 pontos
+                                user.scores[round].players[playerId] = 0;
+                                calculatedScores[playerId] = 0; // Marcar como calculado
                             }
                         }
                     });
@@ -6191,9 +6396,26 @@
                     
                     console.log(`    ${nick}: ${userTotal} pts`);
                     
-                    // Salvar no Firebase
-                    if (db) {
-                        db.ref('users/' + nick + '/scores').set(user.scores);
+                    // DEBUG: Mostrar manualPlayers antes de salvar
+                    if (user.scores[round].manualPlayers && Object.keys(user.scores[round].manualPlayers).length > 0) {
+                        console.log(`    📌 ${nick} manualPlayers:`, user.scores[round].manualPlayers);
+                        console.log(`    📌 ${nick} players com pontos manuais:`, 
+                            Object.keys(user.scores[round].manualPlayers).map(pid => ({
+                                pid, 
+                                score: user.scores[round].players[pid] ?? user.scores[round].players[String(pid)]
+                            }))
+                        );
+                    }
+                    
+                    // Salvar no Firebase - APENAS os scores calculados (não manuais)
+                    if (db && Object.keys(calculatedScores).length > 0) {
+                        console.log(`    💾 Salvando ${Object.keys(calculatedScores).length} scores calculados para ${nick}`);
+                        // Usar update() para NÃO sobrescrever scores manuais
+                        db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores);
+                        db.ref('users/' + nick + '/scores/' + round).update({
+                            coach: user.scores[round].coach,
+                            live: user.scores[round].live
+                        });
                     }
                 }
                 
@@ -10440,6 +10662,17 @@
                 { top: '20%', left: '80%', label: 'PD' },    // PD
             ];
 
+            const userTotalScore = calculateUserScore(user);
+            const userRoundScore = (() => {
+                let total = 0;
+                const roundData = user.scores?.[state.selectedRound];
+                if (roundData?.players) {
+                    Object.values(roundData.players).forEach(s => total += (s || 0));
+                }
+                total += roundData?.coach || 0;
+                return Math.round(total * 10) / 10;
+            })();
+            
             return `
                 <div class="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-2 sm:p-4" onclick="closeModal(event)">
                     <div class="card rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
@@ -10454,9 +10687,19 @@
                                     <p onclick="viewProfile('${state.viewingUser}')" class="text-zinc-500 text-sm cursor-pointer hover:text-emerald-400 transition">@${state.viewingUser}</p>
                                 </div>
                             </div>
-                            <button onclick="state.modal='teams';state.viewingUser=null;render()" class="text-white/40 hover:text-white p-2">
-                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                            </button>
+                            <div class="flex items-center gap-4">
+                                <div class="text-right">
+                                    <p class="text-zinc-500 text-xs">RODADA ${state.selectedRound}</p>
+                                    <p class="text-xl font-bold text-white">${userRoundScore} <span class="text-sm text-zinc-500">pts</span></p>
+                                </div>
+                                <div class="text-right border-l border-zinc-700 pl-4">
+                                    <p class="text-zinc-500 text-xs">TOTAL</p>
+                                    <p class="text-xl font-bold text-emerald-400">${userTotalScore} <span class="text-sm">pts</span></p>
+                                </div>
+                                <button onclick="state.modal='teams';state.viewingUser=null;render()" class="text-white/40 hover:text-white p-2 ml-2">
+                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                </button>
+                            </div>
                         </div>
                         <div class="p-5 overflow-y-auto" style="max-height: calc(90vh - 100px);">
                             <!-- Campo -->
@@ -10471,82 +10714,115 @@
                                 <div class="meia-lua-baixo"></div>
                                 <div class="ponto-central"></div>
                                 
-                                ${viewPositions.map((pos, i) => `
+                                ${viewPositions.map((pos, i) => {
+                                    const player = user.starters?.[i];
+                                    // Buscar score por ID (number ou string)
+                                    const playersObj = user.scores?.[state.selectedRound]?.players || {};
+                                    const playerScore = player?.id !== undefined 
+                                        ? (playersObj[player.id] ?? playersObj[String(player.id)])
+                                        : undefined;
+                                    return `
                                     <div class="absolute transform -translate-x-1/2 -translate-y-1/2" style="top: ${pos.top}; left: ${pos.left}; z-index: 10;">
-                                        ${user.starters && user.starters[i] ? `
+                                        ${player ? `
                                             <div class="text-center relative">
-                                                <img src="${user.starters[i].photo || getAvatarUrl(user.starters[i].name)}" 
+                                                <img src="${player.photo || getAvatarUrl(player.name)}" 
                                                     class="w-16 h-16 rounded-full border-2 border-white/60 object-cover mx-auto"
                                                     onerror="this.src=getAvatarUrl(this.alt)">
-                                                ${getTeamLogo(user.starters[i].team) ? `<img src="${getTeamLogo(user.starters[i].team)}" class="absolute -top-1 -right-1 w-5 h-5 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${user.starters[i].team}">` : ''}
+                                                ${playerScore !== undefined ? `
+                                                    <div class="absolute -top-2 -right-2 z-20 min-w-[28px] h-7 rounded-full flex items-center justify-center text-xs font-bold px-1
+                                                        ${playerScore >= 0 ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}">
+                                                        ${playerScore}
+                                                    </div>
+                                                ` : ''}
+                                                ${playerScore === undefined && getTeamLogo(player.team) ? `<img src="${getTeamLogo(player.team)}" class="absolute -top-1 -right-1 w-5 h-5 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${player.team}">` : ''}
+                                                ${playerScore !== undefined && getTeamLogo(player.team) ? `<img src="${getTeamLogo(player.team)}" class="absolute -bottom-1 -right-1 w-5 h-5 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${player.team}">` : ''}
                                                 <p class="text-white text-xs mt-1 bg-black/70 rounded px-1.5 py-0.5">
-                                                    ${user.starters[i].name.split(' ').pop()}
+                                                    ${player.name.split(' ').pop()}
                                                 </p>
                                             </div>
                                         ` : `
                                             <div class="w-16 h-16 rounded-full border-2 border-dashed border-white/20 bg-black/20"></div>
                                         `}
                                     </div>
-                                `).join('')}
+                                `}).join('')}
                             </div>
                             
                             <!-- Técnico -->
-                            ${user.coach ? `
+                            ${user.coach ? (() => {
+                                const coachScore = user.scores?.[state.selectedRound]?.coach;
+                                return `
                                 <div class="bg-white/5 rounded-lg p-3 mb-4 flex items-center gap-3">
                                     <img src="${user.coach.photo}" alt="${user.coach.name}" class="w-10 h-10 rounded-lg object-cover bg-white/10 flex-shrink-0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                                     <div class="w-10 h-10 rounded-lg bg-white/10 items-center justify-center text-sm font-bold text-white" style="display:none">
                                         ${user.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
                                     </div>
-                                    <div>
+                                    <div class="flex-1">
                                         <p class="text-white/40 text-xs">Técnico</p>
                                         <p class="text-white text-sm font-medium">${user.coach.name}</p>
                                     </div>
+                                    ${coachScore !== undefined ? `<span class="px-2 py-1 rounded text-sm font-bold ${coachScore >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${coachScore}</span>` : ''}
                                 </div>
-                            ` : ''}
+                            `})() : ''}
                             
                             <!-- Reservas -->
                             <div class="bg-white/5 rounded-lg p-3">
-                                <p class="text-white/40 text-xs mb-3">Reservas</p>
+                                <p class="text-white/40 text-xs mb-3">Reservas <span class="text-emerald-400">(50% pts)</span></p>
                                 <div class="space-y-2 text-xs">
                                     <div class="flex items-center gap-2">
                                         <span class="text-zinc-500 w-8">GOL</span>
-                                        ${user.reserves && user.reserves[0] ? `
+                                        ${user.reserves && user.reserves[0] ? (() => {
+                                            const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                            const resScore = pObj[user.reserves[0].id] ?? pObj[String(user.reserves[0].id)];
+                                            return `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[0].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[0].name}')">
                                                 ${getTeamLogo(user.reserves[0].team) ? `<img src="${getTeamLogo(user.reserves[0].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[0].team}">` : ''}
                                                 <span class="text-white">${user.reserves[0].name.split(' ').pop()}</span>
+                                                ${resScore !== undefined ? `<span class="ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold ${resScore >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${resScore}</span>` : ''}
                                             </div>
-                                        ` : '<span class="text-zinc-600">-</span>'}
+                                        `})() : '<span class="text-zinc-600">-</span>'}
                                     </div>
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex items-center gap-2 flex-wrap">
                                         <span class="text-zinc-500 w-8">DEF</span>
-                                        ${[1,2].map(i => user.reserves && user.reserves[i] ? `
+                                        ${[1,2].map(i => user.reserves && user.reserves[i] ? (() => {
+                                            const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                            const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
+                                            return `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
                                                 ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
+                                                ${resScore !== undefined ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${resScore >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${resScore}</span>` : ''}
                                             </div>
-                                        ` : '').join('')}
+                                        `})() : '').join('')}
                                     </div>
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex items-center gap-2 flex-wrap">
                                         <span class="text-zinc-500 w-8">MEI</span>
-                                        ${[3,4].map(i => user.reserves && user.reserves[i] ? `
+                                        ${[3,4].map(i => user.reserves && user.reserves[i] ? (() => {
+                                            const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                            const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
+                                            return `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
                                                 ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
+                                                ${resScore !== undefined ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${resScore >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${resScore}</span>` : ''}
                                             </div>
-                                        ` : '').join('')}
+                                        `})() : '').join('')}
                                     </div>
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex items-center gap-2 flex-wrap">
                                         <span class="text-zinc-500 w-8">ATA</span>
-                                        ${[5,6].map(i => user.reserves && user.reserves[i] ? `
+                                        ${[5,6].map(i => user.reserves && user.reserves[i] ? (() => {
+                                            const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                            const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
+                                            return `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
                                                 ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
+                                                ${resScore !== undefined ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${resScore >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}">${resScore}</span>` : ''}
                                             </div>
-                                        ` : '').join('')}
+                                        `})() : '').join('')}
                                     </div>
                                 </div>
                             </div>
@@ -20848,26 +21124,36 @@ O usuário não poderá mais fazer login.
         window.saveAllManualScores = function() {
             const round = parseInt(document.getElementById('msRound')?.value) || state.currentRound;
             const cards = document.querySelectorAll('.ms-player-card');
+            console.log('💾 SAVE DEBUG - Round:', round, 'Cards encontrados:', cards.length);
+            
             if (cards.length === 0) { alert('Nenhum jogador!'); return; }
             
             const manualPlayers = state.players.filter(p => p.manual || p.id < 0);
             const users = Object.entries(state.users).filter(([n, u]) => u.isConfirmed && n !== 'admin');
             const updates = {};
             
+            console.log('💾 SAVE DEBUG - Users confirmados:', users.map(([n]) => n));
+            
             cards.forEach((card, idx) => {
                 const pid = card.dataset.pid;
                 const el = document.getElementById('msTotal_' + idx);
                 const score = parseFloat(el?.textContent) || 0;
+                
+                console.log(`💾 SAVE DEBUG - Card ${idx}: PID=${pid} (type: ${typeof pid}), Score=${score}`);
                 
                 users.forEach(([nick, user]) => {
                     const inS = (user.starters || []).find(s => s && String(s.id) === String(pid));
                     const inR = (user.reserves || []).find(r => r && String(r.id) === String(pid));
                     if (inS || inR) {
                         if (!updates[nick]) updates[nick] = {};
-                        updates[nick][pid] = inR && !inS ? Math.round(score * 0.5 * 10) / 10 : score;
+                        const finalScore = inR && !inS ? Math.round(score * 0.5 * 10) / 10 : score;
+                        updates[nick][pid] = finalScore;
+                        console.log(`💾 SAVE DEBUG - ${nick} tem jogador ${pid}: ${inS ? 'TITULAR' : 'RESERVA'} = ${finalScore} pts`);
                     }
                 });
             });
+            
+            console.log('💾 SAVE DEBUG - Updates a salvar:', updates);
             
             const totalU = Object.keys(updates).length;
             if (totalU === 0) { alert('Nenhum jogador manual escalado. Pontos calculados mas não salvos.'); return; }
@@ -20879,16 +21165,39 @@ O usuário não poderá mais fazer login.
                 if (!u.scores) u.scores = {};
                 if (!u.scores[round]) u.scores[round] = { players: {}, coach: 0 };
                 if (!u.scores[round].players) u.scores[round].players = {};
-                Object.entries(ps).forEach(([pid, pts]) => { u.scores[round].players[pid] = pts; });
+                if (!u.scores[round].manualPlayers) u.scores[round].manualPlayers = {};
+                
+                // Converter IDs para formato que Firebase aceita (prefixo 'p' para negativos)
+                const firebasePs = {};
+                const firebaseManual = {};
+                Object.entries(ps).forEach(([pid, pts]) => {
+                    // Salvar pontuação
+                    u.scores[round].players[pid] = pts;
+                    firebasePs[pid] = pts;
+                    // MARCAR COMO MANUAL para proteger de sobrescrita pelo sync automático
+                    u.scores[round].manualPlayers[pid] = true;
+                    firebaseManual[pid] = true;
+                });
+                
+                console.log('💾 SAVE DEBUG - Salvando no Firebase:', nick, firebasePs, 'Manual:', firebaseManual);
                 
                 if (db) {
-                    db.ref('users/' + nick + '/scores/' + round + '/players').update(ps).then(() => {
+                    // Salvar pontos E marcar como manual
+                    Promise.all([
+                        db.ref('users/' + nick + '/scores/' + round + '/players').update(firebasePs),
+                        db.ref('users/' + nick + '/scores/' + round + '/manualPlayers').update(firebaseManual)
+                    ]).then(() => {
+                        console.log('💾 SAVE DEBUG - ✅ Salvo com sucesso:', nick);
                         saved++;
                         if (saved === totalU) {
                             if (state.scores && updates[state.currentUser]) {
                                 if (!state.scores[round]) state.scores[round] = { players: {}, coach: 0 };
                                 if (!state.scores[round].players) state.scores[round].players = {};
-                                Object.entries(updates[state.currentUser]).forEach(([pid, pts]) => { state.scores[round].players[pid] = pts; });
+                                if (!state.scores[round].manualPlayers) state.scores[round].manualPlayers = {};
+                                Object.entries(updates[state.currentUser]).forEach(([pid, pts]) => { 
+                                    state.scores[round].players[pid] = pts;
+                                    state.scores[round].manualPlayers[pid] = true;
+                                });
                             }
                             let msg = '✅ Rodada ' + round + ' salva!\\n';
                             Object.entries(updates).forEach(([nk, sc]) => {
@@ -20901,7 +21210,10 @@ O usuário não poderá mais fazer login.
                             alert(msg);
                             render();
                         }
-                    }).catch(err => alert('❌ ' + err.message));
+                    }).catch(err => {
+                        console.log('💾 SAVE DEBUG - ❌ Erro:', nick, err);
+                        alert('❌ ' + err.message);
+                    });
                 }
             });
             if (!db) { alert('Salvo local'); render(); }
