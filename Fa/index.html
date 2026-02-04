@@ -5963,6 +5963,7 @@
                 let teamsWithGames = new Set();
                 let hasLiveGames = false;
                 let fixtures = [];
+                let gamesToProcess = [];
                 
                 if (useCache && cachedStats) {
                     // USAR CACHE
@@ -5970,6 +5971,7 @@
                     teamsWithGames = new Set(cachedStats.teamsWithGames || []);
                     hasLiveGames = cachedStats.hasLiveGames;
                     state.hasLiveGames = hasLiveGames;
+                    gamesToProcess = cachedStats.gamesToProcess || [];
                     
                 } else {
                     // BUSCAR DA API (primeiro usuário a acessar)
@@ -6025,7 +6027,7 @@
                     
                     const liveGames = fixtures.filter(f => liveStatuses.includes(f.fixture?.status?.short));
                     const finishedGames = fixtures.filter(f => finishedStatuses.includes(f.fixture?.status?.short));
-                    const gamesToProcess = [...liveGames, ...finishedGames];
+                    gamesToProcess = [...liveGames, ...finishedGames];
                     
                     hasLiveGames = liveGames.length > 0;
                     state.hasLiveGames = hasLiveGames;
@@ -6079,6 +6081,7 @@
                                 playerStats: allPlayerStats,
                                 teamsWithGames: Array.from(teamsWithGames),
                                 hasLiveGames: hasLiveGames,
+                                gamesToProcess: gamesToProcess,
                                 timestamp: Date.now(),
                                 savedBy: state.currentUser || 'anonymous'
                             })
@@ -6102,7 +6105,7 @@
                         user.scores[round] = { players: {}, coach: 0, live: false };
                     }
                     
-                    user.scores[round].live = liveGames.length > 0;
+                    user.scores[round].live = hasLiveGames;
                     
                     // Calcular pontos dos jogadores escalados
                     const userStarters = ensureArray(user.starters, 11);
@@ -7258,8 +7261,8 @@
                                                     class="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 ${state.captainEnabled && state.captain === state.starters[i].id ? 'border-yellow-400 ring-2 ring-yellow-400/30' : 'border-white/80'} object-cover mx-auto hover:border-green-400 transition ${canEditTeam() ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}"
                                                     onerror="this.src=getAvatarUrl(this.alt)">
                                                 ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? `
-                                                    <div class="absolute -top-2 -right-2 z-20 ${state.captainEnabled && state.captain === state.starters[i].id ? 'min-w-[36px] h-7' : 'min-w-[28px] h-7'} rounded-full flex items-center justify-center text-[10px] font-bold px-1
-                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-amber-400 text-black' : 'bg-red-500 text-white'}
+                                                    <div class="absolute -top-2 -right-2 z-20 ${state.captainEnabled && state.captain === state.starters[i].id ? 'min-w-[40px] h-8' : 'min-w-[32px] h-8'} rounded-full flex items-center justify-center text-sm font-extrabold px-1.5
+                                                        ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}
                                                         ${state.captainEnabled && state.captain === state.starters[i].id ? ' ring-2 ring-yellow-300' : ''}
                                                         ${state.scores[state.selectedRound]?.live ? ' ring-2 ring-white/50' : ''}">
                                                         ${state.captainEnabled && state.captain === state.starters[i].id 
@@ -7438,7 +7441,7 @@
                                                             class="w-12 h-12 rounded-lg object-cover border-2 border-zinc-700 hover:border-emerald-500 transition mx-auto ${canEditTeam() ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}"
                                                             onerror="this.src=getAvatarUrl(this.alt)">
                                                         ${score !== undefined ? `
-                                                            <span class="absolute -top-1 -right-0 ${String(score).length > 2 ? 'min-w-[24px] rounded-lg px-1' : 'w-5'} h-5 rounded-full text-[8px] font-bold flex items-center justify-center bg-orange-500/90 text-white z-20">${score}</span>
+                                                            <span class="absolute -top-1.5 -right-1 ${String(score).length > 2 ? 'min-w-[26px] rounded-lg px-1' : 'w-6'} h-6 rounded-full text-[11px] font-bold flex items-center justify-center ${score >= 0 ? 'bg-emerald-500' : 'bg-red-500'} text-white z-20">${score}</span>
                                                         ` : ''}
                                                     </div>
                                                     <div class="flex items-center justify-center gap-0.5 mt-0.5">
