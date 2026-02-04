@@ -1069,7 +1069,21 @@
         // Função para obter logo do time
         function getTeamLogo(teamName) {
             if (!teamName) return null;
-            return TEAM_LOGOS[teamName] || TEAM_LOGOS[capitalizeTeamName(teamName)] || null;
+            // Tentativa direta
+            if (TEAM_LOGOS[teamName]) return TEAM_LOGOS[teamName];
+            // Capitalizar
+            const cap = capitalizeTeamName(teamName);
+            if (TEAM_LOGOS[cap]) return TEAM_LOGOS[cap];
+            // Busca case-insensitive
+            const lower = teamName.toLowerCase();
+            for (const key in TEAM_LOGOS) {
+                if (key.toLowerCase() === lower) return TEAM_LOGOS[key];
+            }
+            // Busca parcial (ex: "Flamengo" dentro de "CR Flamengo")
+            for (const key in TEAM_LOGOS) {
+                if (lower.includes(key.toLowerCase()) || key.toLowerCase().includes(lower)) return TEAM_LOGOS[key];
+            }
+            return null;
         }
         
         // Função para capitalizar corretamente nomes de times do Brasileirão
@@ -4406,6 +4420,19 @@
                     state.players = parsed.players || [];
                     state.teams = parsed.teams || [];
                     
+                    // Atualizar TEAM_LOGOS com logos dos times do cache
+                    if (state.teams.length > 0) {
+                        state.teams.forEach(t => {
+                            if (t.name && t.logo) {
+                                TEAM_LOGOS[t.name] = t.logo;
+                                const capitalized = capitalizeTeamName(t.name);
+                                if (capitalized && capitalized !== t.name) {
+                                    TEAM_LOGOS[capitalized] = t.logo;
+                                }
+                            }
+                        });
+                    }
+                    
                     // Mesclar jogadores manuais (contratações recentes)
                     mergeManualPlayers();
                 }
@@ -4568,6 +4595,27 @@
                     
                     console.log('✓ Jogadores do Firebase:', state.players.length);
                     
+                    // Atualizar TEAM_LOGOS com logos dos times carregados (corrige escudos hardcoded incorretos)
+                    if (state.teams && state.teams.length > 0) {
+                        state.teams.forEach(t => {
+                            if (t.name && t.logo) {
+                                TEAM_LOGOS[t.name] = t.logo;
+                                const capitalized = capitalizeTeamName(t.name);
+                                if (capitalized && capitalized !== t.name) {
+                                    TEAM_LOGOS[capitalized] = t.logo;
+                                }
+                            }
+                        });
+                    }
+                    
+                    // Corrigir escudos de TODOS os jogadores baseado no TEAM_LOGOS
+                    state.players.forEach(p => {
+                        if (p && p.team) {
+                            const correctLogo = TEAM_LOGOS[p.team] || getTeamLogo(p.team);
+                            if (correctLogo) p.teamLogo = correctLogo;
+                        }
+                    });
+                    
                     // Verificar se precisa atualizar (>24h desde última sync)
                     const lastSync = data.lastSync ? new Date(data.lastSync) : null;
                     const now = new Date();
@@ -4595,6 +4643,20 @@
                             if (parsed.players && parsed.players.length > 0) {
                                 state.players = parsed.players;
                                 state.teams = parsed.teams || [];
+                                
+                                // Atualizar TEAM_LOGOS com logos dos times do cache
+                                if (state.teams.length > 0) {
+                                    state.teams.forEach(t => {
+                                        if (t.name && t.logo) {
+                                            TEAM_LOGOS[t.name] = t.logo;
+                                            const capitalized = capitalizeTeamName(t.name);
+                                            if (capitalized && capitalized !== t.name) {
+                                                TEAM_LOGOS[capitalized] = t.logo;
+                                            }
+                                        }
+                                    });
+                                }
+                                
                                 mergeManualPlayers();
                                 console.log('📦 Usando cache local:', state.players.length, 'jogadores');
                                 
@@ -5283,6 +5345,18 @@
                 logo: t.team.logo || ''  // Evitar undefined
             }));
 
+            // Atualizar TEAM_LOGOS com logos da API (corrige escudos incorretos hardcoded)
+            state.teams.forEach(t => {
+                if (t.name && t.logo) {
+                    TEAM_LOGOS[t.name] = t.logo;
+                    const capitalized = capitalizeTeamName(t.name);
+                    if (capitalized && capitalized !== t.name) {
+                        TEAM_LOGOS[capitalized] = t.logo;
+                    }
+                }
+            });
+            console.log('✓ TEAM_LOGOS atualizado com logos da API');
+
             addLog(`   ${state.teams.length} times encontrados! (temporada ${usedSeason})`, 'success');
 
             // Buscar jogadores de cada time
@@ -5305,7 +5379,7 @@
                                 position: translatePosition(p.position, p.number),
                                 team: team.name || '',
                                 teamId: team.id,
-                                teamLogo: team.logo || '',
+                                teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
                                 number: p.number || 0  // Evitar undefined
                             });
                         });
@@ -5323,7 +5397,7 @@
                                     position: translatePosition(p.statistics[0]?.games?.position),
                                     team: team.name || '',
                                     teamId: team.id,
-                                    teamLogo: team.logo || '',
+                                    teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
                                     age: p.player.age || 0,
                                     nationality: p.player.nationality || ''
                                 });
@@ -6168,52 +6242,50 @@
         // Sincronizar fotos atualizadas de state.players com cópias em starters/reserves
         let lastPhotoSync = 0;
         function syncPlayerPhotos() {
-            // Só sincronizar fotos a cada 10 segundos (não a cada render)
+            // Só sincronizar a cada 10 segundos (não a cada render)
             const now = Date.now();
             if (now - lastPhotoSync < 10000) return;
             lastPhotoSync = now;
             
-            // Criar mapa rápido de fotos atuais
+            // Criar mapa rápido de fotos e logos atuais
             const photoMap = {};
+            const teamLogoMap = {};
             state.players.forEach(p => {
                 if (p.photo && !p.photo.includes('data:image/svg')) {
                     photoMap[p.id] = p.photo;
                 }
+                // Logo correto baseado no nome do time
+                const correctLogo = TEAM_LOGOS[p.team] || getTeamLogo(p.team) || '';
+                if (correctLogo) teamLogoMap[p.id] = correctLogo;
             });
             
-            // Atualizar starters do usuário atual
-            if (state.starters) {
-                state.starters.forEach(p => {
-                    if (p && photoMap[p.id] && p.photo !== photoMap[p.id]) {
-                        p.photo = photoMap[p.id];
+            // Função para atualizar foto + escudo + time de um jogador
+            function syncPlayer(p) {
+                if (!p || !p.id) return;
+                // Buscar dados mais recentes do jogador na lista principal
+                const master = state.players.find(mp => mp.id === p.id);
+                if (master) {
+                    if (master.photo && !master.photo.includes('data:image/svg')) p.photo = master.photo;
+                    if (master.team) p.team = master.team;
+                    p.teamLogo = TEAM_LOGOS[master.team] || getTeamLogo(master.team) || '';
+                } else {
+                    // Sem master, pelo menos corrigir o escudo pelo nome
+                    if (p.team) {
+                        const correct = TEAM_LOGOS[p.team] || getTeamLogo(p.team);
+                        if (correct) p.teamLogo = correct;
                     }
-                });
+                }
             }
-            // Atualizar reserves do usuário atual
-            if (state.reserves) {
-                state.reserves.forEach(p => {
-                    if (p && photoMap[p.id] && p.photo !== photoMap[p.id]) {
-                        p.photo = photoMap[p.id];
-                    }
-                });
-            }
-            // Atualizar starters/reserves de todos os usuários (para tela de draft/times)
+            
+            // Atualizar starters/reserves do usuário atual
+            if (state.starters) state.starters.forEach(syncPlayer);
+            if (state.reserves) state.reserves.forEach(syncPlayer);
+            
+            // Atualizar todos os usuários
             if (state.users) {
                 Object.values(state.users).forEach(u => {
-                    if (u.starters) {
-                        (Array.isArray(u.starters) ? u.starters : []).forEach(p => {
-                            if (p && photoMap[p.id] && p.photo !== photoMap[p.id]) {
-                                p.photo = photoMap[p.id];
-                            }
-                        });
-                    }
-                    if (u.reserves) {
-                        (Array.isArray(u.reserves) ? u.reserves : []).forEach(p => {
-                            if (p && photoMap[p.id] && p.photo !== photoMap[p.id]) {
-                                p.photo = photoMap[p.id];
-                            }
-                        });
-                    }
+                    if (u.starters) (Array.isArray(u.starters) ? u.starters : []).forEach(syncPlayer);
+                    if (u.reserves) (Array.isArray(u.reserves) ? u.reserves : []).forEach(syncPlayer);
                 });
             }
             
@@ -7166,7 +7238,7 @@
                                                     ['VOL', 'MC', 'MEI', 'MD', 'ME'].includes(pos.label) ? 'bg-emerald-500 text-white' :
                                                     'bg-red-500 text-white'
                                                 }">${pos.label}</span>
-                                                ${(getTeamLogo(state.starters[i].team) || state.starters[i].teamLogo) ? `<img src="${getTeamLogo(state.starters[i].team) || state.starters[i].teamLogo}" class="absolute -top-1 -right-1 w-5 h-5 sm:w-6 sm:h-6 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${state.starters[i].team}">` : ''}
+                                                ${getTeamLogo(state.starters[i].team) ? `<img src="${getTeamLogo(state.starters[i].team)}" class="absolute -top-1 -right-1 w-5 h-5 sm:w-6 sm:h-6 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${state.starters[i].team}">` : ''}
                                                 <p class="text-white text-xs font-medium mt-1 bg-black/70 rounded px-2 py-0.5">
                                                     ${state.starters[i].name.split(' ').pop()}
                                                 </p>
@@ -7335,7 +7407,7 @@
                                                         ` : ''}
                                                     </div>
                                                     <div class="flex items-center justify-center gap-0.5 mt-0.5">
-                                                        ${(getTeamLogo(reserve.team) || reserve.teamLogo) ? `<img src="${getTeamLogo(reserve.team) || reserve.teamLogo}" class="w-3.5 h-3.5 object-contain" title="${reserve.team}">` : ''}
+                                                        ${getTeamLogo(reserve.team) ? `<img src="${getTeamLogo(reserve.team)}" class="w-3.5 h-3.5 object-contain" title="${reserve.team}">` : ''}
                                                         <p class="text-[8px] ${posColors[i]} font-bold">${reserve.position || posLabels[i]}</p>
                                                     </div>
                                                     <p class="text-[9px] text-zinc-400 truncate leading-tight">${reserve.name.split(' ').pop()}</p>
@@ -10368,7 +10440,7 @@
                                                 <img src="${user.starters[i].photo || getAvatarUrl(user.starters[i].name)}" 
                                                     class="w-16 h-16 rounded-full border-2 border-white/60 object-cover mx-auto"
                                                     onerror="this.src=getAvatarUrl(this.alt)">
-                                                ${(getTeamLogo(user.starters[i].team) || user.starters[i].teamLogo) ? `<img src="${getTeamLogo(user.starters[i].team) || user.starters[i].teamLogo}" class="absolute -top-1 -right-1 w-5 h-5 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${user.starters[i].team}">` : ''}
+                                                ${getTeamLogo(user.starters[i].team) ? `<img src="${getTeamLogo(user.starters[i].team)}" class="absolute -top-1 -right-1 w-5 h-5 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${user.starters[i].team}">` : ''}
                                                 <p class="text-white text-xs mt-1 bg-black/70 rounded px-1.5 py-0.5">
                                                     ${user.starters[i].name.split(' ').pop()}
                                                 </p>
@@ -10403,7 +10475,7 @@
                                         ${user.reserves && user.reserves[0] ? `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[0].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[0].name}')">
-                                                ${(getTeamLogo(user.reserves[0].team) || user.reserves[0].teamLogo) ? `<img src="${getTeamLogo(user.reserves[0].team) || user.reserves[0].teamLogo}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[0].team}">` : ''}
+                                                ${getTeamLogo(user.reserves[0].team) ? `<img src="${getTeamLogo(user.reserves[0].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[0].team}">` : ''}
                                                 <span class="text-white">${user.reserves[0].name.split(' ').pop()}</span>
                                             </div>
                                         ` : '<span class="text-zinc-600">-</span>'}
@@ -10413,7 +10485,7 @@
                                         ${[1,2].map(i => user.reserves && user.reserves[i] ? `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
-                                                ${(getTeamLogo(user.reserves[i].team) || user.reserves[i].teamLogo) ? `<img src="${getTeamLogo(user.reserves[i].team) || user.reserves[i].teamLogo}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
+                                                ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
                                             </div>
                                         ` : '').join('')}
@@ -10423,7 +10495,7 @@
                                         ${[3,4].map(i => user.reserves && user.reserves[i] ? `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
-                                                ${(getTeamLogo(user.reserves[i].team) || user.reserves[i].teamLogo) ? `<img src="${getTeamLogo(user.reserves[i].team) || user.reserves[i].teamLogo}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
+                                                ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
                                             </div>
                                         ` : '').join('')}
@@ -10433,7 +10505,7 @@
                                         ${[5,6].map(i => user.reserves && user.reserves[i] ? `
                                             <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
-                                                ${(getTeamLogo(user.reserves[i].team) || user.reserves[i].teamLogo) ? `<img src="${getTeamLogo(user.reserves[i].team) || user.reserves[i].teamLogo}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
+                                                ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
                                             </div>
                                         ` : '').join('')}
@@ -11803,10 +11875,10 @@
                                 
                                 <!-- 💰 GESTÃO DE PREÇOS DO MERCADO -->
                                 
-                                <!-- ⚽ EDITAR POSIÇÃO DE JOGADORES -->
+                                <!-- ⚽ EDITAR JOGADORES (Posição e Time) -->
                                 <div class="bg-zinc-900 rounded-xl p-6 border border-purple-500/30">
-                                    <h4 class="text-purple-400 font-medium mb-2">⚽ Editar Posição de Jogadores</h4>
-                                    <p class="text-zinc-500 text-sm mb-4">Alterar a posição de qualquer jogador (afeta mercado, escalação e tudo mais)</p>
+                                    <h4 class="text-purple-400 font-medium mb-2">⚽ Editar Jogadores (Posição e Time)</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Alterar posição ou time de qualquer jogador</p>
                                     
                                     <div class="flex gap-3 mb-4">
                                         <input type="text" id="posEditSearch" placeholder="Buscar jogador pelo nome..." 
@@ -19960,17 +20032,25 @@ O usuário não poderá mais fazer login.
                 {val: 'SA', label: 'SA', norm: 'SA'}
             ];
             
+            const teamNames = state.teams.map(t => t.name).sort();
+            
             container.innerHTML = results.map(p => {
                 const currentPos = normalizePosition(p.position);
+                const teamLogo = getTeamLogo(p.team) || '';
                 return `
-                    <div class="flex items-center gap-3 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50" id="posRow_${p.id}">
+                    <div class="flex items-center gap-2 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50 flex-wrap sm:flex-nowrap" id="posRow_${p.id}">
                         <img src="${p.photo || ''}" alt="${p.name}" class="w-10 h-10 rounded-full object-cover bg-zinc-700 flex-shrink-0" onerror="this.src=getAvatarUrl(this.alt)">
                         <div class="flex-1 min-w-0">
                             <p class="text-white text-sm font-medium truncate">${p.name}</p>
-                            <p class="text-zinc-500 text-xs">${p.team}</p>
+                            <div class="flex items-center gap-1">
+                                ${teamLogo ? `<img src="${teamLogo}" class="w-3.5 h-3.5 object-contain">` : ''}
+                                <p class="text-zinc-500 text-xs">${p.team}</p>
+                            </div>
                         </div>
-                        <span class="text-xs px-2 py-1 bg-zinc-700 text-zinc-300 rounded font-bold">${currentPos}</span>
-                        <select id="posSelect_${p.id}" class="px-2 py-1.5 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-sm" onchange="adminChangePosition(${p.id}, this.value)">
+                        <select class="px-2 py-1.5 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-xs max-w-[110px]" onchange="adminChangeTeam(${p.id}, this.value)">
+                            ${teamNames.map(t => `<option value="${t}" ${p.team === t ? 'selected' : ''}>${t}</option>`).join('')}
+                        </select>
+                        <select id="posSelect_${p.id}" class="px-2 py-1.5 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-xs" onchange="adminChangePosition(${p.id}, this.value)">
                             ${posOptions.map(o => `<option value="${o.val}" ${currentPos === o.norm ? 'selected' : ''}>${o.label}</option>`).join('')}
                         </select>
                         <span id="posSaved_${p.id}" class="text-emerald-400 text-xs hidden">✅</span>
@@ -20032,6 +20112,58 @@ O usuário não poderá mais fazer login.
             }
             
             console.log('⚽ Posição alterada:', player.name, oldPos, '→', newPosition);
+            saveState();
+        };
+        
+        // Mudar time do jogador
+        window.adminChangeTeam = function(playerId, newTeam) {
+            const player = state.players.find(p => p.id === playerId);
+            if (!player) return;
+            
+            const oldTeam = player.team;
+            const newTeamLogo = TEAM_LOGOS[newTeam] || '';
+            const teamData = state.teams.find(t => t.name === newTeam);
+            
+            player.team = newTeam;
+            player.teamLogo = newTeamLogo;
+            if (teamData) player.teamId = teamData.id;
+            
+            // Atualizar em starters/reserves de TODOS os usuários
+            Object.values(state.users).forEach(u => {
+                if (u.starters) {
+                    (Array.isArray(u.starters) ? u.starters : Object.values(u.starters)).forEach(s => {
+                        if (s && s.id === playerId) { s.team = newTeam; s.teamLogo = newTeamLogo; }
+                    });
+                }
+                if (u.reserves) {
+                    (Array.isArray(u.reserves) ? u.reserves : Object.values(u.reserves)).forEach(s => {
+                        if (s && s.id === playerId) { s.team = newTeam; s.teamLogo = newTeamLogo; }
+                    });
+                }
+            });
+            
+            // Atualizar nos starters/reserves do state principal
+            state.starters.forEach(s => { if (s && s.id === playerId) { s.team = newTeam; s.teamLogo = newTeamLogo; } });
+            state.reserves.forEach(s => { if (s && s.id === playerId) { s.team = newTeam; s.teamLogo = newTeamLogo; } });
+            
+            // Salvar no Firebase
+            if (db) {
+                if (player.manual || player.id < 0) {
+                    db.ref('manualPlayers/' + Math.abs(playerId)).update({ team: newTeam, teamLogo: newTeamLogo });
+                } else {
+                    db.ref('customTeams/' + playerId).set({ team: newTeam, teamLogo: newTeamLogo });
+                }
+            }
+            
+            // Feedback visual
+            const saved = document.getElementById('posSaved_' + playerId);
+            if (saved) {
+                saved.classList.remove('hidden');
+                setTimeout(() => saved.classList.add('hidden'), 2000);
+            }
+            
+            console.log('🔄 Time alterado:', player.name, oldTeam, '→', newTeam);
+            savePlayers();
             saveState();
         };
 
@@ -20738,6 +20870,38 @@ O usuário não poderá mais fazer login.
                     console.log('⚽ Posições customizadas carregadas:', Object.keys(customPositions).length);
                 }
             });
+            
+            // 🔄 Carregar times customizados (para jogadores da API trocados de time)
+            db.ref('customTeams').on('value', (snapshot) => {
+                const customTeams = snapshot.val();
+                if (customTeams) {
+                    Object.entries(customTeams).forEach(([playerId, data]) => {
+                        if (!data || !data.team) return;
+                        const numId = Number(playerId);
+                        const player = state.players.find(p => p.id === numId);
+                        if (player) {
+                            player.team = data.team;
+                            player.teamLogo = data.teamLogo || TEAM_LOGOS[data.team] || '';
+                        }
+                        // Atualizar em escalações
+                        Object.values(state.users).forEach(u => {
+                            [...ensureArray(u.starters || [], 11), ...ensureArray(u.reserves || [], 7)].forEach(s => {
+                                if (s && s.id === numId) {
+                                    s.team = data.team;
+                                    s.teamLogo = data.teamLogo || TEAM_LOGOS[data.team] || '';
+                                }
+                            });
+                        });
+                        [...(state.starters || []), ...(state.reserves || [])].forEach(s => {
+                            if (s && s.id === numId) {
+                                s.team = data.team;
+                                s.teamLogo = data.teamLogo || TEAM_LOGOS[data.team] || '';
+                            }
+                        });
+                    });
+                    console.log('🔄 Times customizados carregados:', Object.keys(customTeams).length);
+                }
+            });
         }
         
         // Chamar ao inicializar
@@ -20980,6 +21144,10 @@ O usuário não poderá mais fazer login.
                                 console.log('📺 Tela:', state.screen, '| hasTeam:', hasTeam);
                                 
                                 console.log('✅ Dados carregados do Firebase');
+                                
+                                // Forçar sincronização imediata de fotos/escudos/times
+                                lastPhotoSync = 0;
+                                syncPlayerPhotos();
                                 
                                 // Iniciar listeners
                                 listenToDraftChat();
@@ -21273,6 +21441,17 @@ O usuário não poderá mais fazer login.
                 logo: t.team.logo || ''  // Evitar undefined
             }));
 
+            // Atualizar TEAM_LOGOS com logos da API (corrige escudos incorretos hardcoded)
+            state.teams.forEach(t => {
+                if (t.name && t.logo) {
+                    TEAM_LOGOS[t.name] = t.logo;
+                    const capitalized = capitalizeTeamName(t.name);
+                    if (capitalized && capitalized !== t.name) {
+                        TEAM_LOGOS[capitalized] = t.logo;
+                    }
+                }
+            });
+
             const allPlayers = [];
             
             for (let i = 0; i < state.teams.length; i++) {
@@ -21297,7 +21476,7 @@ O usuário não poderá mais fazer login.
                                 position: translatePosition(p.position, p.number),
                                 team: team.name || '',
                                 teamId: team.id,
-                                teamLogo: team.logo || '',
+                                teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
                                 number: p.number || 0  // Evitar undefined
                             });
                         });
@@ -21327,6 +21506,20 @@ O usuário não poderá mais fazer login.
                     if (parsed.players && parsed.players.length > 0) {
                         state.players = parsed.players;
                         state.teams = parsed.teams || [];
+                        
+                        // Atualizar TEAM_LOGOS com logos dos times do cache (corrige escudos hardcoded incorretos)
+                        if (state.teams.length > 0) {
+                            state.teams.forEach(t => {
+                                if (t.name && t.logo) {
+                                    TEAM_LOGOS[t.name] = t.logo;
+                                    const capitalized = capitalizeTeamName(t.name);
+                                    if (capitalized && capitalized !== t.name) {
+                                        TEAM_LOGOS[capitalized] = t.logo;
+                                    }
+                                }
+                            });
+                        }
+                        
                         mergeManualPlayers();
                         console.log('✓ Cache local:', state.players.length, 'jogadores');
                         return; // ✅ Tem cache, não fazer mais nada!
