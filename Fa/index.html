@@ -6111,7 +6111,12 @@
                     
                     userStarters.forEach(player => {
                         if (player && player.id) {
-                            if (allPlayerStats[player.id]) {
+                            // PROTEGER pontuação manual (não sobrescrever)
+                            const isManual = user.scores[round]?.manualPlayers?.[player.id];
+                            
+                            if (isManual) {
+                                console.log(`   🛡️ ${player.name}: pontuação manual protegida (${user.scores[round].players[player.id]} pts)`);
+                            } else if (allPlayerStats[player.id]) {
                                 // Jogador tem dados - calcular pontuação normal
                                 const playerData = allPlayerStats[player.id].data;
                                 const fixtureData = allPlayerStats[player.id].fixture;
@@ -6137,7 +6142,12 @@
                     
                     userReserves.forEach(player => {
                         if (player && player.id) {
-                            if (allPlayerStats[player.id]) {
+                            // PROTEGER pontuação manual (não sobrescrever)
+                            const isManual = user.scores[round]?.manualPlayers?.[player.id];
+                            
+                            if (isManual) {
+                                console.log(`   🛡️ ${player.name}: pontuação manual protegida (${user.scores[round].players[player.id]} pts)`);
+                            } else if (allPlayerStats[player.id]) {
                                 // Jogador tem dados - calcular pontuação (50% para reserva)
                                 const playerData = allPlayerStats[player.id].data;
                                 const fixtureData = allPlayerStats[player.id].fixture;
@@ -11652,6 +11662,10 @@
                                 class="px-4 py-2.5 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'market' ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
                                 💰 Mercado
                             </button>
+                            <button onclick="state.adminTab='history';render()" 
+                                class="px-4 py-2.5 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'history' ? 'bg-teal-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
+                                📜 Histórico
+                            </button>
                             <button onclick="state.adminTab='system';render()" 
                                 class="px-4 py-2.5 rounded-xl font-medium transition whitespace-nowrap ${state.adminTab === 'system' ? 'bg-red-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'}">
                                 ⚙️ Sistema
@@ -12603,6 +12617,25 @@
                                 <h3 class="text-xl font-bold text-white">⚽ Pontuação Manual</h3>
                                 <p class="text-zinc-400 text-sm">Calcule e salve os pontos dos jogadores manuais para cada rodada.</p>
                                 
+                                <!-- NOVOS BOTÕES: Ver Todos os Pontos / Sync Leve -->
+                                <div class="bg-zinc-900 rounded-xl p-4 border border-blue-500/30">
+                                    <h4 class="text-blue-400 font-medium mb-3 text-sm">🔧 Ferramentas</h4>
+                                    <div class="flex flex-wrap gap-2">
+                                        <button onclick="adminViewAllPlayerPoints()" 
+                                            class="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold">
+                                            📊 Ver Pontos de Todos (Rodada ${state.selectedRound})
+                                        </button>
+                                        <button onclick="adminSyncTeamsFromRound()" 
+                                            class="px-4 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-bold">
+                                            🔄 Sync Times que Jogaram
+                                        </button>
+                                    </div>
+                                    <p class="text-zinc-600 text-xs mt-2">
+                                        📊 Mostra pontos de TODOS jogadores que jogaram (inclusive não escalados) |
+                                        🔄 Sincroniza só os times que jogaram (~2-4 requests)
+                                    </p>
+                                </div>
+                                
                                 <div class="bg-zinc-900 rounded-xl p-4 border border-orange-500/30">
                                     <div class="flex flex-wrap items-end gap-3 mb-4">
                                         <div>
@@ -12705,6 +12738,130 @@
                                             </div>
                                         `).join('') || '<p class="text-zinc-600 text-sm">Nenhuma transferência</p>'}
                                     </div>
+                                </div>
+                            </div>
+                        ` : ''}
+                        
+                        <!-- ==================== ABA HISTÓRICO ==================== -->
+                        ${state.adminTab === 'history' ? `
+                            <div class="space-y-4">
+                                <h3 class="text-xl font-bold text-white">📜 Histórico de Pontuação</h3>
+                                <p class="text-zinc-400 text-sm">Pontos de cada usuário por rodada. Clique numa célula para ver detalhes.</p>
+                                
+                                <div class="bg-zinc-900 rounded-xl p-4 border border-teal-500/30 overflow-x-auto">
+                                    ${(() => {
+                                        const users = Object.entries(state.users)
+                                            .filter(([nick, u]) => u.isConfirmed && nick !== 'admin')
+                                            .sort((a, b) => calculateUserScore(b[1]) - calculateUserScore(a[1]));
+                                        
+                                        if (users.length === 0) return '<p class="text-zinc-600 text-center py-6">Nenhum usuário confirmado</p>';
+                                        
+                                        // Descobrir rodadas que têm dados
+                                        let maxRound = state.currentRound || 1;
+                                        users.forEach(([nick, user]) => {
+                                            Object.keys(user.scores || {}).forEach(k => {
+                                                if (k !== 'market') {
+                                                    const r = parseInt(k);
+                                                    if (r > maxRound) maxRound = r;
+                                                }
+                                            });
+                                        });
+                                        
+                                        let html = '<table class="w-full text-sm">';
+                                        
+                                        // Header
+                                        html += '<thead><tr>';
+                                        html += '<th class="text-left text-zinc-400 font-medium p-2 sticky left-0 bg-zinc-900 z-10 min-w-[120px]">Usuário</th>';
+                                        for (let r = 1; r <= maxRound; r++) {
+                                            html += '<th class="text-center text-zinc-500 font-medium p-2 min-w-[60px]">R' + r + '</th>';
+                                        }
+                                        html += '<th class="text-center text-teal-400 font-bold p-2 min-w-[70px] border-l border-zinc-700">TOTAL</th>';
+                                        html += '</tr></thead>';
+                                        
+                                        // Body
+                                        html += '<tbody>';
+                                        users.forEach(([nick, user], idx) => {
+                                            const totalGeral = calculateUserScore(user);
+                                            const bgRow = idx % 2 === 0 ? 'bg-zinc-800/30' : '';
+                                            
+                                            html += '<tr class="' + bgRow + ' hover:bg-zinc-800/60">';
+                                            html += '<td class="p-2 sticky left-0 ' + (idx % 2 === 0 ? 'bg-zinc-900' : 'bg-zinc-900') + ' z-10">';
+                                            html += '<div class="flex items-center gap-2">';
+                                            html += '<span class="text-zinc-500 text-xs w-4">' + (idx + 1) + '.</span>';
+                                            if (user.teamLogo) {
+                                                html += '<img src="' + user.teamLogo + '" class="w-5 h-5 rounded-full object-cover" onerror="this.style.display=\\x27none\\x27">';
+                                            }
+                                            html += '<span class="text-white font-medium text-xs">' + (user.teamName || nick) + '</span>';
+                                            html += '</div></td>';
+                                            
+                                            let acumulado = 0;
+                                            for (let r = 1; r <= maxRound; r++) {
+                                                const roundData = user.scores?.[r];
+                                                let roundPts = 0;
+                                                let hasData = false;
+                                                let isManualEdit = false;
+                                                let hasManualPlayers = false;
+                                                
+                                                if (roundData) {
+                                                    // Somar pontos dos jogadores
+                                                    Object.entries(roundData.players || {}).forEach(([pid, s]) => {
+                                                        if (state.captainEnabled && user.captain && String(pid) === String(user.captain)) {
+                                                            roundPts += s * 2;
+                                                        } else {
+                                                            roundPts += s;
+                                                        }
+                                                    });
+                                                    roundPts += roundData.coach || 0;
+                                                    roundPts = Math.round(roundPts * 10) / 10;
+                                                    hasData = Object.keys(roundData.players || {}).length > 0 || roundData.coach;
+                                                    isManualEdit = roundData.manualEdit === true;
+                                                    hasManualPlayers = roundData.manualPlayers && Object.keys(roundData.manualPlayers).length > 0;
+                                                }
+                                                
+                                                acumulado += roundPts;
+                                                
+                                                let cellColor = 'text-zinc-600';
+                                                let cellBg = '';
+                                                let indicator = '';
+                                                
+                                                if (hasData && roundPts > 0) {
+                                                    cellColor = 'text-emerald-400';
+                                                } else if (hasData && roundPts < 0) {
+                                                    cellColor = 'text-red-400';
+                                                } else if (hasData && roundPts === 0) {
+                                                    cellColor = 'text-zinc-400';
+                                                }
+                                                
+                                                if (isManualEdit) {
+                                                    indicator = ' <span class="text-[8px] text-yellow-400">✏️</span>';
+                                                    cellBg = 'bg-yellow-500/5';
+                                                }
+                                                if (hasManualPlayers) {
+                                                    indicator += ' <span class="text-[8px] text-purple-400">🟣</span>';
+                                                }
+                                                
+                                                html += '<td class="text-center p-2 ' + cellColor + ' ' + cellBg + ' cursor-pointer hover:bg-teal-500/10" ';
+                                                html += 'onclick="adminShowRoundDetail(\\x27' + nick + '\\x27, ' + r + ')" ';
+                                                html += 'title="Clique para ver detalhes">';
+                                                html += (hasData ? roundPts : '-') + indicator;
+                                                html += '</td>';
+                                            }
+                                            
+                                            html += '<td class="text-center p-2 text-teal-400 font-bold border-l border-zinc-700">' + totalGeral + '</td>';
+                                            html += '</tr>';
+                                        });
+                                        html += '</tbody>';
+                                        html += '</table>';
+                                        
+                                        // Legenda
+                                        html += '<div class="flex flex-wrap gap-4 mt-3 pt-3 border-t border-zinc-800">';
+                                        html += '<span class="text-zinc-500 text-xs">✏️ = pontuação total editada manualmente</span>';
+                                        html += '<span class="text-zinc-500 text-xs">🟣 = tem jogador(es) com pontos manuais</span>';
+                                        html += '<span class="text-zinc-500 text-xs">Clique na célula = ver jogadores e pontos</span>';
+                                        html += '</div>';
+                                        
+                                        return html;
+                                    })()}
                                 </div>
                             </div>
                         ` : ''}
@@ -17649,13 +17806,17 @@
                     if (!user.scores[round]) user.scores[round] = { players: {}, coach: 0 };
                     user.scores[round].players[playerId] = points;
                     
+                    // Marcar como pontuação manual (protege contra overwrite do sync)
+                    if (!user.scores[round].manualPlayers) user.scores[round].manualPlayers = {};
+                    user.scores[round].manualPlayers[playerId] = true;
+                    
                     if (db) {
-                        db.ref('users/' + nick + '/scores/' + round + '/players/' + playerId).set(points);
+                        db.ref('users/' + nick + '/scores/' + round).set(user.scores[round]);
                     }
                 }
             });
             
-            alert(`Pontuação de ${player.name} na rodada ${round} definida como ${points} pts!`);
+            alert(`Pontuação de ${player.name} na rodada ${round} definida como ${points} pts (protegida contra sync)!`);
             render();
         };
         
@@ -19934,6 +20095,104 @@ O usuário não poderá mais fazer login.
             syncAllData();
         };
         
+        // ==================== DETALHES DE RODADA (HISTÓRICO) ====================
+        window.adminShowRoundDetail = function(nick, round) {
+            const user = state.users[nick];
+            if (!user) return;
+            
+            const roundData = user.scores?.[round];
+            if (!roundData || !roundData.players || Object.keys(roundData.players).length === 0) {
+                alert(`@${nick} - Rodada ${round}\n\nSem dados de pontuação.`);
+                return;
+            }
+            
+            let msg = `📊 @${nick} - Rodada ${round}\n`;
+            if (user.teamName) msg += `Time: ${user.teamName}\n`;
+            msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+            
+            const starters = ensureArray(user.starters, 11);
+            const reserves = ensureArray(user.reserves, 7);
+            const isManualEdit = roundData.manualEdit === true;
+            const manualPlayerIds = roundData.manualPlayers || {};
+            
+            let totalPts = 0;
+            
+            // Titulares
+            msg += `⚽ TITULARES:\n`;
+            starters.forEach(p => {
+                if (p && p.id) {
+                    const pts = roundData.players[p.id];
+                    if (pts !== undefined) {
+                        const isCaptain = state.captainEnabled && user.captain && String(p.id) === String(user.captain);
+                        const finalPts = isCaptain ? pts * 2 : pts;
+                        const isManual = manualPlayerIds[p.id];
+                        totalPts += finalPts;
+                        msg += `  ${p.name} (${p.position || '?'}) → ${finalPts} pts`;
+                        if (isCaptain) msg += ' ©️x2';
+                        if (isManual) msg += ' 🟣manual';
+                        msg += '\n';
+                    }
+                }
+            });
+            
+            // Reservas
+            msg += `\n🪑 RESERVAS:\n`;
+            reserves.forEach(p => {
+                if (p && p.id) {
+                    const pts = roundData.players[p.id];
+                    if (pts !== undefined) {
+                        const isCaptain = state.captainEnabled && user.captain && String(p.id) === String(user.captain);
+                        const finalPts = isCaptain ? pts * 2 : pts;
+                        const isManual = manualPlayerIds[p.id];
+                        totalPts += finalPts;
+                        msg += `  ${p.name} (${p.position || '?'}) → ${finalPts} pts (50%)`;
+                        if (isManual) msg += ' 🟣manual';
+                        msg += '\n';
+                    }
+                }
+            });
+            
+            // Pontos de jogadores que não estão mais escalados (IDs antigos)
+            const currentIds = new Set([
+                ...starters.filter(p => p).map(p => String(p.id)),
+                ...reserves.filter(p => p).map(p => String(p.id))
+            ]);
+            const orphanPts = [];
+            Object.entries(roundData.players).forEach(([pid, pts]) => {
+                if (!currentIds.has(String(pid)) && pts !== 0) {
+                    orphanPts.push({ id: pid, pts });
+                    totalPts += pts;
+                }
+            });
+            
+            if (orphanPts.length > 0) {
+                msg += `\n🔒 PONTOS PRESERVADOS (jogador trocado):\n`;
+                orphanPts.forEach(o => {
+                    // Tentar achar nome
+                    const player = state.players.find(p => String(p.id) === String(o.id));
+                    const name = player ? player.name : `ID ${o.id}`;
+                    msg += `  ${name} → ${o.pts} pts\n`;
+                });
+            }
+            
+            // Técnico
+            if (roundData.coach) {
+                totalPts += roundData.coach;
+                msg += `\n🧑‍💼 TÉCNICO: ${user.coach?.name || '?'} → ${roundData.coach} pts\n`;
+            }
+            
+            msg += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+            msg += `TOTAL DA RODADA: ${Math.round(totalPts * 10) / 10} pts\n`;
+            msg += `TOTAL GERAL: ${calculateUserScore(user)} pts\n`;
+            
+            if (isManualEdit) {
+                msg += `\n⚠️ Pontuação total foi editada manualmente pelo admin`;
+                if (roundData.editedAt) msg += ` em ${new Date(roundData.editedAt).toLocaleString('pt-BR')}`;
+            }
+            
+            alert(msg);
+        };
+        
         // Remover jogador manual
         window.adminRemoveManualPlayer = function(playerId) {
             const player = state.players.find(p => String(p.id) === String(playerId));
@@ -21715,6 +21974,268 @@ O usuário não poderá mais fazer login.
             await fetchLiveFixtures(true);
             render();
             alert(`✅ Rodada sincronizada: ${state.currentRound}`);
+        };
+        
+        // ==================== VER PONTOS DE TODOS OS JOGADORES (ADMIN) ====================
+        // Mostra pontos calculados de TODOS os jogadores que jogaram na rodada,
+        // inclusive os que NÃO estão escalados por ninguém
+        window.adminViewAllPlayerPoints = async function(roundOverride) {
+            const round = roundOverride || state.selectedRound;
+            console.log(`📊 Buscando pontos de TODOS jogadores da Rodada ${round}...`);
+            
+            try {
+                // 1. Buscar stats do cache do Firebase
+                const cacheKey = `scoresCache/round_${round}`;
+                const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
+                const cacheData = await cacheRes.json();
+                
+                let allPlayerStats = {};
+                
+                if (cacheData && cacheData.playerStats) {
+                    allPlayerStats = cacheData.playerStats;
+                    console.log(`✅ Cache encontrado com ${Object.keys(allPlayerStats).length} jogadores`);
+                } else {
+                    // Se não tem cache, buscar da API
+                    console.log('⏳ Sem cache, buscando da API...');
+                    const fixtures = await getFixturesForRound(round);
+                    
+                    if (fixtures.length === 0) {
+                        alert('❌ Nenhum jogo encontrado para esta rodada!');
+                        return;
+                    }
+                    
+                    const finishedStatuses = ['FT', 'AET', 'PEN'];
+                    const liveStatuses = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'];
+                    const gamesToProcess = fixtures.filter(f => {
+                        const status = f.fixture?.status?.short;
+                        return [...finishedStatuses, ...liveStatuses].includes(status);
+                    });
+                    
+                    for (const fixture of gamesToProcess) {
+                        const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
+                        const stats = await getPlayerStats(fixture.fixture.id, isFinished);
+                        
+                        stats.forEach(team => {
+                            team.players?.forEach(playerData => {
+                                const playerId = playerData.player?.id;
+                                if (playerId) {
+                                    allPlayerStats[playerId] = {
+                                        data: playerData,
+                                        fixture: fixture
+                                    };
+                                }
+                            });
+                        });
+                    }
+                }
+                
+                if (Object.keys(allPlayerStats).length === 0) {
+                    alert('❌ Nenhum jogador com dados nesta rodada (jogos ainda não começaram?)');
+                    return;
+                }
+                
+                // 2. Calcular pontos de cada jogador
+                const playerPoints = [];
+                
+                Object.entries(allPlayerStats).forEach(([playerId, statsObj]) => {
+                    const playerData = statsObj.data;
+                    const fixtureData = statsObj.fixture;
+                    
+                    if (!playerData || !playerData.player) return;
+                    
+                    const score = calculatePlayerScore(playerData, fixtureData);
+                    const stats = playerData.statistics?.[0] || {};
+                    
+                    // Verificar se está escalado por alguém
+                    let escaladoPor = [];
+                    Object.entries(state.users).forEach(([nick, user]) => {
+                        const inStarters = [...(user.starters || [])].some(p => p && String(p.id) === String(playerId));
+                        const inReserves = [...(user.reserves || [])].some(p => p && String(p.id) === String(playerId));
+                        if (inStarters) escaladoPor.push(`${nick} (titular)`);
+                        if (inReserves) escaladoPor.push(`${nick} (reserva)`);
+                    });
+                    
+                    const homeTeam = fixtureData?.teams?.home?.name || '';
+                    const awayTeam = fixtureData?.teams?.away?.name || '';
+                    const teamName = playerData.player?.team || 
+                        (stats.games?.team?.name) || '';
+                    
+                    playerPoints.push({
+                        id: parseInt(playerId),
+                        name: playerData.player?.name || 'Desconhecido',
+                        photo: playerData.player?.photo || '',
+                        team: teamName,
+                        position: stats.games?.position || '',
+                        score: score,
+                        goals: stats.goals?.total || 0,
+                        assists: stats.goals?.assists || 0,
+                        yellowCards: stats.cards?.yellow || 0,
+                        redCards: stats.cards?.red || 0,
+                        minutesPlayed: stats.games?.minutes || 0,
+                        rating: stats.games?.rating || '-',
+                        match: `${homeTeam} x ${awayTeam}`,
+                        escaladoPor: escaladoPor,
+                        isRostered: escaladoPor.length > 0
+                    });
+                });
+                
+                // 3. Ordenar por pontuação (maior primeiro)
+                playerPoints.sort((a, b) => b.score - a.score);
+                
+                // 4. Separar escalados e não escalados
+                const rostered = playerPoints.filter(p => p.isRostered);
+                const unrostered = playerPoints.filter(p => !p.isRostered);
+                
+                // 5. Mostrar resultado
+                let msg = `⚽ PONTUAÇÃO DA RODADA ${round}\n`;
+                msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+                
+                if (unrostered.length > 0) {
+                    msg += `🆕 NÃO ESCALADOS (${unrostered.length} jogadores):\n`;
+                    msg += `─────────────────────────────────\n`;
+                    unrostered.slice(0, 50).forEach((p, i) => {
+                        const extras = [];
+                        if (p.goals > 0) extras.push(`⚽${p.goals}`);
+                        if (p.assists > 0) extras.push(`🅰️${p.assists}`);
+                        if (p.yellowCards > 0) extras.push(`🟡`);
+                        if (p.redCards > 0) extras.push(`🔴`);
+                        msg += `${i+1}. ${p.name} (${p.team}) → ${p.score} pts ${extras.join(' ')} [ID: ${p.id}]\n`;
+                    });
+                    if (unrostered.length > 50) {
+                        msg += `... e mais ${unrostered.length - 50} jogadores\n`;
+                    }
+                }
+                
+                msg += `\n📋 ESCALADOS (${rostered.length} jogadores):\n`;
+                msg += `─────────────────────────────────\n`;
+                rostered.forEach((p, i) => {
+                    const extras = [];
+                    if (p.goals > 0) extras.push(`⚽${p.goals}`);
+                    if (p.assists > 0) extras.push(`🅰️${p.assists}`);
+                    if (p.yellowCards > 0) extras.push(`🟡`);
+                    if (p.redCards > 0) extras.push(`🔴`);
+                    msg += `${i+1}. ${p.name} (${p.team}) → ${p.score} pts ${extras.join(' ')} | ${p.escaladoPor.join(', ')} [ID: ${p.id}]\n`;
+                });
+                
+                // Salvar no state pra acesso posterior
+                state._lastAllPlayerPoints = playerPoints;
+                
+                console.log(msg);
+                alert(msg.slice(0, 3000) + (msg.length > 3000 ? '\n\n... (veja console para lista completa)' : ''));
+                
+                return playerPoints;
+                
+            } catch (e) {
+                console.error('❌ Erro:', e);
+                alert('❌ Erro ao buscar pontuação: ' + e.message);
+            }
+        };
+        
+        
+        // ==================== SYNC LEVE PÓS-JOGO (ADMIN) ====================
+        // Sincroniza APENAS os squads dos times que jogaram (2-4 requests em vez de 21)
+        // Útil pra trazer jogadores novos que entraram em campo
+        window.adminSyncTeamsFromRound = async function(roundOverride) {
+            const round = roundOverride || state.selectedRound;
+            console.log(`🔄 Sync leve: buscando times que jogaram na Rodada ${round}...`);
+            
+            try {
+                // 1. Pegar fixtures da rodada
+                let fixtures = [];
+                const cacheKey = `fixtures_round_${round}`;
+                
+                // Tentar cache primeiro
+                try {
+                    const cacheRes = await fetch(`${FIREBASE_URL}/cache/${cacheKey}.json`);
+                    const cacheData = await cacheRes.json();
+                    if (cacheData && cacheData.fixtures) {
+                        fixtures = cacheData.fixtures;
+                    }
+                } catch(e) {}
+                
+                if (fixtures.length === 0) {
+                    fixtures = await getFixturesForRound(round);
+                }
+                
+                // Filtrar só jogos finalizados
+                const finishedGames = fixtures.filter(f => 
+                    ['FT', 'AET', 'PEN'].includes(f.fixture?.status?.short)
+                );
+                
+                if (finishedGames.length === 0) {
+                    alert('❌ Nenhum jogo finalizado nesta rodada!');
+                    return;
+                }
+                
+                // 2. Pegar IDs dos times que jogaram
+                const teamIds = new Set();
+                const teamNames = [];
+                finishedGames.forEach(f => {
+                    if (f.teams?.home?.id) {
+                        teamIds.add(f.teams.home.id);
+                        teamNames.push(f.teams.home.name);
+                    }
+                    if (f.teams?.away?.id) {
+                        teamIds.add(f.teams.away.id);
+                        teamNames.push(f.teams.away.name);
+                    }
+                });
+                
+                console.log(`📋 Times que jogaram: ${teamNames.join(', ')}`);
+                
+                // 3. Buscar squads SÓ desses times
+                let newPlayers = 0;
+                const existingIds = new Set(state.players.map(p => p.id));
+                
+                for (const teamId of teamIds) {
+                    try {
+                        const squadData = await apiCall(`/players/squads?team=${teamId}`);
+                        
+                        if (squadData.response && squadData.response[0]?.players) {
+                            const teamInfo = state.teams.find(t => t.id === teamId);
+                            const teamName = teamInfo?.name || `Time ${teamId}`;
+                            
+                            squadData.response[0].players.forEach(p => {
+                                if (!existingIds.has(p.id)) {
+                                    state.players.push({
+                                        id: p.id,
+                                        name: p.name,
+                                        photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
+                                        position: translatePosition(p.position, p.number),
+                                        team: teamName,
+                                        teamId: teamId,
+                                        teamLogo: TEAM_LOGOS[teamName] || TEAM_LOGOS[capitalizeTeamName(teamName)] || teamInfo?.logo || '',
+                                        number: p.number || 0
+                                    });
+                                    existingIds.add(p.id);
+                                    newPlayers++;
+                                    console.log(`   🆕 ${p.name} (${teamName})`);
+                                }
+                            });
+                        }
+                        
+                        await new Promise(r => setTimeout(r, 500));
+                    } catch (e) {
+                        console.log(`   ⚠️ Erro ao buscar squad do time ${teamId}:`, e);
+                    }
+                }
+                
+                if (newPlayers > 0) {
+                    savePlayers();
+                    console.log(`✅ ${newPlayers} jogadores novos adicionados!`);
+                }
+                
+                const msg = `✅ Sync leve concluído!\n\n` +
+                    `Times sincronizados: ${teamIds.size}\n` +
+                    `Jogadores novos: ${newPlayers}\n` +
+                    `Requests usados: ~${teamIds.size}\n\n` +
+                    `Use "Ver Pontos de Todos" para ver a pontuação dos novos jogadores.`;
+                alert(msg);
+                
+            } catch (e) {
+                console.error('❌ Erro:', e);
+                alert('❌ Erro no sync: ' + e.message);
+            }
         };
         
         // ==================== RESUMO ECONOMIA DE API ====================
