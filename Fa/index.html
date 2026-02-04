@@ -6857,23 +6857,29 @@
                         </div>
                     </nav>
                     
-                    <div class="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 z-50 safe-area-bottom">
-                        <div class="flex justify-around items-center py-2">
-                            <button onclick="state.screen='home';render()" class="flex flex-col items-center p-2 rounded-xl text-white bg-white/10">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                    <div class="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-lg border-t border-zinc-800/50 z-50 safe-area-bottom">
+                        <div class="flex overflow-x-auto scrollbar-hide" style="scrollbar-width:none;-webkit-overflow-scrolling:touch">
+                            <button onclick="state.screen='home';render()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 text-white">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                                <span class="text-[9px] font-bold">INÍCIO</span>
                             </button>
-                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 text-zinc-500">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                <span class="text-[9px] font-bold">TIME</span>
                             </button>
-                            <button onclick="goToRanking()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                            <button onclick="state.screen='userDraft';render()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 text-zinc-500">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                                <span class="text-[9px] font-bold">DRAFT</span>
                             </button>
-                            <button onclick="openMarketModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500 relative">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-                                ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full"></span>' : ''}
+                            <button onclick="openMarketModal()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 text-zinc-500 relative">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                                <span class="text-[9px] font-bold">MERCADO</span>
+                                ${isMarketOpen() ? '<span class="absolute top-1.5 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>' : ''}
                             </button>
-                            <button onclick="openDoacaoModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+                            <button onclick="goToRanking()" class="relative flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 text-zinc-500">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                                <span class="text-[9px] font-bold">RANK</span>
+                                ${state.unreadChatCount > 0 ? `<span class="absolute top-0.5 right-1 w-4 h-4 bg-emerald-500 text-white text-[8px] flex items-center justify-center rounded-full font-bold">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>` : ''}
                             </button>
                         </div>
                     </div>
@@ -7045,6 +7051,19 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Modais acessíveis da tela Home -->
+                ${state.modal === 'marketClosed' ? renderMarketClosedModal() : ''}
+                ${state.modal === 'market' ? renderMarketModal() : ''}
+                ${state.modal === 'buy' ? renderBuyModal() : ''}
+                ${state.modal === 'offers' ? renderOffersModal() : ''}
+                ${state.modal === 'newTrade' ? renderNewTradeModal() : ''}
+                ${state.modal === 'makeOffer' ? renderMakeOfferModal() : ''}
+                ${state.modal === 'teams' ? renderTeamsModal() : ''}
+                ${state.modal === 'viewTeam' ? renderViewTeamModal() : ''}
+                ${state.modal === 'cravar' ? renderCravarModal() : ''}
+                ${state.modal === 'doacao' ? renderDoacaoModal() : ''}
+                ${state.modal === 'substitution' ? renderSubstitutionModal() : ''}
             `;
         }
         // ==================== FIM TELA INICIO ====================
@@ -7124,33 +7143,29 @@
                     </nav>
 
                     <!-- Mobile Nav -->
-                    <div class="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800/50 z-50 safe-area-bottom">
-                        <div class="flex justify-around items-center py-2">
-                            <button onclick="state.screen='home';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'home' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                    <div class="sm:hidden fixed bottom-0 left-0 right-0 bg-zinc-950/95 backdrop-blur-lg border-t border-zinc-800/50 z-50 safe-area-bottom">
+                        <div class="flex overflow-x-auto scrollbar-hide" style="scrollbar-width:none;-webkit-overflow-scrolling:touch">
+                            <button onclick="state.screen='home';render()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 ${state.screen === 'home' ? 'text-white' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                                <span class="text-[9px] font-bold">INÍCIO</span>
                             </button>
-                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'lineup' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <button onclick="state.screen='lineup';render()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 ${state.screen === 'lineup' ? 'text-white' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                                <span class="text-[9px] font-bold">TIME</span>
                             </button>
-                            <button onclick="state.screen='userDraft';render()" class="flex flex-col items-center p-2 rounded-xl ${state.screen === 'userDraft' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            <button onclick="state.screen='userDraft';render()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 ${state.screen === 'userDraft' ? 'text-white' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                                <span class="text-[9px] font-bold">DRAFT</span>
                             </button>
-                            <button onclick="openCravarModal()" class="flex flex-col items-center p-2 rounded-xl ${state.modal === 'cravar' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="1.5"/><circle cx="12" cy="12" r="6" stroke-width="1.5"/><circle cx="12" cy="12" r="2" fill="currentColor"/></svg>
+                            <button onclick="openMarketModal()" class="flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 text-zinc-500 relative">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
+                                <span class="text-[9px] font-bold">MERCADO</span>
+                                ${isMarketOpen() ? '<span class="absolute top-1.5 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></span>' : ''}
                             </button>
-                            <button onclick="openMarketModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500 relative">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
-                                ${isMarketOpen() ? '<span class="absolute top-1 right-1 w-2 h-2 bg-emerald-400 rounded-full"></span>' : ''}
-                            </button>
-                            <button onclick="openTeamsModal()" class="flex flex-col items-center p-2 rounded-xl text-zinc-500">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                            </button>
-                            <button onclick="goToRanking()" class="relative flex flex-col items-center p-2 rounded-xl ${state.screen === 'ranking' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
-                                ${state.unreadChatCount > 0 ? `<span class="absolute -top-0.5 -right-0.5 w-4 h-4 bg-emerald-500 text-white text-[10px] flex items-center justify-center rounded-full font-bold">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>` : ''}
-                            </button>
-                            <button onclick="openDoacaoModal()" class="flex flex-col items-center p-2 rounded-xl ${state.modal === 'doacao' ? 'text-white bg-white/10' : 'text-zinc-500'}">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path></svg>
+                            <button onclick="goToRanking()" class="relative flex flex-col items-center justify-center min-w-[64px] flex-1 py-2 ${state.screen === 'ranking' ? 'text-white' : 'text-zinc-500'}">
+                                <svg class="w-5 h-5 mb-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                                <span class="text-[9px] font-bold">RANK</span>
+                                ${state.unreadChatCount > 0 ? `<span class="absolute top-0.5 right-1 w-4 h-4 bg-emerald-500 text-white text-[8px] flex items-center justify-center rounded-full font-bold">${state.unreadChatCount > 9 ? '9+' : state.unreadChatCount}</span>` : ''}
                             </button>
                         </div>
                     </div>
