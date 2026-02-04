@@ -7258,22 +7258,22 @@
                                                     class="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 ${state.captainEnabled && state.captain === state.starters[i].id ? 'border-yellow-400 ring-2 ring-yellow-400/30' : 'border-white/80'} object-cover mx-auto hover:border-green-400 transition ${canEditTeam() ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}"
                                                     onerror="this.src=getAvatarUrl(this.alt)">
                                                 ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? `
-                                                    <div class="absolute -top-1 -right-1 ${state.captainEnabled && state.captain === state.starters[i].id ? 'w-9 h-7' : 'w-7 h-7'} rounded-full flex items-center justify-center text-xs font-bold
+                                                    <div class="absolute -top-2 -right-2 z-20 ${state.captainEnabled && state.captain === state.starters[i].id ? 'min-w-[36px] h-7' : 'min-w-[28px] h-7'} rounded-full flex items-center justify-center text-[10px] font-bold px-1
                                                         ${state.scores[state.selectedRound].players[state.starters[i].id] >= 0 ? 'bg-amber-400 text-black' : 'bg-red-500 text-white'}
                                                         ${state.captainEnabled && state.captain === state.starters[i].id ? ' ring-2 ring-yellow-300' : ''}
                                                         ${state.scores[state.selectedRound]?.live ? ' ring-2 ring-white/50' : ''}">
                                                         ${state.captainEnabled && state.captain === state.starters[i].id 
-                                                            ? (state.scores[state.selectedRound].players[state.starters[i].id] * 2)
+                                                            ? (Math.round(state.scores[state.selectedRound].players[state.starters[i].id] * 2 * 10) / 10)
                                                             : state.scores[state.selectedRound].players[state.starters[i].id]}
                                                     </div>
                                                 ` : ''}
-                                                <span class="absolute -top-2 -left-1 px-1.5 py-0.5 text-[8px] font-bold rounded ${
+                                                <span class="absolute -top-2 -left-1 px-1.5 py-0.5 text-[8px] font-bold rounded z-10 ${
                                                     pos.label === 'GOL' ? 'bg-amber-500 text-black' :
                                                     ['LD', 'ZAG', 'LE'].includes(pos.label) ? 'bg-blue-500 text-white' :
                                                     ['VOL', 'MC', 'MEI', 'MD', 'ME'].includes(pos.label) ? 'bg-emerald-500 text-white' :
                                                     'bg-red-500 text-white'
                                                 }">${pos.label}</span>
-                                                ${getTeamLogo(state.starters[i].team) ? `<img src="${getTeamLogo(state.starters[i].team)}" class="absolute -top-1 -right-1 w-5 h-5 sm:w-6 sm:h-6 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5" title="${state.starters[i].team}">` : ''}
+                                                ${getTeamLogo(state.starters[i].team) ? `<img src="${getTeamLogo(state.starters[i].team)}" class="absolute ${state.scores[state.selectedRound]?.players?.[state.starters[i].id] !== undefined ? '-bottom-1 -right-1' : '-top-1 -right-1'} w-5 h-5 sm:w-6 sm:h-6 rounded-full border border-zinc-900 bg-zinc-900 object-contain p-0.5 z-10" title="${state.starters[i].team}">` : ''}
                                                 <p class="text-white text-xs font-medium mt-1 bg-black/70 rounded px-2 py-0.5">
                                                     ${state.starters[i].name.split(' ').pop()}
                                                 </p>
@@ -7438,7 +7438,7 @@
                                                             class="w-12 h-12 rounded-lg object-cover border-2 border-zinc-700 hover:border-emerald-500 transition mx-auto ${canEditTeam() ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}"
                                                             onerror="this.src=getAvatarUrl(this.alt)">
                                                         ${score !== undefined ? `
-                                                            <span class="absolute -top-1 -right-0 w-5 h-5 rounded-full text-[9px] font-bold flex items-center justify-center bg-orange-500/90 text-white z-10">${score}</span>
+                                                            <span class="absolute -top-1 -right-0 ${String(score).length > 2 ? 'min-w-[24px] rounded-lg px-1' : 'w-5'} h-5 rounded-full text-[8px] font-bold flex items-center justify-center bg-orange-500/90 text-white z-20">${score}</span>
                                                         ` : ''}
                                                     </div>
                                                     <div class="flex items-center justify-center gap-0.5 mt-0.5">
