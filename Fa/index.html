@@ -2151,6 +2151,12 @@
             return Math.round(finalPrice * MULTIPLIER);
         }
         
+        // Preço de VENDA do jogador (15% abaixo do valor de mercado)
+        function getSellPrice(playerId) {
+            const marketPrice = getPlayerPrice(playerId);
+            return Math.max(0, Math.round(marketPrice * 0.85));
+        }
+
         // Calcular estatísticas de preços do mercado
         function getMarketPriceStats() {
             const availablePlayers = getMarketPlayers();
@@ -2981,12 +2987,12 @@
             return true;
         }
 
-        // Vender jogador
+        // Vender jogador (preço de venda = 85% do valor de mercado)
         function sellPlayer(slotType, slotIndex) {
             const player = slotType === 'starter' ? state.starters[slotIndex] : state.reserves[slotIndex];
             if (!player) return false;
             
-            const price = getPlayerPrice(player.id);
+            const price = getSellPrice(player.id);
             
             // Adicionar pontos de volta
             if (!state.scores['market']) {
@@ -11960,14 +11966,14 @@
                                         <div class="bg-zinc-800 rounded-lg p-4">
                                             <label class="text-purple-400 text-sm font-medium mb-2 block">Multiplicador Global</label>
                                             <div class="flex gap-2">
-                                                <input type="number" id="adminPriceMultiplier" value="${state.marketPriceMultiplier || 1.0}" min="0.5" max="3.0" step="0.1"
+                                                <input type="number" id="adminPriceMultiplier" value="${state.marketPriceMultiplier || 1.0}" min="0" max="3.0" step="0.1"
                                                     class="flex-1 px-3 py-2 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-center">
                                                 <button onclick="adminSetPriceMultiplier()" 
                                                     class="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium">
                                                     Aplicar
                                                 </button>
                                             </div>
-                                            <p class="text-zinc-500 text-xs mt-2">1.0 = normal, 1.5 = +50%, 2.0 = dobro</p>
+                                            <p class="text-zinc-500 text-xs mt-2">0 = grátis, 0.5 = metade, 1.0 = normal, 2.0 = dobro</p>
                                         </div>
                                     </div>
                                     
@@ -11984,6 +11990,18 @@
                                         <button onclick="adminInflateMarket(0.8)" 
                                             class="px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium">
                                             📉 Deflacionar -20%
+                                        </button>
+                                        <button onclick="adminInflateMarket(0.5)" 
+                                            class="px-3 py-2 bg-red-700 hover:bg-red-600 text-white rounded-lg text-sm font-medium">
+                                            📉 Deflacionar -50%
+                                        </button>
+                                        <button onclick="adminSetMultiplierDirect(0.1)" 
+                                            class="px-3 py-2 bg-red-800 hover:bg-red-700 text-white rounded-lg text-sm font-medium">
+                                            📉 Mínimo (0.1x)
+                                        </button>
+                                        <button onclick="adminSetMultiplierDirect(0)" 
+                                            class="px-3 py-2 bg-red-900 hover:bg-red-800 text-white rounded-lg text-sm font-medium">
+                                            🚫 Zerar (0x)
                                         </button>
                                         <button onclick="adminResetMarketPrices()" 
                                             class="px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white rounded-lg text-sm font-medium">
@@ -15360,7 +15378,7 @@
             if (!newPlayer || !oldPlayer) return;
             
             const newPrice = getPlayerPrice(newPlayerId);
-            const oldPrice = getPlayerPrice(oldPlayer.id);
+            const oldPrice = getSellPrice(oldPlayer.id);
             const netCost = Math.max(0, newPrice - oldPrice);
             const userTotal = getTotalScore();
             
@@ -15405,7 +15423,7 @@
             state.swapPlayerId = null;
             state.modal = 'market';
             
-            alert(`${oldPlayer.name} saiu ➡️ ${newPlayer.name} entrou!\n\n📊 Detalhes:\n${newPlayer.name}: ${newPrice} pts\n${oldPlayer.name} (abatimento): -${oldPrice} pts\n💰 Custo líquido: -${netCost} pts`);
+            alert(`${oldPlayer.name} saiu ➡️ ${newPlayer.name} entrou!\n\n📊 Detalhes:\n${newPlayer.name}: ${newPrice} pts\n${oldPlayer.name} (abatimento 85%): -${oldPrice} pts\n💰 Custo líquido: -${netCost} pts`);
             render();
         };
 
@@ -15413,9 +15431,10 @@
             const player = slotType === 'starter' ? state.starters[slotIndex] : state.reserves[slotIndex];
             if (!player) return;
             
-            const price = getPlayerPrice(player.id);
+            const marketPrice = getPlayerPrice(player.id);
+            const price = getSellPrice(player.id);
             
-            if (!confirm(`Vender ${player.name} por ${price} pts?`)) return;
+            if (!confirm(`Vender ${player.name} por ${price} pts?\n(Valor de mercado: ${marketPrice} pts | Venda: -15%)`)) return;
             
             // Adicionar pontos de volta
             if (!state.scores['market']) {
@@ -15443,7 +15462,7 @@
             }
             
             saveState();
-            alert(`${player.name} vendido por ${price} pts!`);
+            alert(`${player.name} vendido por ${price} pts! (85% do valor de mercado)`);
             render();
         };
 
@@ -18716,8 +18735,8 @@ O usuário não poderá mais fazer login.
             if (!input) return;
             
             const multiplier = parseFloat(input.value);
-            if (isNaN(multiplier) || multiplier < 0.5 || multiplier > 3.0) {
-                return alert('Multiplicador inválido! Deve ser entre 0.5 e 3.0.');
+            if (isNaN(multiplier) || multiplier < 0 || multiplier > 3.0) {
+                return alert('Multiplicador inválido! Deve ser entre 0 e 3.0.');
             }
             
             state.marketPriceMultiplier = multiplier;
@@ -18735,8 +18754,8 @@ O usuário não poderá mais fazer login.
             const currentMultiplier = state.marketPriceMultiplier || 1.0;
             const newMultiplier = Math.round(currentMultiplier * factor * 10) / 10;
             
-            if (newMultiplier < 0.5) {
-                return alert('Multiplicador ficaria muito baixo (mínimo 0.5x)!');
+            if (newMultiplier < 0) {
+                return alert('Multiplicador não pode ser negativo!');
             }
             if (newMultiplier > 3.0) {
                 return alert('Multiplicador ficaria muito alto (máximo 3.0x)!');
@@ -18756,6 +18775,25 @@ O usuário não poderá mais fazer login.
             }
             
             alert(`✅ Preços ${factor > 1 ? 'aumentados' : 'diminuídos'} em ${percent}%!\n\nNovo multiplicador: ${newMultiplier.toFixed(1)}x`);
+            render();
+        };
+        
+        // Definir multiplicador diretamente (atalho dos botões)
+        window.adminSetMultiplierDirect = function(value) {
+            const currentMultiplier = state.marketPriceMultiplier || 1.0;
+            const label = value === 0 ? 'ZERAR todos os preços' : `Definir multiplicador para ${value}x`;
+            
+            if (!confirm(`${label}?\n\nMultiplicador: ${currentMultiplier.toFixed(1)}x → ${value.toFixed(1)}x\n\n${value === 0 ? '⚠️ Todos os jogadores ficarão com preço 0!' : ''}`)) {
+                return;
+            }
+            
+            state.marketPriceMultiplier = value;
+            
+            if (db) {
+                db.ref('settings/marketPriceMultiplier').set(value);
+            }
+            
+            alert(`✅ Multiplicador definido como ${value.toFixed(1)}x!`);
             render();
         };
         
