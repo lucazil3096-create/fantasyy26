@@ -2130,8 +2130,8 @@
             // Preço final = inicial + valorização
             let finalPrice = initialPrice + valorization;
             
-            // Mínimo de 50 pts, máximo de 500 pts
-            finalPrice = Math.max(50, Math.min(500, finalPrice));
+            // Mínimo de 0 pts, máximo de 500 pts
+            finalPrice = Math.max(0, Math.min(500, finalPrice));
             
             // Aplicar multiplicador global
             return Math.round(finalPrice * MULTIPLIER);
@@ -8929,9 +8929,12 @@
                                                         <p class="text-white text-sm">${p.name}</p>
                                                         <p class="text-zinc-500 text-xs">${p.team}</p>
                                                     </div>
-                                                    <span class="text-xs px-2 py-1 ${p.slotType === 'starter' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'} rounded">
-                                                        ${p.slotType === 'starter' ? 'Titular' : 'Reserva'}
-                                                    </span>
+                                                    <div class="text-right">
+                                                        <p class="text-orange-400 text-sm font-bold">${getPlayerPrice(p.id)} pts</p>
+                                                        <span class="text-[10px] px-1.5 py-0.5 ${p.slotType === 'starter' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-zinc-700 text-zinc-400'} rounded">
+                                                            ${p.slotType === 'starter' ? 'Titular' : 'Reserva'}
+                                                        </span>
+                                                    </div>
                                                 </button>
                                             `).join('')}
                                         </div>
@@ -8946,24 +8949,42 @@
                                                 <img src="${selectedToRemove.photo}" class="w-12 h-12 rounded-lg mx-auto mb-1">
                                                 <p class="text-red-400 text-xs">SAI</p>
                                                 <p class="text-white text-sm">${selectedToRemove.name}</p>
+                                                <p class="text-zinc-400 text-xs">${getPlayerPrice(selectedToRemove.id)} pts</p>
                                             </div>
                                             <div class="text-2xl">➡️</div>
                                             <div class="text-center">
                                                 <img src="${pf(player)}" alt="${player.name || ''}" class="w-12 h-12 rounded-lg mx-auto mb-1">
                                                 <p class="text-emerald-400 text-xs">ENTRA</p>
                                                 <p class="text-white text-sm">${player.name}</p>
+                                                <p class="text-zinc-400 text-xs">${price} pts</p>
                                             </div>
                                         </div>
-                                        <div class="border-t border-zinc-700 mt-3 pt-3 text-center">
-                                            <span class="text-zinc-400">Custo:</span>
-                                            <span class="text-red-400 font-bold ml-2">-${price} pts</span>
+                                        <div class="border-t border-zinc-700 mt-3 pt-3 space-y-1">
+                                            <div class="flex justify-between text-sm">
+                                                <span class="text-zinc-400">Preço ${player.name.split(' ').pop()}:</span>
+                                                <span class="text-red-400 font-bold">${price} pts</span>
+                                            </div>
+                                            <div class="flex justify-between text-sm">
+                                                <span class="text-zinc-400">Abatimento ${selectedToRemove.name.split(' ').pop()}:</span>
+                                                <span class="text-emerald-400 font-bold">-${getPlayerPrice(selectedToRemove.id)} pts</span>
+                                            </div>
+                                            <div class="flex justify-between text-sm border-t border-zinc-700 pt-1">
+                                                <span class="text-white font-bold">Custo líquido:</span>
+                                                <span class="${Math.max(0, price - getPlayerPrice(selectedToRemove.id)) <= userTotal ? 'text-emerald-400' : 'text-red-400'} font-bold">-${Math.max(0, price - getPlayerPrice(selectedToRemove.id))} pts</span>
+                                            </div>
                                         </div>
                                     </div>
                                     
-                                    <button onclick="executeSwapSimple(${player.id}, '${selectedToRemove.slotType}', ${selectedToRemove.slotIndex})" 
-                                        class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium mb-2">
-                                         Confirmar Contratação
-                                    </button>
+                                    ${Math.max(0, price - getPlayerPrice(selectedToRemove.id)) <= userTotal ? `
+                                        <button onclick="executeSwapSimple(${player.id}, '${selectedToRemove.slotType}', ${selectedToRemove.slotIndex})" 
+                                            class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-medium mb-2">
+                                             Confirmar Contratação (-${Math.max(0, price - getPlayerPrice(selectedToRemove.id))} pts)
+                                        </button>
+                                    ` : `
+                                        <div class="bg-red-500/10 border border-red-500/30 rounded-lg p-3 mb-2 text-center">
+                                            <p class="text-red-400 text-sm">Pontos insuficientes mesmo com abatimento</p>
+                                        </div>
+                                    `}
                                 ` : ''}
                             `}
                             
@@ -11750,6 +11771,23 @@
                                 </div>
                                 
                                 <!-- 💰 GESTÃO DE PREÇOS DO MERCADO -->
+                                
+                                <!-- ⚽ EDITAR POSIÇÃO DE JOGADORES -->
+                                <div class="bg-zinc-900 rounded-xl p-6 border border-purple-500/30">
+                                    <h4 class="text-purple-400 font-medium mb-2">⚽ Editar Posição de Jogadores</h4>
+                                    <p class="text-zinc-500 text-sm mb-4">Alterar a posição de qualquer jogador (afeta mercado, escalação e tudo mais)</p>
+                                    
+                                    <div class="flex gap-3 mb-4">
+                                        <input type="text" id="posEditSearch" placeholder="Buscar jogador pelo nome..." 
+                                            class="flex-1 px-4 py-2 bg-zinc-800 text-white rounded-lg border border-zinc-700"
+                                            oninput="adminSearchPlayerPosition(this.value)">
+                                    </div>
+                                    
+                                    <div id="posEditResults" class="space-y-2 max-h-80 overflow-y-auto">
+                                        <p class="text-zinc-600 text-sm text-center py-4">Digite o nome para buscar</p>
+                                    </div>
+                                </div>
+                                
                                 <div class="bg-gradient-to-r from-amber-900/30 to-yellow-900/30 rounded-xl p-6 border-2 border-amber-500/50">
                                     <h4 class="text-amber-400 font-bold mb-4 flex items-center gap-2">
                                         💰 GESTÃO DE PREÇOS DO MERCADO
@@ -15192,31 +15230,44 @@
             render();
         };
         
-        // Contratação simples: paga o preço do novo, o antigo sai
+        // Contratação com troca: valor do jogador que sai é abatido do preço do novo
         window.executeSwapSimple = function(newPlayerId, oldSlotType, oldSlotIndex) {
             const newPlayer = state.players.find(p => p.id === newPlayerId);
             const oldPlayer = oldSlotType === 'starter' ? state.starters[oldSlotIndex] : state.reserves[oldSlotIndex];
             
             if (!newPlayer || !oldPlayer) return;
             
-            const price = getPlayerPrice(newPlayerId);
+            const newPrice = getPlayerPrice(newPlayerId);
+            const oldPrice = getPlayerPrice(oldPlayer.id);
+            const netCost = Math.max(0, newPrice - oldPrice);
             const userTotal = getTotalScore();
             
-            if (price > userTotal) {
-                alert(`Pontos insuficientes! Você tem ${userTotal} pts e o jogador custa ${price} pts.`);
+            if (netCost > userTotal) {
+                alert(`Pontos insuficientes! Custo líquido: ${netCost} pts (${newPrice} - ${oldPrice} de abatimento)\nVocê tem: ${userTotal} pts`);
                 return;
             }
             
-            // Registrar compra (só paga pelo novo, não ganha nada pelo antigo)
+            // Registrar transações
             if (!state.scores['market']) {
                 state.scores['market'] = { players: {}, coach: 0, purchases: [] };
             }
             state.scores['market'].purchases = state.scores['market'].purchases || [];
+            
+            // Venda do antigo (recebe valor dele)
+            state.scores['market'].purchases.push({
+                type: 'sell',
+                playerId: oldPlayer.id,
+                playerName: oldPlayer.name,
+                price: oldPrice,
+                date: new Date().toISOString()
+            });
+            
+            // Compra do novo (paga preço cheio)
             state.scores['market'].purchases.push({
                 type: 'buy',
                 playerId: newPlayerId,
                 playerName: newPlayer.name,
-                price: -price,
+                price: -newPrice,
                 date: new Date().toISOString()
             });
             
@@ -15232,7 +15283,7 @@
             state.swapPlayerId = null;
             state.modal = 'market';
             
-            alert(`${oldPlayer.name} saiu ➡️ ${newPlayer.name} entrou!\nCusto: -${price} pts`);
+            alert(`${oldPlayer.name} saiu ➡️ ${newPlayer.name} entrou!\n\n📊 Detalhes:\n${newPlayer.name}: ${newPrice} pts\n${oldPlayer.name} (abatimento): -${oldPrice} pts\n💰 Custo líquido: -${netCost} pts`);
             render();
         };
 
@@ -19841,6 +19892,109 @@ O usuário não poderá mais fazer login.
             });
         };
         
+        // ⚽ Buscar jogador para editar posição
+        window.adminSearchPlayerPosition = function(query) {
+            const container = document.getElementById('posEditResults');
+            if (!container) return;
+            query = (query || '').trim().toLowerCase();
+            
+            if (query.length < 2) {
+                container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-4">Digite pelo menos 2 letras para buscar</p>';
+                return;
+            }
+            
+            let results = state.players.filter(p => p.name.toLowerCase().includes(query)).slice(0, 20);
+            
+            if (results.length === 0) {
+                container.innerHTML = '<p class="text-zinc-600 text-sm text-center py-4">Nenhum jogador encontrado</p>';
+                return;
+            }
+            
+            const posOptions = [
+                {val: 'Goalkeeper', label: 'GOL', norm: 'GOL'},
+                {val: 'Defender', label: 'ZAG', norm: 'ZAG'},
+                {val: 'LD', label: 'LD', norm: 'LD'},
+                {val: 'LE', label: 'LE', norm: 'LE'},
+                {val: 'LAT', label: 'LAT', norm: 'LAT'},
+                {val: 'Midfielder', label: 'MEI', norm: 'MEI'},
+                {val: 'VOL', label: 'VOL', norm: 'VOL'},
+                {val: 'MC', label: 'MC', norm: 'MC'},
+                {val: 'Attacker', label: 'ATA', norm: 'ATA'},
+                {val: 'PE', label: 'PE', norm: 'PE'},
+                {val: 'PD', label: 'PD', norm: 'PD'},
+                {val: 'CA', label: 'CA', norm: 'CA'},
+                {val: 'SA', label: 'SA', norm: 'SA'}
+            ];
+            
+            container.innerHTML = results.map(p => {
+                const currentPos = normalizePosition(p.position);
+                return `
+                    <div class="flex items-center gap-3 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50" id="posRow_${p.id}">
+                        <img src="${p.photo || ''}" alt="${p.name}" class="w-10 h-10 rounded-full object-cover bg-zinc-700 flex-shrink-0" onerror="this.src=getAvatarUrl(this.alt)">
+                        <div class="flex-1 min-w-0">
+                            <p class="text-white text-sm font-medium truncate">${p.name}</p>
+                            <p class="text-zinc-500 text-xs">${p.team}</p>
+                        </div>
+                        <span class="text-xs px-2 py-1 bg-zinc-700 text-zinc-300 rounded font-bold">${currentPos}</span>
+                        <select id="posSelect_${p.id}" class="px-2 py-1.5 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-sm" onchange="adminChangePosition(${p.id}, this.value)">
+                            ${posOptions.map(o => `<option value="${o.val}" ${currentPos === o.norm ? 'selected' : ''}>${o.label}</option>`).join('')}
+                        </select>
+                        <span id="posSaved_${p.id}" class="text-emerald-400 text-xs hidden">✅</span>
+                    </div>
+                `;
+            }).join('');
+        };
+        
+        // Mudar posição do jogador
+        window.adminChangePosition = function(playerId, newPosition) {
+            // Atualizar no state.players
+            const player = state.players.find(p => p.id === playerId);
+            if (!player) return;
+            
+            const oldPos = player.position;
+            player.position = newPosition;
+            
+            // Atualizar em starters/reserves de TODOS os usuários
+            Object.values(state.users).forEach(u => {
+                if (u.starters) {
+                    (Array.isArray(u.starters) ? u.starters : Object.values(u.starters)).forEach(s => {
+                        if (s && s.id === playerId) s.position = newPosition;
+                    });
+                }
+                if (u.reserves) {
+                    (Array.isArray(u.reserves) ? u.reserves : Object.values(u.reserves)).forEach(s => {
+                        if (s && s.id === playerId) s.position = newPosition;
+                    });
+                }
+            });
+            
+            // Atualizar nos starters/reserves do state principal
+            state.starters.forEach(s => { if (s && s.id === playerId) s.position = newPosition; });
+            state.reserves.forEach(s => { if (s && s.id === playerId) s.position = newPosition; });
+            
+            // Salvar no Firebase como jogador manual (para persistir a mudança)
+            if (db) {
+                db.ref('manualPlayers/' + playerId).update({ position: newPosition });
+            }
+            
+            // Feedback visual
+            const saved = document.getElementById('posSaved_' + playerId);
+            if (saved) {
+                saved.classList.remove('hidden');
+                setTimeout(() => saved.classList.add('hidden'), 2000);
+            }
+            
+            // Atualizar o badge de posição atual
+            const row = document.getElementById('posRow_' + playerId);
+            if (row) {
+                const badge = row.querySelector('span.text-zinc-300');
+                if (badge) badge.textContent = normalizePosition(newPosition);
+            }
+            
+            console.log('⚽ Posição alterada:', player.name, oldPos, '→', newPosition);
+            saveState();
+        };
+
         // Upload de foto para editar jogador existente (na seção 📷 Editar Foto)
         window.adminUploadPlayerPhoto = function(playerId, fileInput) {
             if (!fileInput.files || !fileInput.files[0]) return;
