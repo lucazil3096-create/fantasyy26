@@ -4727,12 +4727,29 @@
             
             // 2. Mesclar jogadores manuais do Firebase (cache)
             Object.values(_firebaseManualPlayersCache).forEach(player => {
-                const exists = state.players.find(p => 
+                if (!player || !player.id) return;
+                
+                // Verificar por ID (normal e absoluto) e por nome+time
+                const existsById = state.players.find(p => 
                     String(p.id) === String(player.id) || 
-                    (p.name.toLowerCase() === player.name.toLowerCase() && p.team === player.team)
+                    String(p.id) === String(Math.abs(player.id)) ||
+                    String(Math.abs(p.id)) === String(Math.abs(player.id))
                 );
-                if (!exists) {
+                const existsByName = state.players.find(p => 
+                    p.name.toLowerCase() === (player.name || '').toLowerCase() && 
+                    (p.team === player.team || capitalizeTeamName(p.team) === capitalizeTeamName(player.team))
+                );
+                
+                if (!existsById && !existsByName) {
                     state.players.push({
+                        ...player,
+                        team: capitalizeTeamName(player.team),
+                        teamLogo: TEAM_LOGOS[capitalizeTeamName(player.team)] || player.teamLogo || '',
+                        manual: true
+                    });
+                } else if (existsById && existsById.manual) {
+                    // Atualizar dados do jogador manual existente (posição, foto, etc)
+                    Object.assign(existsById, {
                         ...player,
                         team: capitalizeTeamName(player.team),
                         teamLogo: TEAM_LOGOS[capitalizeTeamName(player.team)] || player.teamLogo || '',
@@ -19762,22 +19779,25 @@ O usuário não poderá mais fazer login.
         
         // Forçar sincronização (limpa cache)
         window.adminForceSync = function() {
-            if (!confirm('Isso vai LIMPAR o cache de jogadores e buscar TODOS os dados novamente da API.\n\nIsso pode demorar alguns minutos.\n\nContinuar?')) {
+            if (!confirm('Isso vai LIMPAR o cache de jogadores da API e buscar TODOS os dados novamente.\n\nJogadores manuais serão PRESERVADOS.\n\nContinuar?')) {
                 return;
             }
+            
+            // Salvar jogadores manuais antes de limpar
+            const manualPlayers = state.players.filter(p => p.manual || p.id < 0);
             
             // Limpar cache de jogadores
             localStorage.removeItem('fantasyPlayers2026');
             localStorage.removeItem('fantasy_last_sync');
             
-            // Limpar do state
-            state.players = [];
+            // Limpar do state (mas manter manuais)
+            state.players = [...manualPlayers];
             state.teams = [];
             
-            // Limpar do Firebase também
+            // Limpar do Firebase (só gameData/players, NÃO manualPlayers!)
             if (db) {
                 db.ref('gameData/players').remove();
-                console.log('☁️ Jogadores removidos do Firebase');
+                console.log('☁️ Jogadores API removidos do Firebase (manuais preservados)');
             }
             
             // Iniciar sincronização IMEDIATAMENTE (sem alert bloqueante)
@@ -19986,9 +20006,15 @@ O usuário não poderá mais fazer login.
             state.starters.forEach(s => { if (s && s.id === playerId) s.position = newPosition; });
             state.reserves.forEach(s => { if (s && s.id === playerId) s.position = newPosition; });
             
-            // Salvar no Firebase como jogador manual (para persistir a mudança)
+            // Salvar no Firebase
             if (db) {
-                db.ref('manualPlayers/' + playerId).update({ position: newPosition });
+                if (player.manual || player.id < 0) {
+                    // Jogador manual - atualizar no nó manualPlayers
+                    db.ref('manualPlayers/' + Math.abs(playerId)).update({ position: newPosition });
+                } else {
+                    // Jogador da API - salvar posição customizada separadamente
+                    db.ref('customPositions/' + playerId).set(newPosition);
+                }
             }
             
             // Feedback visual
@@ -20626,8 +20652,23 @@ O usuário não poderá mais fazer login.
                     // Salvar no cache global (usado por mergeManualPlayers)
                     _firebaseManualPlayersCache = manualPlayers;
                     
-                    // Remover jogadores manuais antigos do state (IDs negativos ou com flag manual)
-                    state.players = state.players.filter(p => p.id > 0 && !p.manual);
+                    // Criar set de IDs que estão no Firebase
+                    const firebaseManualIds = new Set();
+                    Object.values(manualPlayers).forEach(p => {
+                        firebaseManualIds.add(String(p.id));
+                        firebaseManualIds.add(String(Math.abs(p.id)));
+                    });
+                    
+                    // Remover apenas jogadores manuais que JÁ EXISTEM no Firebase (para atualizar)
+                    // Manter jogadores manuais do hardcoded JOGADORES_MANUAIS
+                    state.players = state.players.filter(p => {
+                        if (!p.manual && p.id > 0) return true; // jogador API - manter
+                        // Jogador manual - remover só se está no Firebase (será re-adicionado atualizado)
+                        if (p.manual || p.id < 0) {
+                            return !firebaseManualIds.has(String(p.id)) && !firebaseManualIds.has(String(Math.abs(p.id)));
+                        }
+                        return true;
+                    });
                     
                     // Re-mesclar todos (hardcoded + Firebase)
                     mergeManualPlayers();
@@ -20670,6 +20711,31 @@ O usuário não poderá mais fazer login.
                     
                     // Atualizar cache local
                     savePlayers();
+                }
+            });
+            
+            // ⚽ Carregar posições customizadas (para jogadores da API)
+            db.ref('customPositions').on('value', (snapshot) => {
+                const customPositions = snapshot.val();
+                if (customPositions) {
+                    Object.entries(customPositions).forEach(([playerId, position]) => {
+                        if (!position) return;
+                        const numId = Number(playerId);
+                        const player = state.players.find(p => p.id === numId);
+                        if (player) {
+                            player.position = position;
+                        }
+                        // Atualizar em escalações de todos os usuários
+                        Object.values(state.users).forEach(u => {
+                            [...ensureArray(u.starters || [], 11), ...ensureArray(u.reserves || [], 7)].forEach(s => {
+                                if (s && s.id === numId) s.position = position;
+                            });
+                        });
+                        [...(state.starters || []), ...(state.reserves || [])].forEach(s => {
+                            if (s && s.id === numId) s.position = position;
+                        });
+                    });
+                    console.log('⚽ Posições customizadas carregadas:', Object.keys(customPositions).length);
                 }
             });
         }
