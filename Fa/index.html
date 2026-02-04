@@ -4536,8 +4536,24 @@
                 const data = snapshot.val();
                 
                 if (data && data.players && data.players.length > 0) {
-                    // Sempre usar dados do Firebase se tiver jogadores
-                    state.players = data.players;
+                    // Preservar jogadores escalados que não estejam nos novos dados
+                    const rosteredIds = new Set();
+                    Object.values(state.users).forEach(u => {
+                        [...ensureArray(u.starters || [], 11), ...ensureArray(u.reserves || [], 7)].forEach(p => {
+                            if (p && p.id) rosteredIds.add(p.id);
+                        });
+                    });
+                    [...(state.starters || []), ...(state.reserves || [])].forEach(p => {
+                        if (p && p.id) rosteredIds.add(p.id);
+                    });
+                    
+                    const newIds = new Set(data.players.map(p => p.id));
+                    const playersToPreserve = (state.players || []).filter(p => 
+                        p && p.id && rosteredIds.has(p.id) && !newIds.has(p.id)
+                    );
+                    
+                    // Sempre usar dados do Firebase + preservar escalados
+                    state.players = [...data.players, ...playersToPreserve];
                     state.teams = data.teams || [];
                     
                     // Mesclar jogadores manuais
@@ -4608,61 +4624,41 @@
         function checkPlayersLeftBrasileirao() {
             if (!state.currentUser || !state.players || state.players.length === 0) return;
             
-            const user = state.users[state.currentUser];
-            if (!user) return;
-            
+            // Em vez de REMOVER jogadores das escalações, MANTER os jogadores que
+            // estão escalados mas não aparecem mais na API (preservar escalações!)
             const availablePlayerIds = new Set(state.players.map(p => p.id));
-            const playersRemoved = [];
+            const playersToKeep = [];
             
-            // Verificar titulares
-            const starters = ensureArray(user.starters, 11);
-            starters.forEach((player, index) => {
-                if (player && player.id && !availablePlayerIds.has(player.id)) {
-                    playersRemoved.push({ player, type: 'starter', index });
-                }
-            });
-            
-            // Verificar reservas
-            const reserves = ensureArray(user.reserves, 7);
-            reserves.forEach((player, index) => {
-                if (player && player.id && !availablePlayerIds.has(player.id)) {
-                    playersRemoved.push({ player, type: 'reserve', index });
-                }
-            });
-            
-            // Se encontrou jogadores que saíram
-            if (playersRemoved.length > 0) {
-                console.log(`⚠️ ${playersRemoved.length} jogador(es) saíram do Brasileirão!`);
+            // Verificar TODOS os usuários (não só o atual)
+            Object.values(state.users).forEach(user => {
+                const starters = ensureArray(user.starters, 11);
+                const reserves = ensureArray(user.reserves, 7);
                 
-                playersRemoved.forEach(({ player, type, index }) => {
-                    console.log(`   - ${player.name} (${player.team}) removido dos ${type === 'starter' ? 'titulares' : 'reservas'}`);
-                    
-                    // Remover do time
-                    if (type === 'starter') {
-                        state.starters[index] = null;
-                        if (user.starters) user.starters[index] = null;
-                    } else {
-                        state.reserves[index] = null;
-                        if (user.reserves) user.reserves[index] = null;
+                [...starters, ...reserves].forEach(player => {
+                    if (player && player.id && !availablePlayerIds.has(player.id)) {
+                        // Jogador escalado não encontrado na lista - ADICIONAR de volta
+                        if (!playersToKeep.find(p => p.id === player.id)) {
+                            playersToKeep.push(player);
+                        }
                     }
                 });
-                
-                // Desconfirmar time (precisa escalar novamente)
-                state.isConfirmed = false;
-                if (user.isConfirmed) user.isConfirmed = false;
-                
-                // Salvar mudanças
-                saveState();
-                if (db && state.currentUser) {
-                    db.ref('users/' + state.currentUser).update({
-                        starters: sanitizeArrayForFirebase(state.starters, 11),
-                        reserves: sanitizeArrayForFirebase(state.reserves, 7),
-                        isConfirmed: false
-                    });
+            });
+            
+            // Também verificar starters/reserves do state principal
+            [...state.starters, ...state.reserves].forEach(player => {
+                if (player && player.id && !availablePlayerIds.has(player.id)) {
+                    if (!playersToKeep.find(p => p.id === player.id)) {
+                        playersToKeep.push(player);
+                    }
                 }
-                
-                // Notificar usuário
-                showPlayerLeftNotification(playersRemoved);
+            });
+            
+            // Adicionar jogadores escalados de volta ao state.players
+            if (playersToKeep.length > 0) {
+                playersToKeep.forEach(p => {
+                    state.players.push(p);
+                    console.log(`🛡️ Preservando jogador escalado: ${p.name} (${p.team}) - não removido`);
+                });
             }
         }
         
@@ -5198,7 +5194,25 @@
                     return;
                 }
 
-                state.players = allPlayers;
+                // Preservar jogadores escalados que não vieram na nova sync
+                const rosteredIds2 = new Set();
+                Object.values(state.users).forEach(u => {
+                    [...ensureArray(u.starters || [], 11), ...ensureArray(u.reserves || [], 7)].forEach(p => {
+                        if (p && p.id) rosteredIds2.add(p.id);
+                    });
+                });
+                [...(state.starters || []), ...(state.reserves || [])].forEach(p => {
+                    if (p && p.id) rosteredIds2.add(p.id);
+                });
+                const newIds2 = new Set(allPlayers.map(p => p.id));
+                const preserved2 = (state.players || []).filter(p => 
+                    p && p.id && rosteredIds2.has(p.id) && !newIds2.has(p.id)
+                );
+                if (preserved2.length > 0) {
+                    addLog(`🛡️ ${preserved2.length} jogadores escalados preservados`, 'info');
+                }
+                
+                state.players = [...allPlayers, ...preserved2];
                 currentApiSource = 'api-football';
                 
                 // Mesclar jogadores manuais
@@ -21052,7 +21066,29 @@ O usuário não poderá mais fazer login.
                 const allPlayers = await autoSyncViaApiFootball();
                 
                 if (allPlayers.length > 0) {
-                    state.players = allPlayers;
+                    // Preservar jogadores que estão escalados por algum usuário
+                    const rosteredIds = new Set();
+                    Object.values(state.users).forEach(u => {
+                        [...ensureArray(u.starters, 11), ...ensureArray(u.reserves, 7)].forEach(p => {
+                            if (p && p.id) rosteredIds.add(p.id);
+                        });
+                    });
+                    [...state.starters, ...state.reserves].forEach(p => {
+                        if (p && p.id) rosteredIds.add(p.id);
+                    });
+                    
+                    // Jogadores escalados que não estão na nova lista da API
+                    const newIds = new Set(allPlayers.map(p => p.id));
+                    const playersToPreserve = state.players.filter(p => 
+                        p && p.id && rosteredIds.has(p.id) && !newIds.has(p.id)
+                    );
+                    
+                    if (playersToPreserve.length > 0) {
+                        console.log(`🛡️ Preservando ${playersToPreserve.length} jogadores escalados que saíram da API`);
+                        playersToPreserve.forEach(p => console.log(`   - ${p.name} (${p.team})`));
+                    }
+                    
+                    state.players = [...allPlayers, ...playersToPreserve];
                     currentApiSource = 'api-football';
                     mergeManualPlayers();
                     
