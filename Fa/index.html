@@ -23550,9 +23550,13 @@ O usuário não poderá mais fazer login.
                 } else if (position === 'D') {
                     breakdown.push({ desc: 'Gol (defensor) x' + goals, value: goals * 6 });
                     totalScore += goals * 6;
-                } else {
-                    breakdown.push({ desc: 'Gol x' + goals, value: goals * 6 });
+                } else if (position === 'M') {
+                    breakdown.push({ desc: 'Gol (meia) x' + goals, value: goals * 6 });
                     totalScore += goals * 6;
+                } else {
+                    // Atacante: 5 pontos por gol
+                    breakdown.push({ desc: 'Gol x' + goals, value: goals * 5 });
+                    totalScore += goals * 5;
                 }
             }
 
@@ -23725,10 +23729,11 @@ O usuário não poderá mais fazer login.
                     breakdown.push({ desc: 'Finalizações no gol x' + shotsOnF, value: shotsOnF });
                     totalScore += shotsOnF;
                 }
-                
+
+                // Grandes chances criadas (+1 cada)
                 var keyPassesF = stats.passes ? stats.passes.key || 0 : 0;
                 if (keyPassesF > 0) {
-                    breakdown.push({ desc: 'Passe decisivo x' + keyPassesF, value: keyPassesF });
+                    breakdown.push({ desc: '🎯 Grandes chances criadas x' + keyPassesF, value: keyPassesF });
                     totalScore += keyPassesF;
                 }
                 
