@@ -5701,16 +5701,51 @@
             }
         }
 
+        // Helper: Buscar posição manual/customizada de um jogador pelo ID
+        function _getManualPosition(playerId) {
+            if (!playerId) return null;
+            const numId = Number(playerId);
+            // Buscar no state.players (inclui customPositions carregadas do Firebase)
+            const player = (state.players || []).find(p => p.id === numId || String(p.id) === String(playerId));
+            if (player && player.position) return player.position;
+            // Buscar nas escalações dos usuários
+            try {
+                for (const u of Object.values(state.users || {})) {
+                    for (const p of [...(u.starters || []), ...(u.reserves || [])]) {
+                        if (p && (p.id === numId || String(p.id) === String(playerId)) && p.position) {
+                            return p.position;
+                        }
+                    }
+                }
+            } catch(e) {}
+            return null;
+        }
+
         // Calcular pontuação de um jogador
-        function calculatePlayerScore(stats, fixture = null, debug = false, teamId = null) {
+        function calculatePlayerScore(stats, fixture = null, debug = false, teamId = null, overridePosition = null) {
             let score = 0;
             let breakdown = [];
             
             if (!stats || !stats.statistics || !stats.statistics[0]) return 0;
             
             const s = stats.statistics[0];
-            // CORRIGIDO: Usar posição do jogo (s.games.position) que é mais precisa
-            const position = s.games?.position || stats.player?.position; // G = Goleiro, D = Defensor, M = Meia, F = Atacante
+            // CORRIGIDO: Usar posição manual (overridePosition) se disponível, senão usar da API
+            let position = s.games?.position || stats.player?.position; // G = Goleiro, D = Defensor, M = Meia, F = Atacante
+            
+            // Se tem override de posição (admin mudou manualmente), converter para formato G/D/M/F
+            if (overridePosition) {
+                const posUpper = overridePosition.toUpperCase();
+                if (posUpper === 'GOL' || posUpper === 'G' || posUpper === 'GK' || posUpper === 'GOALKEEPER') {
+                    position = 'G';
+                } else if (posUpper === 'DEF' || posUpper === 'D' || posUpper === 'DEFENDER' || posUpper === 'ZAG' || posUpper === 'LD' || posUpper === 'LE' || posUpper === 'LAT' || posUpper === 'CB') {
+                    position = 'D';
+                } else if (posUpper === 'MEI' || posUpper === 'M' || posUpper === 'MIDFIELDER' || posUpper === 'MC' || posUpper === 'VOL') {
+                    position = 'M';
+                } else if (posUpper === 'ATA' || posUpper === 'F' || posUpper === 'ATTACKER' || posUpper === 'PE' || posUpper === 'PD' || posUpper === 'SA' || posUpper === 'CA') {
+                    position = 'F';
+                }
+            }
+            
             const playerName = stats.player?.name || 'Unknown';
             
             // ===== HELPER: Determinar se jogador é do time da casa =====
@@ -6420,7 +6455,8 @@
                                 const playerData = allPlayerStats[statsKey].data;
                                 const fixtureData = allPlayerStats[statsKey].fixture;
                                 const _tId = player.teamId || allPlayerStats[statsKey]._teamId || null;
-                                const score = calculatePlayerScore(playerData, fixtureData, false, _tId);
+                                const _overridePos = player.position || _getManualPosition(playerId);
+                                const score = calculatePlayerScore(playerData, fixtureData, false, _tId, _overridePos);
                                 user.scores[round].players[playerId] = score;
                                 calculatedScores[playerId] = score; // Marcar como calculado
                                 
@@ -6466,7 +6502,8 @@
                                 const playerData = allPlayerStats[statsKey].data;
                                 const fixtureData = allPlayerStats[statsKey].fixture;
                                 const _tId2 = player.teamId || allPlayerStats[statsKey]._teamId || null;
-                                const score = Math.round(calculatePlayerScore(playerData, fixtureData, false, _tId2) * 0.5 * 10) / 10;
+                                const _overridePos2 = player.position || _getManualPosition(playerId);
+                                const score = Math.round(calculatePlayerScore(playerData, fixtureData, false, _tId2, _overridePos2) * 0.5 * 10) / 10;
                                 user.scores[round].players[playerId] = score;
                                 calculatedScores[playerId] = score; // Marcar como calculado
                                 
@@ -9742,8 +9779,9 @@
                 const playerData = cachedStats[statsKey].data;
                 const fixtureData = cachedStats[statsKey].fixture;
                 const _tId = player.teamId || cachedStats[statsKey]._teamId || null;
+                const _overridePosBreak = player.position || _getManualPosition(playerId);
                 
-                const result = calculatePlayerScore(playerData, fixtureData, true, _tId);
+                const result = calculatePlayerScore(playerData, fixtureData, true, _tId, _overridePosBreak);
                 if (result && result.breakdown) {
                     minutesPlayed = result.minutes || 0;
                     
@@ -22684,7 +22722,8 @@ O usuário não poderá mais fazer login.
                             });
                         } catch(e) {}
                     }
-                    const score = calculatePlayerScore(playerData, fixtureData, false, _tid);
+                    const _overridePosSync = _getManualPosition(playerId);
+                    const score = calculatePlayerScore(playerData, fixtureData, false, _tid, _overridePosSync);
                     const stats = playerData.statistics?.[0] || {};
                     
                     // Verificar se está escalado por alguém
@@ -22943,8 +22982,20 @@ O usuário não poderá mais fazer login.
                     if (!teamName) teamName = _savedTeamName;
                     var position = stats.games ? stats.games.position || '?' : '?';
                     
+                    // Usar posição manual se disponível
+                    var _overridePosApi = _getManualPosition(playerId);
+                    
                     // Usar a função original do site para calcular
-                    var score = calculatePlayerScore(playerData, fixtureData, false, _savedTeamId);
+                    var score = calculatePlayerScore(playerData, fixtureData, false, _savedTeamId, _overridePosApi);
+                    
+                    // Se tem override, usar posição convertida para exibição
+                    if (_overridePosApi) {
+                        var _pU = _overridePosApi.toUpperCase();
+                        if (_pU === 'GOL' || _pU === 'GOALKEEPER') position = 'G';
+                        else if (_pU === 'DEF' || _pU === 'DEFENDER' || _pU === 'ZAG' || _pU === 'LD' || _pU === 'LE' || _pU === 'LAT') position = 'D';
+                        else if (_pU === 'MEI' || _pU === 'MIDFIELDER' || _pU === 'MC' || _pU === 'VOL') position = 'M';
+                        else if (_pU === 'ATA' || _pU === 'ATTACKER' || _pU === 'PE' || _pU === 'PD' || _pU === 'SA' || _pU === 'CA') position = 'F';
+                    }
                     
                     if (teamName) teamsSet.add(teamName);
                     
@@ -23069,6 +23120,16 @@ O usuário não poderá mais fazer login.
             var teamName = stats.team ? stats.team.name || '' : '';
             var minutes = stats.games ? stats.games.minutes || 0 : 0;
             var rating = stats.games ? stats.games.rating || '-' : '-';
+            
+            // Usar posição manual se disponível
+            var _overridePosModal = _getManualPosition(playerId);
+            if (_overridePosModal) {
+                var _pmU = _overridePosModal.toUpperCase();
+                if (_pmU === 'GOL' || _pmU === 'GOALKEEPER') position = 'G';
+                else if (_pmU === 'DEF' || _pmU === 'DEFENDER' || _pmU === 'ZAG' || _pmU === 'LD' || _pmU === 'LE' || _pmU === 'LAT') position = 'D';
+                else if (_pmU === 'MEI' || _pmU === 'MIDFIELDER' || _pmU === 'MC' || _pmU === 'VOL') position = 'M';
+                else if (_pmU === 'ATA' || _pmU === 'ATTACKER' || _pmU === 'PE' || _pmU === 'PD' || _pmU === 'SA' || _pmU === 'CA') position = 'F';
+            }
             
             // ===== DETERMINAR GOLS SOFRIDOS PELO TIME DO JOGADOR =====
             var _goalsConceded = null;
