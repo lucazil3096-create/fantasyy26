@@ -6209,11 +6209,11 @@
             
             // Vitória
             if ((isHome && homeGoals > awayGoals) || (!isHome && awayGoals > homeGoals)) {
-                score += 6;
+                score += 4;
             }
             // Empate
             else if (homeGoals === awayGoals) {
-                score += 4;
+                score += 1;
             }
             
             // Clean sheet
@@ -6221,6 +6221,9 @@
             
             // Gols marcados
             score += teamGoals;
+            
+            // Gols sofridos
+            score -= opponentGoals;
             
             // Bônus 3+ gols
             if (teamGoals >= 3) score += 3;
@@ -6235,7 +6238,7 @@
                     if (!isSub) return;
                     const subGoals = stats.goals?.total || 0;
                     const subAssists = stats.goals?.assists || 0;
-                    score += subGoals * 3;
+                    score += subGoals * 2;
                     score += subAssists * 1;
                 });
             }
@@ -15569,11 +15572,11 @@
                 var opponentGoals = isHome ? awayGoals : homeGoals;
                 
                 if ((isHome && homeGoals > awayGoals) || (!isHome && awayGoals > homeGoals)) {
-                    breakdown.push({ desc: '✅ Vitória do time', value: 6 });
-                    totalScore += 6;
-                } else if (homeGoals === awayGoals) {
-                    breakdown.push({ desc: '🤝 Empate', value: 4 });
+                    breakdown.push({ desc: '✅ Vitória do time', value: 4 });
                     totalScore += 4;
+                } else if (homeGoals === awayGoals) {
+                    breakdown.push({ desc: '🤝 Empate', value: 1 });
+                    totalScore += 1;
                 } else {
                     breakdown.push({ desc: '❌ Derrota', value: 0 });
                 }
@@ -15586,6 +15589,11 @@
                 if (teamGoals > 0) {
                     breakdown.push({ desc: '⚽ Gols marcados x' + teamGoals, value: teamGoals });
                     totalScore += teamGoals;
+                }
+                
+                if (opponentGoals > 0) {
+                    breakdown.push({ desc: '🚫 Gols sofridos x' + opponentGoals, value: -opponentGoals });
+                    totalScore -= opponentGoals;
                 }
                 
                 if (teamGoals >= 3) {
@@ -15618,8 +15626,8 @@
                 });
                 
                 if (subGoalsTotal > 0) {
-                    breakdown.push({ desc: '🔄 Gol de reserva x' + subGoalsTotal + (subDetails.length ? '' : ''), value: subGoalsTotal * 3 });
-                    totalScore += subGoalsTotal * 3;
+                    breakdown.push({ desc: '🔄 Gol de reserva x' + subGoalsTotal + (subDetails.length ? '' : ''), value: subGoalsTotal * 2 });
+                    totalScore += subGoalsTotal * 2;
                 }
                 if (subAssistsTotal > 0) {
                     breakdown.push({ desc: '🔄 Assistência de reserva x' + subAssistsTotal, value: subAssistsTotal * 1 });
