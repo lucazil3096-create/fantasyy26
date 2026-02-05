@@ -2737,7 +2737,15 @@
                 else if (position === 'D') score += goals * 6;  // Defensor
                 else score += goals * 5;                         // Meia e Atacante
             }
-            
+
+            // ==================== BÔNUS HAT-TRICK ====================
+            // Hat-trick de gols (3+ gols): +5 bônus
+            if (goals >= 3) score += 5;
+
+            // Hat-trick de assistências (3+ assistências): +5 bônus
+            const assists = s.goals?.assists || 0;
+            if (assists >= 3) score += 5;
+
             // ==================== GOLEIRO (G) ====================
             if (position === 'G') {
                 // Defesas
