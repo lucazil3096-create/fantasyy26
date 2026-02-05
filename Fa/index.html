@@ -6563,14 +6563,22 @@
                         console.log(`   ${fixture.teams.home.name} x ${fixture.teams.away.name} ${isFinished ? '(FIM)' : '(AO VIVO)'}`);
                     });
 
-                    // Buscar stats de todos os jogos em paralelo
-                    const statsPromises = validFixtures.map(fixture => {
-                        const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
-                        return getPlayerStats(fixture.fixture.id, isFinished)
-                            .then(playerStats => ({ fixture, playerStats }));
-                    });
-
-                    const allResults = await Promise.all(statsPromises);
+                    // Buscar stats em lotes de 2 (respeitar rate limit da API)
+                    const allResults = [];
+                    for (let i = 0; i < validFixtures.length; i += 2) {
+                        const batch = validFixtures.slice(i, i + 2);
+                        const batchResults = await Promise.all(
+                            batch.map(fixture => {
+                                const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
+                                return getPlayerStats(fixture.fixture.id, isFinished)
+                                    .then(playerStats => ({ fixture, playerStats }));
+                            })
+                        );
+                        allResults.push(...batchResults);
+                        if (i + 2 < validFixtures.length) {
+                            await new Promise(r => setTimeout(r, 500));
+                        }
+                    }
 
                     allResults.forEach(({ fixture, playerStats }) => {
                         playerStats.forEach(team => {
