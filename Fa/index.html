@@ -6135,8 +6135,14 @@
                     score += penWon * 1;
                     breakdown.push(`PenSofrido x${penWon}(+${penWon})`);
                 }
+
+                // Clean sheet (+1) - meia ajuda na marcação
+                if (_conceded !== null && _conceded === 0) {
+                    score += 1;
+                    breakdown.push(`CleanSheetMeia(+1)`);
+                }
             }
-            
+
             // ==================== ATACANTE (F) ====================
             if (position === 'F') {
                 // Finalizações no gol (+1 cada)
@@ -9815,7 +9821,8 @@
                 'HatTrickGols': '⚽ Hat-trick de gols',
                 'HatTrickAssists': '🅰️ Hat-trick de assists',
                 'GrandesChances': '🎯 Grandes chances criadas',
-                'Gol(MEI)': 'Gol (meia)'
+                'Gol(MEI)': 'Gol (meia)',
+                'CleanSheetMeia': '🛡️ Clean sheet (meia)'
             };
             for (const [k, v] of Object.entries(map)) {
                 if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
@@ -23720,8 +23727,14 @@ O usuário não poderá mais fazer login.
                     breakdown.push({ desc: 'Pênalti sofrido x' + penWonM, value: penWonM });
                     totalScore += penWonM;
                 }
+
+                // Clean sheet (+1) - meia ajuda na marcação
+                if (_goalsConceded !== null && _goalsConceded === 0) {
+                    breakdown.push({ desc: '🛡️ Clean sheet (meia)', value: 1 });
+                    totalScore += 1;
+                }
             }
-            
+
             // ===== ATACANTE (F) =====
             if (position === 'F') {
                 var shotsOnF = stats.shots ? stats.shots.on || 0 : 0;

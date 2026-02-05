@@ -2838,8 +2838,12 @@
                 
                 // Pênalti sofrido (+1)
                 score += (s.penalty?.won || 0) * 1;
+
+                // Clean sheet (+1) - meia ajuda na marcação
+                const conceded = s.goals?.conceded || 0;
+                if (conceded === 0) score += 1;
             }
-            
+
             // ==================== ATACANTE (F) ====================
             if (position === 'F') {
                 // Finalizações no gol (+1 cada)
