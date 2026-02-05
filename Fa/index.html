@@ -2261,6 +2261,7 @@
         
         const CACHE_24H = 24 * 60 * 60 * 1000; // 24 horas
         const CACHE_3MIN = 3 * 60 * 1000; // 3 minutos (para jogos ao vivo)
+        const STARTING_ROUND = 2; // Rodada inicial do campeonato (ignora rodadas anteriores)
         
         // ==================== SISTEMA INTELIGENTE DE RODADAS ====================
         // Rodada do Fantasy = Próxima rodada com maioria dos jogos não iniciados
@@ -5701,7 +5702,7 @@
         }
 
         // Calcular pontuação de um jogador
-        function calculatePlayerScore(stats, fixture = null, debug = false) {
+        function calculatePlayerScore(stats, fixture = null, debug = false, teamId = null) {
             let score = 0;
             let breakdown = [];
             
@@ -5711,6 +5712,63 @@
             // CORRIGIDO: Usar posição do jogo (s.games.position) que é mais precisa
             const position = s.games?.position || stats.player?.position; // G = Goleiro, D = Defensor, M = Meia, F = Atacante
             const playerName = stats.player?.name || 'Unknown';
+            
+            // ===== HELPER: Determinar se jogador é do time da casa =====
+            let _isHome = null;
+            let _conceded = null;
+            if (fixture && fixture.teams && fixture.goals) {
+                const _hGoals = fixture.goals.home ?? 0;
+                const _aGoals = fixture.goals.away ?? 0;
+                const _hId = fixture.teams.home?.id;
+                const _aId = fixture.teams.away?.id;
+                
+                // Estratégia 1: teamId passado como parâmetro
+                if (teamId != null) {
+                    if (teamId == _hId) _isHome = true;
+                    else if (teamId == _aId) _isHome = false;
+                }
+                
+                // Estratégia 2: stats.team.id (geralmente null após Firebase)
+                if (_isHome === null) {
+                    const _tId = s.team?.id;
+                    if (_tId != null) {
+                        if (_tId == _hId) _isHome = true;
+                        else if (_tId == _aId) _isHome = false;
+                    }
+                }
+                
+                // Estratégia 3: Buscar nas escalações dos usuários
+                if (_isHome === null) {
+                    const pid = stats.player?.id || (stats.player ? undefined : undefined);
+                    const playerIdNum = pid || (typeof playerName !== 'undefined' ? null : null);
+                    try {
+                        Object.values(state.users || {}).forEach(function(user) {
+                            (user.starters || []).concat(user.reserves || []).forEach(function(p) {
+                                if (p && p.teamId) {
+                                    // Comparar por nome do jogador (mais confiável quando ID não bate)
+                                    const pName = (p.name || '').toLowerCase();
+                                    const myName = (playerName || '').toLowerCase();
+                                    if (pName && myName && (pName === myName || pName.indexOf(myName) !== -1 || myName.indexOf(pName) !== -1)) {
+                                        if (p.teamId == _hId) _isHome = true;
+                                        else if (p.teamId == _aId) _isHome = false;
+                                    }
+                                }
+                            });
+                        });
+                    } catch(e) {}
+                }
+                
+                // Calcular gols sofridos
+                if (_isHome !== null) {
+                    _conceded = _isHome ? _aGoals : _hGoals;
+                } else {
+                    // Último recurso: se AMBOS levaram gol, ninguém tem clean sheet
+                    if (_hGoals > 0 && _aGoals > 0) {
+                        _conceded = Math.min(_hGoals, _aGoals);
+                    }
+                    // Se um lado é 0, não sabemos qual - _conceded fica null (pula bonus)
+                }
+            }
             
             // LOG RAW DATA para debug
             console.log(`📊 RAW DATA ${playerName}:`, {
@@ -5843,14 +5901,15 @@
                     breakdown.push(`PenDefendido x${penSaved}(+${penSaved * 6})`);
                 }
                 
-                // Gols sofridos (-1 cada)
-                const conceded = s.goals?.conceded || 0;
-                if (conceded === 0) {
-                    score += 6;
-                    breakdown.push(`Não sofreu gol(+6)`);
-                } else if (conceded > 0) {
-                    score -= conceded * 1;
-                    breakdown.push(`Gols sofridos x${conceded}(-${conceded})`);
+                // Gols sofridos (-1 cada) - baseado no placar da partida
+                if (_conceded !== null && _conceded >= 0) {
+                    if (_conceded === 0) {
+                        score += 6;
+                        breakdown.push(`Não sofreu gol(+6)`);
+                    } else {
+                        score -= _conceded;
+                        breakdown.push(`Gols sofridos x${_conceded}(-${_conceded})`);
+                    }
                 }
                 
                 // Pênalti sofrido (+1)
@@ -5913,14 +5972,15 @@
                     breakdown.push(`Duelos ${duelsWon}(+${duelsBonus})`);
                 }
                 
-                // Gols sofridos (-1 cada)
-                const conceded = s.goals?.conceded || 0;
-                if (conceded === 0) {
-                    score += 3;
-                    breakdown.push(`Não sofreu gol(+3)`);
-                } else if (conceded > 0) {
-                    score -= conceded * 1;
-                    breakdown.push(`Gols sofridos x${conceded}(-${conceded})`);
+                // Gols sofridos (-1 cada) - baseado no placar da partida
+                if (_conceded !== null && _conceded >= 0) {
+                    if (_conceded === 0) {
+                        score += 3;
+                        breakdown.push(`Não sofreu gol(+3)`);
+                    } else {
+                        score -= _conceded;
+                        breakdown.push(`Gols sofridos x${_conceded}(-${_conceded})`);
+                    }
                 }
                 
                 // Pênalti sofrido (+1)
@@ -6039,25 +6099,21 @@
             
             // ==================== PONTOS POR RESULTADO DO TIME ====================
             // REBALANCEADO: +3 vitória, 0 empate, -3 derrota
-            if (fixture && fixture.teams && fixture.goals) {
-                const playerTeamId = stats.statistics?.[0]?.team?.id;
-                if (playerTeamId) {
-                    const isHome = fixture.teams.home?.id === playerTeamId;
-                    const homeGoals = fixture.goals.home ?? 0;
-                    const awayGoals = fixture.goals.away ?? 0;
-                    
-                    const teamGoals = isHome ? homeGoals : awayGoals;
-                    const opponentGoals = isHome ? awayGoals : homeGoals;
-                    
-                    if (teamGoals > opponentGoals) {
-                        score += 3;
-                        breakdown.push(`Vitória(+3)`);
-                    } else if (teamGoals === opponentGoals) {
-                        breakdown.push(`Empate(0)`);
-                    } else {
-                        score -= 3;
-                        breakdown.push(`Derrota(-3)`);
-                    }
+            if (fixture && fixture.teams && fixture.goals && _isHome !== null) {
+                const homeGoals = fixture.goals.home ?? 0;
+                const awayGoals = fixture.goals.away ?? 0;
+                
+                const teamGoals = _isHome ? homeGoals : awayGoals;
+                const opponentGoals = _isHome ? awayGoals : homeGoals;
+                
+                if (teamGoals > opponentGoals) {
+                    score += 3;
+                    breakdown.push(`Vitória(+3)`);
+                } else if (teamGoals === opponentGoals) {
+                    breakdown.push(`Empate(0)`);
+                } else {
+                    score -= 3;
+                    breakdown.push(`Derrota(-3)`);
                 }
             }
             
@@ -6244,12 +6300,16 @@
                         const playerStats = await getPlayerStats(fixture.fixture.id, isFinished);
                         
                         playerStats.forEach(team => {
+                            const _teamId = team.team?.id || null;
+                            const _teamName = team.team?.name || '';
                             team.players?.forEach(playerData => {
                                 const playerId = playerData.player?.id;
                                 if (playerId) {
                                     allPlayerStats[playerId] = {
                                         data: playerData,
-                                        fixture: fixture
+                                        fixture: fixture,
+                                        _teamId: _teamId,
+                                        _teamName: _teamName
                                     };
                                 }
                             });
@@ -6330,7 +6390,8 @@
                                 const statsKey = allPlayerStats[playerId] ? playerId : player.id;
                                 const playerData = allPlayerStats[statsKey].data;
                                 const fixtureData = allPlayerStats[statsKey].fixture;
-                                const score = calculatePlayerScore(playerData, fixtureData);
+                                const _tId = player.teamId || allPlayerStats[statsKey]._teamId || null;
+                                const score = calculatePlayerScore(playerData, fixtureData, false, _tId);
                                 user.scores[round].players[playerId] = score;
                                 calculatedScores[playerId] = score; // Marcar como calculado
                                 
@@ -6375,7 +6436,8 @@
                                 const statsKey = allPlayerStats[playerId] ? playerId : player.id;
                                 const playerData = allPlayerStats[statsKey].data;
                                 const fixtureData = allPlayerStats[statsKey].fixture;
-                                const score = Math.round(calculatePlayerScore(playerData, fixtureData) * 0.5 * 10) / 10;
+                                const _tId2 = player.teamId || allPlayerStats[statsKey]._teamId || null;
+                                const score = Math.round(calculatePlayerScore(playerData, fixtureData, false, _tId2) * 0.5 * 10) / 10;
                                 user.scores[round].players[playerId] = score;
                                 calculatedScores[playerId] = score; // Marcar como calculado
                                 
@@ -6472,6 +6534,8 @@
                         round.purchases.forEach(t => total += (t.price || 0));
                     }
                 } else {
+                    // Ignorar rodadas antes da rodada inicial
+                    if (parseInt(key) < STARTING_ROUND) return;
                     if (round && round.players) {
                         Object.values(round.players).forEach(s => total += (s || 0));
                     }
@@ -14700,6 +14764,8 @@
                         round.purchases.forEach(t => total += t.price);
                     }
                 } else {
+                    // Ignorar rodadas antes da rodada inicial
+                    if (parseInt(key) < STARTING_ROUND) return;
                     Object.entries(round.players || {}).forEach(([pid, s]) => {
                         // Capitão pontua 2x (se sistema ativo)
                         if (state.captainEnabled && userCaptain && String(pid) === String(userCaptain)) {
@@ -22311,9 +22377,23 @@ O usuário não poderá mais fazer login.
         };
 
         // Primeira atualização de pontuação ao carregar (se confirmado)
-        setTimeout(() => {
+        setTimeout(async () => {
             if (state.isConfirmed) {
-                syncRoundScores(); // Usa cache compartilhado
+                // AUTO-MIGRATION v2: Forçar recálculo de scores se versão antiga
+                var _scoreVersion = localStorage.getItem('scoreCalcVersion');
+                if (_scoreVersion !== 'v2_conceded_fix') {
+                    console.log('🔄 AUTO-MIGRATION: Recalculando scores com nova fórmula de gols sofridos...');
+                    // Limpar cache de scores para forçar recálculo
+                    try {
+                        var round = state.selectedRound || state.currentRound;
+                        if (round) {
+                            await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                            console.log('🗑️ Cache de scores limpo para migração');
+                        }
+                    } catch(e) {}
+                    localStorage.setItem('scoreCalcVersion', 'v2_conceded_fix');
+                }
+                await syncRoundScores();
                 manageUpdateInterval();
             }
         }, 3000);
@@ -22329,15 +22409,21 @@ O usuário não poderá mais fazer login.
         window.forceRoundSync = async function() {
             console.log('🔄 Forçando re-sincronização com API (ignorando cache)...');
             
-            // Limpar cache do Firebase
+            // Limpar cache do Firebase (stats + scores)
             try {
                 await fetch(`${FIREBASE_URL}/gameState/lastApiSync.json`, { method: 'DELETE' });
+                // Limpar cache de scores da rodada atual para forçar recálculo
+                const round = state.selectedRound || state.currentRound;
+                await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                console.log(`🗑️ Cache de scores da rodada ${round} removido`);
             } catch (e) {}
             
             await detectCurrentRound();
             await fetchLiveFixtures(true);
+            // Forçar recálculo dos scores
+            await syncRoundScores();
             render();
-            alert(`✅ Rodada sincronizada: ${state.currentRound}`);
+            alert(`✅ Rodada sincronizada e pontuações recalculadas!`);
         };
         
         // ==================== VER PONTOS DE TODOS OS JOGADORES (ADMIN) ====================
@@ -22380,12 +22466,16 @@ O usuário não poderá mais fazer login.
                         const stats = await getPlayerStats(fixture.fixture.id, isFinished);
                         
                         stats.forEach(team => {
+                            const _teamId = team.team?.id || null;
+                            const _teamName = team.team?.name || '';
                             team.players?.forEach(playerData => {
                                 const playerId = playerData.player?.id;
                                 if (playerId) {
                                     allPlayerStats[playerId] = {
                                         data: playerData,
-                                        fixture: fixture
+                                        fixture: fixture,
+                                        _teamId: _teamId,
+                                        _teamName: _teamName
                                     };
                                 }
                             });
@@ -22407,7 +22497,20 @@ O usuário não poderá mais fazer login.
                     
                     if (!playerData || !playerData.player) return;
                     
-                    const score = calculatePlayerScore(playerData, fixtureData);
+                    // Tentar pegar teamId: do cache, ou buscar nos rosters dos usuários
+                    let _tid = statsObj._teamId || null;
+                    if (!_tid) {
+                        try {
+                            Object.values(state.users || {}).forEach(function(user) {
+                                (user.starters || []).concat(user.reserves || []).forEach(function(p) {
+                                    if (p && String(p.id) === String(playerId) && p.teamId) {
+                                        _tid = p.teamId;
+                                    }
+                                });
+                            });
+                        } catch(e) {}
+                    }
+                    const score = calculatePlayerScore(playerData, fixtureData, false, _tid);
                     const stats = playerData.statistics?.[0] || {};
                     
                     // Verificar se está escalado por alguém
@@ -22648,18 +22751,35 @@ O usuário não poderá mais fazer login.
                     if (!playerData || !playerData.player) return;
                     
                     var stats = playerData.statistics && playerData.statistics[0] ? playerData.statistics[0] : {};
+                    // Buscar teamId: do cache ou dos rosters
+                    var _savedTeamId = statsObj._teamId || null;
+                    if (!_savedTeamId) {
+                        try {
+                            Object.values(state.users || {}).forEach(function(user) {
+                                (user.starters || []).concat(user.reserves || []).forEach(function(p) {
+                                    if (p && String(p.id) === String(playerId) && p.teamId) {
+                                        _savedTeamId = p.teamId;
+                                    }
+                                });
+                            });
+                        } catch(e) {}
+                    }
+                    var _savedTeamName = statsObj._teamName || '';
                     var teamName = stats.team ? stats.team.name || '' : '';
+                    if (!teamName) teamName = _savedTeamName;
                     var position = stats.games ? stats.games.position || '?' : '?';
                     
                     // Usar a função original do site para calcular
-                    var score = calculatePlayerScore(playerData, fixtureData);
+                    var score = calculatePlayerScore(playerData, fixtureData, false, _savedTeamId);
                     
                     if (teamName) teamsSet.add(teamName);
                     
                     window._apiPlayersFullData[playerId] = {
                         playerData: playerData,
                         fixtureData: fixtureData,
-                        stats: stats
+                        stats: stats,
+                        _teamId: _savedTeamId,
+                        _teamName: _savedTeamName || teamName
                     };
                     
                     playerList.push({
@@ -22775,6 +22895,63 @@ O usuário não poderá mais fazer login.
             var teamName = stats.team ? stats.team.name || '' : '';
             var minutes = stats.games ? stats.games.minutes || 0 : 0;
             var rating = stats.games ? stats.games.rating || '-' : '-';
+            
+            // ===== DETERMINAR GOLS SOFRIDOS PELO TIME DO JOGADOR =====
+            var _goalsConceded = null;
+            var _isHomePlayer = null;
+            
+            if (fixtureData && fixtureData.teams && fixtureData.goals != null) {
+                var _hG = Number(fixtureData.goals.home) || 0;
+                var _aG = Number(fixtureData.goals.away) || 0;
+                var _hId = fixtureData.teams.home ? fixtureData.teams.home.id : null;
+                var _aId = fixtureData.teams.away ? fixtureData.teams.away.id : null;
+                
+                // Método 1: _teamId salvo no topo (v5+, cache novo)
+                var _savedTId = fullData._teamId || null;
+                if (_savedTId != null) {
+                    if (_savedTId == _hId) _isHomePlayer = true;
+                    else if (_savedTId == _aId) _isHomePlayer = false;
+                }
+                
+                // Método 2: stats.team.id (geralmente null após Firebase)
+                if (_isHomePlayer === null) {
+                    var _stId = stats.team ? stats.team.id : null;
+                    if (_stId != null) {
+                        if (_stId == _hId) _isHomePlayer = true;
+                        else if (_stId == _aId) _isHomePlayer = false;
+                    }
+                }
+                
+                // Método 3: Buscar nas escalações dos usuários (funciona SEMPRE)
+                if (_isHomePlayer === null) {
+                    var _rosterTeamId = null;
+                    try {
+                        Object.values(state.users || {}).forEach(function(user) {
+                            (user.starters || []).concat(user.reserves || []).forEach(function(p) {
+                                if (p && String(p.id) === String(playerId) && p.teamId) {
+                                    _rosterTeamId = p.teamId;
+                                }
+                            });
+                        });
+                    } catch(e) {}
+                    if (_rosterTeamId != null) {
+                        if (_rosterTeamId == _hId) _isHomePlayer = true;
+                        else if (_rosterTeamId == _aId) _isHomePlayer = false;
+                    }
+                }
+                
+                // Calcular gols sofridos
+                if (_isHomePlayer !== null) {
+                    _goalsConceded = _isHomePlayer ? _aG : _hG;
+                } else {
+                    // Último recurso: se AMBOS os times levaram gol, ninguém tem clean sheet
+                    if (_hG > 0 && _aG > 0) {
+                        _goalsConceded = Math.min(_hG, _aG); // conservador
+                    }
+                    // Se um lado é 0 (ex: 2x0), não sabemos qual time - pular bonus
+                }
+            }
+            console.log('🔍 CONCEDED:', playerName, 'isHome:', _isHomePlayer, 'conceded:', _goalsConceded);
             
             // Calcular breakdown EXATAMENTE igual calculatePlayerScore
             var breakdown = [];
@@ -22893,13 +23070,15 @@ O usuário não poderá mais fazer login.
                     totalScore += penSaved * 6;
                 }
                 
-                var conceded = stats.goals ? stats.goals.conceded || 0 : 0;
-                if (conceded === 0) {
-                    breakdown.push({ desc: 'Não sofreu gol', value: 6 });
-                    totalScore += 6;
-                } else if (conceded > 0) {
-                    breakdown.push({ desc: 'Gols sofridos x' + conceded, value: -conceded });
-                    totalScore -= conceded;
+                // Gols sofridos - usa _goalsConceded calculado pelo helper
+                if (_goalsConceded !== null && _goalsConceded >= 0) {
+                    if (_goalsConceded === 0) {
+                        breakdown.push({ desc: 'Não sofreu gol', value: 6 });
+                        totalScore += 6;
+                    } else {
+                        breakdown.push({ desc: 'Gols sofridos x' + _goalsConceded, value: -_goalsConceded });
+                        totalScore -= _goalsConceded;
+                    }
                 }
                 
                 var penWonG = stats.penalty ? stats.penalty.won || 0 : 0;
@@ -22954,13 +23133,15 @@ O usuário não poderá mais fazer login.
                     totalScore += duelsBonusD;
                 }
                 
-                var concededD = stats.goals ? stats.goals.conceded || 0 : 0;
-                if (concededD === 0) {
-                    breakdown.push({ desc: 'Não sofreu gol', value: 3 });
-                    totalScore += 3;
-                } else if (concededD > 0) {
-                    breakdown.push({ desc: 'Gols sofridos x' + concededD, value: -concededD });
-                    totalScore -= concededD;
+                // Gols sofridos - usa _goalsConceded calculado pelo helper
+                if (_goalsConceded !== null && _goalsConceded >= 0) {
+                    if (_goalsConceded === 0) {
+                        breakdown.push({ desc: 'Não sofreu gol', value: 3 });
+                        totalScore += 3;
+                    } else {
+                        breakdown.push({ desc: 'Gols sofridos x' + _goalsConceded, value: -_goalsConceded });
+                        totalScore -= _goalsConceded;
+                    }
                 }
                 
                 var penWonD = stats.penalty ? stats.penalty.won || 0 : 0;
@@ -23063,24 +23244,20 @@ O usuário não poderá mais fazer login.
             }
             
             // ===== RESULTADO DO TIME ===== REBALANCEADO
-            if (fixtureData && fixtureData.teams && fixtureData.goals) {
-                var playerTeamId = stats.team ? stats.team.id : null;
-                if (playerTeamId) {
-                    var isHome = fixtureData.teams.home && fixtureData.teams.home.id === playerTeamId;
-                    var homeG = fixtureData.goals.home || 0;
-                    var awayG = fixtureData.goals.away || 0;
-                    var teamG = isHome ? homeG : awayG;
-                    var oppG = isHome ? awayG : homeG;
+            if (fixtureData && fixtureData.teams && fixtureData.goals && _isHomePlayer !== null) {
+                var homeG = fixtureData.goals.home || 0;
+                var awayG = fixtureData.goals.away || 0;
+                var teamG = _isHomePlayer ? homeG : awayG;
+                var oppG = _isHomePlayer ? awayG : homeG;
                     
-                    if (teamG > oppG) {
-                        breakdown.push({ desc: 'Vitória do time', value: 3 });
-                        totalScore += 3;
-                    } else if (teamG === oppG) {
-                        breakdown.push({ desc: 'Empate do time', value: 0 });
-                    } else {
-                        breakdown.push({ desc: 'Derrota do time', value: -3 });
-                        totalScore -= 3;
-                    }
+                if (teamG > oppG) {
+                    breakdown.push({ desc: 'Vitória do time', value: 3 });
+                    totalScore += 3;
+                } else if (teamG === oppG) {
+                    breakdown.push({ desc: 'Empate do time', value: 0 });
+                } else {
+                    breakdown.push({ desc: 'Derrota do time', value: -3 });
+                    totalScore -= 3;
                 }
             }
             
