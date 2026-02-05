@@ -5708,7 +5708,8 @@
             if (!stats || !stats.statistics || !stats.statistics[0]) return 0;
             
             const s = stats.statistics[0];
-            const position = stats.player?.position; // G = Goleiro, D = Defensor, M = Meia, F = Atacante
+            // CORRIGIDO: Usar posição do jogo (s.games.position) que é mais precisa
+            const position = s.games?.position || stats.player?.position; // G = Goleiro, D = Defensor, M = Meia, F = Atacante
             const playerName = stats.player?.name || 'Unknown';
             
             // LOG RAW DATA para debug
@@ -5730,20 +5731,43 @@
             
             // ==================== TODOS OS JOGADORES ====================
             
-            // Jogou (+2)
-            if (s.games?.minutes > 0) {
-                score += 2;
-                breakdown.push(`Jogou(+2)`);
-            }
+            // REMOVIDO: Entrar em campo não dá mais pontos
             
-            // Nota do jogo (rating)
+            // Nota do jogo (rating) - Goleiro tem valores diferentes
             const rating = parseFloat(s.games?.rating) || 0;
-            if (rating >= 8.0) {
-                score += 2;
-                breakdown.push(`Rating ${rating}(+2)`);
-            } else if (rating >= 7.0) {
-                score += 1;
-                breakdown.push(`Rating ${rating}(+1)`);
+            if (position === 'G') {
+                // GOLEIRO
+                if (rating >= 8.0) {
+                    score += 5;
+                    breakdown.push(`Rating ${rating}(+5)`);
+                } else if (rating >= 7.0) {
+                    score += 3;
+                    breakdown.push(`Rating ${rating}(+3)`);
+                } else if (rating >= 6.0) {
+                    score += 1;
+                    breakdown.push(`Rating ${rating}(+1)`);
+                } else if (rating > 0 && rating < 5.0) {
+                    score -= 2;
+                    breakdown.push(`Rating ${rating}(-2)`);
+                } else if (rating > 0 && rating < 6.0) {
+                    score -= 1;
+                    breakdown.push(`Rating ${rating}(-1)`);
+                }
+            } else {
+                // OUTROS JOGADORES
+                if (rating >= 8.0) {
+                    score += 3;
+                    breakdown.push(`Rating ${rating}(+3)`);
+                } else if (rating >= 7.0) {
+                    score += 1;
+                    breakdown.push(`Rating ${rating}(+1)`);
+                } else if (rating > 0 && rating < 5.0) {
+                    score -= 4;
+                    breakdown.push(`Rating ${rating}(-4)`);
+                } else if (rating > 0 && rating < 6.0) {
+                    score -= 2;
+                    breakdown.push(`Rating ${rating}(-2)`);
+                }
             }
             
             // Assistências (+4 para todos)
@@ -5753,39 +5777,39 @@
                 breakdown.push(`Assist x${assists}(+${assists * 4})`);
             }
             
-            // Cartão amarelo (-1)
+            // Cartão amarelo (-3) - AUMENTADO
             const yellowCards = s.cards?.yellow || 0;
             if (yellowCards > 0) {
-                score -= yellowCards * 1;
-                breakdown.push(`Amarelo x${yellowCards}(-${yellowCards})`);
+                score -= yellowCards * 3;
+                breakdown.push(`Amarelo x${yellowCards}(-${yellowCards * 3})`);
             }
             
-            // Cartão vermelho (-3)
+            // Cartão vermelho (-6) - AUMENTADO
             const redCards = s.cards?.red || 0;
             if (redCards > 0) {
-                score -= redCards * 3;
-                breakdown.push(`Vermelho x${redCards}(-${redCards * 3})`);
+                score -= redCards * 6;
+                breakdown.push(`Vermelho x${redCards}(-${redCards * 6})`);
             }
             
-            // Segundo amarelo = vermelho (-3)
+            // Segundo amarelo = vermelho (-6) - AUMENTADO
             const yellowRedCards = s.cards?.yellowred || 0;
             if (yellowRedCards > 0) {
-                score -= yellowRedCards * 3;
-                breakdown.push(`2º Amarelo x${yellowRedCards}(-${yellowRedCards * 3})`);
+                score -= yellowRedCards * 6;
+                breakdown.push(`2º Amarelo x${yellowRedCards}(-${yellowRedCards * 6})`);
             }
             
-            // Gol contra (-3)
+            // Gol contra (-5) - AUMENTADO
             const ownGoals = s.goals?.own || 0;
             if (ownGoals > 0) {
-                score -= ownGoals * 3;
-                breakdown.push(`GolContra x${ownGoals}(-${ownGoals * 3})`);
+                score -= ownGoals * 5;
+                breakdown.push(`GolContra x${ownGoals}(-${ownGoals * 5})`);
             }
             
-            // Pênalti perdido (-3)
+            // Pênalti perdido (-5) - AUMENTADO
             const penaltyMissed = s.penalty?.missed || 0;
             if (penaltyMissed > 0) {
-                score -= penaltyMissed * 3;
-                breakdown.push(`PenaltiPerdido x${penaltyMissed}(-${penaltyMissed * 3})`);
+                score -= penaltyMissed * 5;
+                breakdown.push(`PenaltiPerdido x${penaltyMissed}(-${penaltyMissed * 5})`);
             }
             
             // ==================== GOLS (por posição) ====================
@@ -5805,34 +5829,28 @@
             
             // ==================== GOLEIRO (G) ====================
             if (position === 'G') {
-                // Defesas
+                // Defesas (+2 cada)
                 const saves = s.goals?.saves || 0;
-                if (saves >= 6) {
-                    score += 4;
-                    breakdown.push(`Defesas(6+)(+4)`);
-                } else if (saves >= 3) {
-                    score += 2;
-                    breakdown.push(`Defesas(3-5)(+2)`);
-                } else if (saves >= 1) {
-                    score += 1;
-                    breakdown.push(`Defesas(1-2)(+1)`);
+                if (saves > 0) {
+                    score += saves * 2;
+                    breakdown.push(`Defesas x${saves}(+${saves * 2})`);
                 }
                 
-                // Pênalti defendido (+7)
+                // Pênalti defendido (+6)
                 const penSaved = s.penalty?.saved || 0;
                 if (penSaved > 0) {
-                    score += penSaved * 7;
-                    breakdown.push(`PenDefendido x${penSaved}(+${penSaved * 7})`);
+                    score += penSaved * 6;
+                    breakdown.push(`PenDefendido x${penSaved}(+${penSaved * 6})`);
                 }
                 
-                // Saldo de gols (SG)
+                // Gols sofridos (-1 cada)
                 const conceded = s.goals?.conceded || 0;
                 if (conceded === 0) {
-                    score += 4;
-                    breakdown.push(`SG(+4)`);
-                } else if (conceded >= 2) {
-                    score -= 1;
-                    breakdown.push(`Gols Sofridos(2+)(-1)`);
+                    score += 6;
+                    breakdown.push(`Não sofreu gol(+6)`);
+                } else if (conceded > 0) {
+                    score -= conceded * 1;
+                    breakdown.push(`Gols sofridos x${conceded}(-${conceded})`);
                 }
                 
                 // Pênalti sofrido (+1)
@@ -5895,14 +5913,14 @@
                     breakdown.push(`Duelos ${duelsWon}(+${duelsBonus})`);
                 }
                 
-                // Saldo de gols (SG)
+                // Gols sofridos (-1 cada)
                 const conceded = s.goals?.conceded || 0;
                 if (conceded === 0) {
                     score += 3;
-                    breakdown.push(`SG(+3)`);
-                } else if (conceded >= 2) {
-                    score -= 1;
-                    breakdown.push(`Gols Sofridos(2+)(-1)`);
+                    breakdown.push(`Não sofreu gol(+3)`);
+                } else if (conceded > 0) {
+                    score -= conceded * 1;
+                    breakdown.push(`Gols sofridos x${conceded}(-${conceded})`);
                 }
                 
                 // Pênalti sofrido (+1)
@@ -6020,7 +6038,7 @@
             }
             
             // ==================== PONTOS POR RESULTADO DO TIME ====================
-            // +3 vitória, +1 empate, 0 derrota
+            // REBALANCEADO: +3 vitória, 0 empate, -3 derrota
             if (fixture && fixture.teams && fixture.goals) {
                 const playerTeamId = stats.statistics?.[0]?.team?.id;
                 if (playerTeamId) {
@@ -6035,10 +6053,10 @@
                         score += 3;
                         breakdown.push(`Vitória(+3)`);
                     } else if (teamGoals === opponentGoals) {
-                        score += 1;
-                        breakdown.push(`Empate(+1)`);
+                        breakdown.push(`Empate(0)`);
                     } else {
-                        breakdown.push(`Derrota(0)`);
+                        score -= 3;
+                        breakdown.push(`Derrota(-3)`);
                     }
                 }
             }
@@ -12913,6 +12931,37 @@
                                         📊 Mostra pontos de TODOS jogadores que jogaram (inclusive não escalados) |
                                         🔄 Sincroniza só os times que jogaram (~2-4 requests)
                                     </p>
+                                </div>
+                                
+                                <!-- LISTA DE JOGADORES DA API -->
+                                <div class="bg-zinc-900 rounded-xl p-4 border border-emerald-500/30">
+                                    <div class="flex items-center justify-between mb-3">
+                                        <h4 class="text-emerald-400 font-medium text-sm">📋 Jogadores da API - Rodada ${state.selectedRound}</h4>
+                                        <button onclick="loadApiPlayersList()" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold">
+                                            🔄 Carregar
+                                        </button>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 mb-3">
+                                        <input type="text" id="apiPlayerSearch" placeholder="🔍 Buscar por nome..." 
+                                            class="flex-1 min-w-48 px-4 py-2.5 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm"
+                                            oninput="applyApiFilters()">
+                                        <select id="apiTeamFilter" class="px-3 py-2.5 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm"
+                                            onchange="applyApiFilters()">
+                                            <option value="">Todos os times</option>
+                                        </select>
+                                        <select id="apiPositionFilter" class="px-3 py-2.5 bg-zinc-800 text-white rounded-lg border border-zinc-700 text-sm"
+                                            onchange="applyApiFilters()">
+                                            <option value="">Todas posições</option>
+                                            <option value="G">Goleiros</option>
+                                            <option value="D">Defensores</option>
+                                            <option value="M">Meias</option>
+                                            <option value="F">Atacantes</option>
+                                        </select>
+                                    </div>
+                                    <div id="apiPlayersStats" class="text-zinc-500 text-xs mb-2"></div>
+                                    <div id="apiPlayersContainer" class="max-h-96 overflow-y-auto">
+                                        <p class="text-zinc-600 text-center py-6 text-sm">Clique em "Carregar" para ver os jogadores</p>
+                                    </div>
                                 </div>
                                 
                                 <div class="bg-zinc-900 rounded-xl p-4 border border-orange-500/30">
@@ -22566,6 +22615,535 @@ O usuário não poderá mais fazer login.
         //    - Sem jogos: ~4 requests/dia (1 rodada + 3 fixtures check)
         //    - Com jogos: ~100 requests/dia (stats a cada 3min por 4h)
         //    - Muito abaixo do limite de 300 requests/dia!
+        
+        // ==================== LISTA DE JOGADORES DA API ====================
+        window._apiPlayersList = [];
+        window._apiPlayersFullData = {};
+        
+        window.loadApiPlayersList = async function() {
+            var container = document.getElementById('apiPlayersContainer');
+            var round = state.selectedRound;
+            
+            container.innerHTML = '<p class="text-zinc-500 text-center py-6">⏳ Carregando...</p>';
+            
+            try {
+                var cacheKey = 'scoresCache/round_' + round;
+                var cacheRes = await fetch(FIREBASE_URL + '/' + cacheKey + '.json');
+                var cacheData = await cacheRes.json();
+                
+                if (!cacheData || !cacheData.playerStats) {
+                    container.innerHTML = '<p class="text-amber-500 text-center py-6">⚠️ Sem dados. Execute syncRoundScores() primeiro.</p>';
+                    return;
+                }
+                
+                var playerList = [];
+                var teamsSet = new Set();
+                window._apiPlayersFullData = {};
+                
+                Object.entries(cacheData.playerStats).forEach(function(entry) {
+                    var playerId = entry[0];
+                    var statsObj = entry[1];
+                    var playerData = statsObj.data;
+                    var fixtureData = statsObj.fixture;
+                    if (!playerData || !playerData.player) return;
+                    
+                    var stats = playerData.statistics && playerData.statistics[0] ? playerData.statistics[0] : {};
+                    var teamName = stats.team ? stats.team.name || '' : '';
+                    var position = stats.games ? stats.games.position || '?' : '?';
+                    
+                    // Usar a função original do site para calcular
+                    var score = calculatePlayerScore(playerData, fixtureData);
+                    
+                    if (teamName) teamsSet.add(teamName);
+                    
+                    window._apiPlayersFullData[playerId] = {
+                        playerData: playerData,
+                        fixtureData: fixtureData,
+                        stats: stats
+                    };
+                    
+                    playerList.push({
+                        id: parseInt(playerId),
+                        name: playerData.player.name || '?',
+                        team: teamName,
+                        position: position,
+                        score: score,
+                        goals: stats.goals ? stats.goals.total || 0 : 0,
+                        assists: stats.goals ? stats.goals.assists || 0 : 0,
+                        yellowCards: stats.cards ? stats.cards.yellow || 0 : 0,
+                        redCards: stats.cards ? stats.cards.red || 0 : 0,
+                        minutes: stats.games ? stats.games.minutes || 0 : 0
+                    });
+                });
+                
+                playerList.sort(function(a, b) { return b.score - a.score; });
+                window._apiPlayersList = playerList;
+                
+                var teamSelect = document.getElementById('apiTeamFilter');
+                var teams = Array.from(teamsSet).sort();
+                teamSelect.innerHTML = '<option value="">Todos os times</option>' + 
+                    teams.map(function(t) { return '<option value="' + t + '">' + t + '</option>'; }).join('');
+                
+                document.getElementById('apiPlayerSearch').value = '';
+                document.getElementById('apiPositionFilter').value = '';
+                
+                renderApiPlayersList(playerList);
+                
+            } catch (e) {
+                container.innerHTML = '<p class="text-red-500 text-center py-6">❌ Erro: ' + e.message + '</p>';
+            }
+        };
+        
+        window.renderApiPlayersList = function(players) {
+            var container = document.getElementById('apiPlayersContainer');
+            var statsEl = document.getElementById('apiPlayersStats');
+            
+            if (players.length === 0) {
+                container.innerHTML = '<p class="text-zinc-600 text-center py-6">Nenhum jogador encontrado</p>';
+                statsEl.textContent = '0 jogadores';
+                return;
+            }
+            
+            var posColors = { G: '#3b82f6', D: '#8b5cf6', M: '#f59e0b', F: '#ef4444' };
+            var posNames = { G: 'GOL', D: 'DEF', M: 'MEI', F: 'ATA' };
+            
+            var totalPts = players.reduce(function(sum, p) { return sum + p.score; }, 0).toFixed(1);
+            var totalGols = players.reduce(function(sum, p) { return sum + p.goals; }, 0);
+            var totalAss = players.reduce(function(sum, p) { return sum + p.assists; }, 0);
+            statsEl.innerHTML = '<strong>' + players.length + '</strong> jogadores • <strong>' + totalGols + '</strong> gols • <strong>' + totalAss + '</strong> assistências • <strong>' + totalPts + '</strong> pts total';
+            
+            var html = '<div class="space-y-1">';
+            
+            players.forEach(function(p, i) {
+                var posColor = posColors[p.position] || '#666';
+                var posName = posNames[p.position] || p.position;
+                var extras = [];
+                if (p.goals > 0) extras.push('⚽' + p.goals);
+                if (p.assists > 0) extras.push('🅰️' + p.assists);
+                if (p.yellowCards > 0) extras.push('🟡');
+                if (p.redCards > 0) extras.push('🔴');
+                
+                html += '<div class="flex items-center gap-2 p-2 bg-zinc-800 rounded-lg text-sm hover:bg-zinc-700 cursor-pointer transition" onclick="showPlayerScoreDetails(' + p.id + ')">' +
+                    '<span class="text-zinc-600 w-8 text-right">' + (i + 1) + '.</span>' +
+                    '<span class="text-white font-medium flex-1 truncate hover:text-emerald-400">' + p.name + '</span>' +
+                    '<span style="background:' + posColor + '" class="text-white px-2 py-0.5 rounded text-xs">' + posName + '</span>' +
+                    '<span class="text-zinc-500 text-xs w-24 truncate">' + p.team + '</span>' +
+                    '<span class="text-xs w-16">' + extras.join(' ') + '</span>' +
+                    '<span class="text-emerald-400 font-bold w-12 text-right">' + p.score + '</span>' +
+                    '<span class="text-zinc-600 text-xs w-16 text-right">ID:' + p.id + '</span>' +
+                '</div>';
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        };
+        
+        window.applyApiFilters = function() {
+            if (!window._apiPlayersList || window._apiPlayersList.length === 0) return;
+            
+            var nameQuery = (document.getElementById('apiPlayerSearch').value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            var teamFilter = document.getElementById('apiTeamFilter').value;
+            var posFilter = document.getElementById('apiPositionFilter').value;
+            
+            var filtered = window._apiPlayersList.filter(function(p) {
+                if (nameQuery) {
+                    var name = p.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                    if (name.indexOf(nameQuery) === -1) return false;
+                }
+                if (teamFilter && p.team !== teamFilter) return false;
+                if (posFilter && p.position !== posFilter) return false;
+                return true;
+            });
+            
+            renderApiPlayersList(filtered);
+        };
+        
+        window.showPlayerScoreDetails = function(playerId) {
+            var fullData = window._apiPlayersFullData[playerId];
+            var playerFromList = window._apiPlayersList.find(function(p) { return p.id === playerId; });
+            
+            if (!fullData || !playerFromList) {
+                alert('Dados não encontrados para este jogador');
+                return;
+            }
+            
+            var playerData = fullData.playerData;
+            var fixtureData = fullData.fixtureData;
+            var stats = fullData.stats;
+            var position = stats.games ? stats.games.position || '?' : '?';
+            var playerName = playerData.player.name || 'Desconhecido';
+            var teamName = stats.team ? stats.team.name || '' : '';
+            var minutes = stats.games ? stats.games.minutes || 0 : 0;
+            var rating = stats.games ? stats.games.rating || '-' : '-';
+            
+            // Calcular breakdown EXATAMENTE igual calculatePlayerScore
+            var breakdown = [];
+            var totalScore = 0;
+            
+            // ===== TODOS OS JOGADORES =====
+            // REMOVIDO: Entrar em campo não dá mais pontos
+            
+            // Nota do jogo - Goleiro tem valores diferentes
+            var ratingNum = parseFloat(rating) || 0;
+            if (position === 'G') {
+                // GOLEIRO
+                if (ratingNum >= 8.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (≥8.0)', value: 5 });
+                    totalScore += 5;
+                } else if (ratingNum >= 7.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (≥7.0)', value: 3 });
+                    totalScore += 3;
+                } else if (ratingNum >= 6.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (6.0-6.9)', value: 1 });
+                    totalScore += 1;
+                } else if (ratingNum > 0 && ratingNum < 5.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (<5.0)', value: -2 });
+                    totalScore -= 2;
+                } else if (ratingNum > 0 && ratingNum < 6.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (<6.0)', value: -1 });
+                    totalScore -= 1;
+                }
+            } else {
+                // OUTROS JOGADORES
+                if (ratingNum >= 8.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (≥8.0)', value: 3 });
+                    totalScore += 3;
+                } else if (ratingNum >= 7.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (≥7.0)', value: 1 });
+                    totalScore += 1;
+                } else if (ratingNum > 0 && ratingNum < 5.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (<5.0)', value: -4 });
+                    totalScore -= 4;
+                } else if (ratingNum > 0 && ratingNum < 6.0) {
+                    breakdown.push({ desc: 'Nota ' + ratingNum.toFixed(1) + ' (<6.0)', value: -2 });
+                    totalScore -= 2;
+                }
+            }
+            
+            // Assistências (+4)
+            var assists = stats.goals ? stats.goals.assists || 0 : 0;
+            if (assists > 0) {
+                breakdown.push({ desc: 'Assistência x' + assists, value: assists * 4 });
+                totalScore += assists * 4;
+            }
+            
+            // Cartão amarelo (-3) - AUMENTADO
+            var yellowCards = stats.cards ? stats.cards.yellow || 0 : 0;
+            if (yellowCards > 0) {
+                breakdown.push({ desc: 'Cartão amarelo x' + yellowCards, value: -yellowCards * 3 });
+                totalScore -= yellowCards * 3;
+            }
+            
+            // Cartão vermelho (-6) - AUMENTADO
+            var redCards = stats.cards ? stats.cards.red || 0 : 0;
+            if (redCards > 0) {
+                breakdown.push({ desc: 'Cartão vermelho x' + redCards, value: -redCards * 6 });
+                totalScore -= redCards * 6;
+            }
+            
+            // 2º amarelo (-6) - AUMENTADO
+            var yellowRedCards = stats.cards ? stats.cards.yellowred || 0 : 0;
+            if (yellowRedCards > 0) {
+                breakdown.push({ desc: '2º amarelo x' + yellowRedCards, value: -yellowRedCards * 6 });
+                totalScore -= yellowRedCards * 6;
+            }
+            
+            // Gol contra (-5) - AUMENTADO
+            var ownGoals = stats.goals ? stats.goals.own || 0 : 0;
+            if (ownGoals > 0) {
+                breakdown.push({ desc: 'Gol contra x' + ownGoals, value: -ownGoals * 5 });
+                totalScore -= ownGoals * 5;
+            }
+            
+            // Pênalti perdido (-5) - AUMENTADO
+            var penaltyMissed = stats.penalty ? stats.penalty.missed || 0 : 0;
+            if (penaltyMissed > 0) {
+                breakdown.push({ desc: 'Pênalti perdido x' + penaltyMissed, value: -penaltyMissed * 5 });
+                totalScore -= penaltyMissed * 5;
+            }
+            
+            // ===== GOLS (por posição) =====
+            var goals = stats.goals ? stats.goals.total || 0 : 0;
+            if (goals > 0) {
+                if (position === 'G') {
+                    breakdown.push({ desc: 'Gol (goleiro) x' + goals, value: goals * 10 });
+                    totalScore += goals * 10;
+                } else if (position === 'D') {
+                    breakdown.push({ desc: 'Gol (defensor) x' + goals, value: goals * 6 });
+                    totalScore += goals * 6;
+                } else {
+                    breakdown.push({ desc: 'Gol x' + goals, value: goals * 6 });
+                    totalScore += goals * 6;
+                }
+            }
+            
+            // ===== GOLEIRO (G) =====
+            if (position === 'G') {
+                // Defesas (+2 cada)
+                var saves = stats.goals ? stats.goals.saves || 0 : 0;
+                if (saves > 0) {
+                    breakdown.push({ desc: 'Defesas x' + saves, value: saves * 2 });
+                    totalScore += saves * 2;
+                }
+                
+                // Pênalti defendido (+6)
+                var penSaved = stats.penalty ? stats.penalty.saved || 0 : 0;
+                if (penSaved > 0) {
+                    breakdown.push({ desc: 'Pênalti defendido x' + penSaved, value: penSaved * 6 });
+                    totalScore += penSaved * 6;
+                }
+                
+                var conceded = stats.goals ? stats.goals.conceded || 0 : 0;
+                if (conceded === 0) {
+                    breakdown.push({ desc: 'Não sofreu gol', value: 6 });
+                    totalScore += 6;
+                } else if (conceded > 0) {
+                    breakdown.push({ desc: 'Gols sofridos x' + conceded, value: -conceded });
+                    totalScore -= conceded;
+                }
+                
+                var penWonG = stats.penalty ? stats.penalty.won || 0 : 0;
+                if (penWonG > 0) {
+                    breakdown.push({ desc: 'Pênalti sofrido x' + penWonG, value: penWonG });
+                    totalScore += penWonG;
+                }
+                
+                var passAccuracy = stats.passes ? parseInt(stats.passes.accuracy) || 0 : 0;
+                if (passAccuracy >= 85) {
+                    breakdown.push({ desc: 'Passes ' + passAccuracy + '% (85%+)', value: 1 });
+                    totalScore += 1;
+                }
+            }
+            
+            // ===== DEFENSOR (D) =====
+            if (position === 'D') {
+                var tacklesD = stats.tackles ? stats.tackles.total || 0 : 0;
+                if (tacklesD > 0) {
+                    breakdown.push({ desc: 'Desarmes x' + tacklesD, value: tacklesD * 0.5 });
+                    totalScore += tacklesD * 0.5;
+                }
+                
+                var interceptions = stats.tackles ? stats.tackles.interceptions || 0 : 0;
+                if (interceptions > 0) {
+                    breakdown.push({ desc: 'Interceptações x' + interceptions, value: interceptions * 0.5 });
+                    totalScore += interceptions * 0.5;
+                }
+                
+                var blocks = stats.tackles ? stats.tackles.blocks || 0 : 0;
+                if (blocks > 0) {
+                    breakdown.push({ desc: 'Bloqueios x' + blocks, value: blocks * 0.5 });
+                    totalScore += blocks * 0.5;
+                }
+                
+                var dribblesD = stats.dribbles ? stats.dribbles.success || 0 : 0;
+                if (dribblesD > 0) {
+                    breakdown.push({ desc: 'Dribles certos x' + dribblesD, value: dribblesD * 0.5 });
+                    totalScore += dribblesD * 0.5;
+                }
+                
+                var keyPassesD = stats.passes ? stats.passes.key || 0 : 0;
+                if (keyPassesD > 0) {
+                    breakdown.push({ desc: 'Passe decisivo x' + keyPassesD, value: keyPassesD });
+                    totalScore += keyPassesD;
+                }
+                
+                var duelsWonD = stats.duels ? stats.duels.won || 0 : 0;
+                var duelsBonusD = Math.floor(duelsWonD / 2) * 0.5;
+                if (duelsBonusD > 0) {
+                    breakdown.push({ desc: 'Duelos ganhos ' + duelsWonD, value: duelsBonusD });
+                    totalScore += duelsBonusD;
+                }
+                
+                var concededD = stats.goals ? stats.goals.conceded || 0 : 0;
+                if (concededD === 0) {
+                    breakdown.push({ desc: 'Não sofreu gol', value: 3 });
+                    totalScore += 3;
+                } else if (concededD > 0) {
+                    breakdown.push({ desc: 'Gols sofridos x' + concededD, value: -concededD });
+                    totalScore -= concededD;
+                }
+                
+                var penWonD = stats.penalty ? stats.penalty.won || 0 : 0;
+                if (penWonD > 0) {
+                    breakdown.push({ desc: 'Pênalti sofrido x' + penWonD, value: penWonD });
+                    totalScore += penWonD;
+                }
+            }
+            
+            // ===== MEIA (M) =====
+            if (position === 'M') {
+                var keyPassesM = stats.passes ? stats.passes.key || 0 : 0;
+                if (keyPassesM > 0) {
+                    breakdown.push({ desc: 'Passe decisivo x' + keyPassesM, value: keyPassesM });
+                    totalScore += keyPassesM;
+                }
+                
+                var accuracyM = stats.passes ? parseInt(stats.passes.accuracy) || 0 : 0;
+                if (accuracyM >= 85) {
+                    breakdown.push({ desc: 'Passes ' + accuracyM + '% (85%+)', value: 1 });
+                    totalScore += 1;
+                }
+                
+                var tacklesM = stats.tackles ? stats.tackles.total || 0 : 0;
+                if (tacklesM > 0) {
+                    breakdown.push({ desc: 'Desarmes x' + tacklesM, value: tacklesM * 0.5 });
+                    totalScore += tacklesM * 0.5;
+                }
+                
+                var dribblesM = stats.dribbles ? stats.dribbles.success || 0 : 0;
+                if (dribblesM > 0) {
+                    breakdown.push({ desc: 'Dribles certos x' + dribblesM, value: dribblesM * 0.5 });
+                    totalScore += dribblesM * 0.5;
+                }
+                
+                var shotsOnM = stats.shots ? stats.shots.on || 0 : 0;
+                if (shotsOnM > 0) {
+                    breakdown.push({ desc: 'Finalizações no gol x' + shotsOnM, value: shotsOnM * 0.5 });
+                    totalScore += shotsOnM * 0.5;
+                }
+                
+                var foulsDrawnM = stats.fouls ? stats.fouls.drawn || 0 : 0;
+                if (foulsDrawnM > 0) {
+                    breakdown.push({ desc: 'Faltas sofridas x' + foulsDrawnM, value: foulsDrawnM * 0.5 });
+                    totalScore += foulsDrawnM * 0.5;
+                }
+                
+                var duelsWonM = stats.duels ? stats.duels.won || 0 : 0;
+                var duelsBonusM = Math.floor(duelsWonM / 2) * 0.5;
+                if (duelsBonusM > 0) {
+                    breakdown.push({ desc: 'Duelos ganhos ' + duelsWonM, value: duelsBonusM });
+                    totalScore += duelsBonusM;
+                }
+                
+                var penWonM = stats.penalty ? stats.penalty.won || 0 : 0;
+                if (penWonM > 0) {
+                    breakdown.push({ desc: 'Pênalti sofrido x' + penWonM, value: penWonM });
+                    totalScore += penWonM;
+                }
+            }
+            
+            // ===== ATACANTE (F) =====
+            if (position === 'F') {
+                var shotsOnF = stats.shots ? stats.shots.on || 0 : 0;
+                if (shotsOnF > 0) {
+                    breakdown.push({ desc: 'Finalizações no gol x' + shotsOnF, value: shotsOnF });
+                    totalScore += shotsOnF;
+                }
+                
+                var keyPassesF = stats.passes ? stats.passes.key || 0 : 0;
+                if (keyPassesF > 0) {
+                    breakdown.push({ desc: 'Passe decisivo x' + keyPassesF, value: keyPassesF });
+                    totalScore += keyPassesF;
+                }
+                
+                var dribblesF = stats.dribbles ? stats.dribbles.success || 0 : 0;
+                if (dribblesF > 0) {
+                    breakdown.push({ desc: 'Dribles certos x' + dribblesF, value: dribblesF * 0.5 });
+                    totalScore += dribblesF * 0.5;
+                }
+                
+                var foulsDrawnF = stats.fouls ? stats.fouls.drawn || 0 : 0;
+                if (foulsDrawnF > 0) {
+                    breakdown.push({ desc: 'Faltas sofridas x' + foulsDrawnF, value: foulsDrawnF * 0.5 });
+                    totalScore += foulsDrawnF * 0.5;
+                }
+                
+                var duelsWonF = stats.duels ? stats.duels.won || 0 : 0;
+                var duelsBonusF = Math.floor(duelsWonF / 2) * 0.5;
+                if (duelsBonusF > 0) {
+                    breakdown.push({ desc: 'Duelos ganhos ' + duelsWonF, value: duelsBonusF });
+                    totalScore += duelsBonusF;
+                }
+                
+                var penWonF = stats.penalty ? stats.penalty.won || 0 : 0;
+                if (penWonF > 0) {
+                    breakdown.push({ desc: 'Pênalti sofrido x' + penWonF, value: penWonF * 2 });
+                    totalScore += penWonF * 2;
+                }
+            }
+            
+            // ===== RESULTADO DO TIME ===== REBALANCEADO
+            if (fixtureData && fixtureData.teams && fixtureData.goals) {
+                var playerTeamId = stats.team ? stats.team.id : null;
+                if (playerTeamId) {
+                    var isHome = fixtureData.teams.home && fixtureData.teams.home.id === playerTeamId;
+                    var homeG = fixtureData.goals.home || 0;
+                    var awayG = fixtureData.goals.away || 0;
+                    var teamG = isHome ? homeG : awayG;
+                    var oppG = isHome ? awayG : homeG;
+                    
+                    if (teamG > oppG) {
+                        breakdown.push({ desc: 'Vitória do time', value: 3 });
+                        totalScore += 3;
+                    } else if (teamG === oppG) {
+                        breakdown.push({ desc: 'Empate do time', value: 0 });
+                    } else {
+                        breakdown.push({ desc: 'Derrota do time', value: -3 });
+                        totalScore -= 3;
+                    }
+                }
+            }
+            
+            // Arredondar igual a função original
+            totalScore = Math.round(totalScore * 10) / 10;
+            
+            var posColors = { G: '#3b82f6', D: '#8b5cf6', M: '#f59e0b', F: '#ef4444' };
+            var posNames = { G: 'Goleiro', D: 'Defensor', M: 'Meia', F: 'Atacante' };
+            var posColor = posColors[position] || '#666';
+            var posName = posNames[position] || position;
+            
+            var homeTeam = fixtureData && fixtureData.teams && fixtureData.teams.home ? fixtureData.teams.home.name || '' : '';
+            var awayTeam = fixtureData && fixtureData.teams && fixtureData.teams.away ? fixtureData.teams.away.name || '' : '';
+            var homeGoals = fixtureData && fixtureData.goals ? fixtureData.goals.home : '-';
+            var awayGoals = fixtureData && fixtureData.goals ? fixtureData.goals.away : '-';
+            
+            var oldModal = document.getElementById('player-details-modal');
+            if (oldModal) oldModal.remove();
+            
+            var modal = document.createElement('div');
+            modal.id = 'player-details-modal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+            
+            var breakdownHtml = breakdown.map(function(b) {
+                var color = b.value < 0 ? '#ef4444' : '#10b981';
+                var prefix = b.value > 0 ? '+' : '';
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#1a1a1a;border-radius:8px;">' +
+                    '<span style="color:#fff;font-size:14px;">' + b.desc + '</span>' +
+                    '<span style="color:' + color + ';font-weight:700;font-size:14px;">' + prefix + b.value + '</span>' +
+                '</div>';
+            }).join('');
+            
+            modal.innerHTML = 
+                '<div style="background:#111;border-radius:16px;width:100%;max-width:500px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">' +
+                    '<div style="padding:20px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;">' +
+                        '<div>' +
+                            '<h2 style="color:#fff;margin:0;font-size:18px;">' + playerName + '</h2>' +
+                            '<p style="color:#888;margin:4px 0 0;font-size:14px;">' +
+                                '<span style="background:' + posColor + ';color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;margin-right:8px;">' + posName + '</span>' +
+                                teamName +
+                            '</p>' +
+                        '</div>' +
+                        '<button onclick="document.getElementById(\'player-details-modal\').remove()" style="background:#333;border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:18px;">✕</button>' +
+                    '</div>' +
+                    '<div style="padding:15px 20px;background:#0a0a0a;border-bottom:1px solid #333;">' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                            '<span style="color:#888;font-size:14px;">' + homeTeam + ' ' + homeGoals + ' x ' + awayGoals + ' ' + awayTeam + '</span>' +
+                            '<span style="color:#888;font-size:14px;">' + minutes + ' min</span>' +
+                        '</div>' +
+                    '</div>' +
+                    '<div style="flex:1;overflow-y:auto;padding:15px 20px;">' +
+                        '<h3 style="color:#10b981;font-size:14px;margin:0 0 15px;font-weight:600;">📊 DETALHAMENTO DA PONTUAÇÃO</h3>' +
+                        '<div style="display:flex;flex-direction:column;gap:8px;">' + breakdownHtml + '</div>' +
+                    '</div>' +
+                    '<div style="padding:20px;border-top:1px solid #333;background:#0a0a0a;display:flex;justify-content:space-between;align-items:center;">' +
+                        '<span style="color:#fff;font-size:16px;font-weight:600;">TOTAL</span>' +
+                        '<span style="color:#10b981;font-size:28px;font-weight:700;">' + totalScore + ' pts</span>' +
+                    '</div>' +
+                '</div>';
+            
+            document.body.appendChild(modal);
+        };
     </script>
 </body>
 </html>
