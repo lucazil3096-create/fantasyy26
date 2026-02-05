@@ -1203,7 +1203,17 @@
             // Conquistas Especiais
             streak3: { id: 'streak3', icon: '⚡', name: 'Hat-trick', desc: '3 rodadas seguidas no top 3', color: 'orange', rarity: 'epic' },
             comeback: { id: 'comeback', icon: '📈', name: 'Virada', desc: 'Subir 3+ posições no ranking', color: 'green', rarity: 'rare' },
-            allStar: { id: 'allStar', icon: '✨', name: 'All-Star', desc: 'Ter o jogador top 1 da rodada', color: 'yellow', rarity: 'epic' }
+            allStar: { id: 'allStar', icon: '✨', name: 'All-Star', desc: 'Ter o jogador top 1 da rodada', color: 'yellow', rarity: 'epic' },
+
+            // Novas Conquistas
+            hatTrickOwner: { id: 'hatTrickOwner', icon: '⚽', name: 'Dono do Hat-trick', desc: 'Ter jogador com 3+ gols na rodada', color: 'green', rarity: 'epic' },
+            cleanSheetMaster: { id: 'cleanSheetMaster', icon: '🧤', name: 'Muralha', desc: 'Goleiro com clean sheet e 10+ pts', color: 'blue', rarity: 'rare' },
+            consistent: { id: 'consistent', icon: '📊', name: 'Consistente', desc: '5 rodadas seguidas acima de 40 pts', color: 'teal', rarity: 'epic' },
+            trader: { id: 'trader', icon: '💰', name: 'Trader', desc: 'Fazer 10+ negociações', color: 'green', rarity: 'rare' },
+            oracle: { id: 'oracle', icon: '🔮', name: 'Oráculo', desc: 'Cravar 5+ resultados', color: 'purple', rarity: 'epic' },
+            lucky: { id: 'lucky', icon: '🍀', name: 'Sortudo', desc: 'Reserva pontuar mais que titular', color: 'green', rarity: 'rare' },
+            veteran: { id: 'veteran', icon: '🎖️', name: 'Veterano', desc: 'Participar de 10+ rodadas', color: 'gray', rarity: 'common' },
+            perfectWeek: { id: 'perfectWeek', icon: '💎', name: 'Semana Perfeita', desc: 'Todos titulares pontuarem', color: 'cyan', rarity: 'legendary' }
         };
         
         // Cores por raridade
@@ -1303,7 +1313,43 @@
             if (totalScore > 0) {
                 addAchievement('firstBlood');
             }
-            
+
+            // 🆕 NOVAS VERIFICAÇÕES DE CONQUISTAS
+
+            // Veterano - participar de 10+ rodadas
+            const roundsPlayed = Object.keys(userData.scores || {}).length;
+            if (roundsPlayed >= 10) {
+                addAchievement('veteran');
+            }
+
+            // Consistente - 5 rodadas seguidas acima de 40 pts
+            let consistentStreak = 0;
+            let maxConsistentStreak = 0;
+            for (let r = 1; r <= (state.currentRound || 1); r++) {
+                const roundTotal = userData.scores?.[r]?.total || 0;
+                if (roundTotal >= 40) {
+                    consistentStreak++;
+                    maxConsistentStreak = Math.max(maxConsistentStreak, consistentStreak);
+                } else {
+                    consistentStreak = 0;
+                }
+            }
+            if (maxConsistentStreak >= 5) {
+                addAchievement('consistent');
+            }
+
+            // Trader - fazer 10+ negociações
+            const purchases = userData.purchases || [];
+            if (purchases.length >= 10) {
+                addAchievement('trader');
+            }
+
+            // Oráculo - cravar 5+ resultados
+            const cravados = userData.cravados || 0;
+            if (cravados >= 5) {
+                addAchievement('oracle');
+            }
+
             // Salvar conquistas
             if (newAchievements.length > 0) {
                 userData.achievements = achievements;
@@ -1448,7 +1494,96 @@
                 }, 700);
             }, 5000);
         }
-        
+
+        // 🔔 NOTIFICAÇÃO DE JOGO AO VIVO
+        let _lastLiveNotification = 0;
+        function showLiveGameNotification(game) {
+            // Evitar notificações repetidas em curto período
+            if (Date.now() - _lastLiveNotification < 60000) return;
+            _lastLiveNotification = Date.now();
+
+            const topOffset = 16 + (activeAchievementNotifications * 100);
+            activeAchievementNotifications++;
+
+            const home = game.teams?.home?.name || 'Casa';
+            const away = game.teams?.away?.name || 'Fora';
+            const homeLogo = game.teams?.home?.logo || '';
+            const awayLogo = game.teams?.away?.logo || '';
+
+            const notification = document.createElement('div');
+            notification.className = 'fixed right-4 z-[99999]';
+            notification.style.top = topOffset + 'px';
+            notification.innerHTML = `
+                <div class="card rounded-2xl p-4 border-2 border-emerald-500/50 bg-gradient-to-br from-emerald-500/20 to-green-600/20 shadow-2xl max-w-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="relative">
+                            <span class="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping"></span>
+                            <span class="text-2xl">⚽</span>
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-xs text-emerald-400 uppercase font-bold tracking-wider flex items-center gap-1">
+                                <span class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span> AO VIVO
+                            </p>
+                            <div class="flex items-center gap-2 mt-1">
+                                ${homeLogo ? `<img src="${homeLogo}" class="w-5 h-5">` : ''}
+                                <span class="text-white font-bold text-sm">${home} x ${away}</span>
+                                ${awayLogo ? `<img src="${awayLogo}" class="w-5 h-5">` : ''}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.classList.add('transition-all', 'duration-700', 'opacity-0', 'translate-x-10');
+                setTimeout(() => {
+                    notification.remove();
+                    activeAchievementNotifications--;
+                }, 700);
+            }, 6000);
+        }
+
+        // 🔔 NOTIFICAÇÃO DE ESCALAÇÃO FECHANDO
+        let _lastLineupNotification = 0;
+        function showLineupClosingNotification(minutesLeft) {
+            // Evitar notificações repetidas
+            if (Date.now() - _lastLineupNotification < 300000) return; // 5 min entre notificações
+            _lastLineupNotification = Date.now();
+
+            const topOffset = 16 + (activeAchievementNotifications * 100);
+            activeAchievementNotifications++;
+
+            const urgency = minutesLeft <= 5 ? 'red' : minutesLeft <= 15 ? 'amber' : 'blue';
+
+            const notification = document.createElement('div');
+            notification.className = 'fixed right-4 z-[99999]';
+            notification.style.top = topOffset + 'px';
+            notification.innerHTML = `
+                <div class="card rounded-2xl p-4 border-2 border-${urgency}-500/50 bg-gradient-to-br from-${urgency}-500/20 to-${urgency}-600/20 shadow-2xl max-w-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="text-3xl ${minutesLeft <= 5 ? 'animate-bounce' : ''}">⏰</div>
+                        <div>
+                            <p class="text-xs text-${urgency}-400 uppercase font-bold tracking-wider">Escalação fecha em</p>
+                            <p class="text-white font-bold text-xl">${minutesLeft} minutos</p>
+                            <p class="text-${urgency}-200/70 text-xs">Confirme seu time!</p>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(notification);
+
+            setTimeout(() => {
+                notification.classList.add('transition-all', 'duration-700', 'opacity-0', 'translate-x-10');
+                setTimeout(() => {
+                    notification.remove();
+                    activeAchievementNotifications--;
+                }, 700);
+            }, 8000);
+        }
+
         // ==================== SISTEMA DE NOTIFICAÇÕES PENDENTES ====================
         
         // Verificar e mostrar notificações pendentes ao logar
@@ -9729,6 +9864,8 @@
             const breakdownItems = cached?.breakdownItems || [];
             const matchInfo = cached?.matchInfo || '';
             const minutesPlayed = cached?.minutesPlayed || 0;
+            const scoutStats = cached?.scoutStats || null;
+            const playerHistory = cached?.playerHistory || [];
             const isLoading = state._loadingPlayerBreakdown;
             const hasBreakdown = breakdownItems.length > 0;
             
@@ -9782,6 +9919,101 @@
                                             <span class="text-white font-bold text-lg">TOTAL</span>
                                             <span class="text-2xl font-bold ${roundScore >= 0 ? 'text-emerald-400' : 'text-red-400'}">${roundScore} pts</span>
                                         </div>
+
+                                        ${scoutStats ? `
+                                        <!-- 📋 SCOUT DETALHADO -->
+                                        <div class="mt-6 pt-4 border-t border-white/10">
+                                            <div class="flex items-center gap-2 mb-3">
+                                                <span class="text-lg">📋</span>
+                                                <h4 class="font-display text-base text-cyan-400 tracking-wider">SCOUT DA PARTIDA</h4>
+                                                ${scoutStats.rating ? `<span class="ml-auto px-2 py-0.5 bg-amber-500/20 text-amber-400 text-xs font-bold rounded-full">${scoutStats.rating}</span>` : ''}
+                                            </div>
+
+                                            <div class="grid grid-cols-2 gap-2">
+                                                ${scoutStats.passesTotal > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Passes</p>
+                                                    <p class="text-white font-bold">${scoutStats.passesTotal} <span class="text-xs text-zinc-500">(${scoutStats.passesAccuracy}%)</span></p>
+                                                </div>` : ''}
+                                                ${scoutStats.passesKey > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Passes Decisivos</p>
+                                                    <p class="text-emerald-400 font-bold">${scoutStats.passesKey}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.shotsTotal > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Finalizações</p>
+                                                    <p class="text-white font-bold">${scoutStats.shotsOn}/${scoutStats.shotsTotal}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.dribbles > 0 || scoutStats.dribblesAttempts > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Dribles</p>
+                                                    <p class="text-white font-bold">${scoutStats.dribbles}/${scoutStats.dribblesAttempts}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.tackles > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Desarmes</p>
+                                                    <p class="text-blue-400 font-bold">${scoutStats.tackles}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.interceptions > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Interceptações</p>
+                                                    <p class="text-blue-400 font-bold">${scoutStats.interceptions}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.blocks > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Bloqueios</p>
+                                                    <p class="text-blue-400 font-bold">${scoutStats.blocks}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.duelsWon > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Duelos</p>
+                                                    <p class="text-white font-bold">${scoutStats.duelsWon}/${scoutStats.duelsTotal}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.saves > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Defesas</p>
+                                                    <p class="text-amber-400 font-bold">${scoutStats.saves}</p>
+                                                </div>` : ''}
+                                                ${scoutStats.foulsDrawn > 0 ? `
+                                                <div class="bg-zinc-800/40 rounded-lg p-2 text-center">
+                                                    <p class="text-zinc-400 text-xs">Faltas Sofridas</p>
+                                                    <p class="text-white font-bold">${scoutStats.foulsDrawn}</p>
+                                                </div>` : ''}
+                                            </div>
+                                        </div>
+                                        ` : ''}
+
+                                        ${playerHistory.length > 1 ? `
+                                        <!-- 📈 HISTÓRICO POR RODADA -->
+                                        <div class="mt-6 pt-4 border-t border-white/10">
+                                            <div class="flex items-center gap-2 mb-3">
+                                                <span class="text-lg">📈</span>
+                                                <h4 class="font-display text-base text-purple-400 tracking-wider">HISTÓRICO</h4>
+                                                <span class="text-xs text-zinc-500 ml-auto">${playerHistory.length} rodadas</span>
+                                            </div>
+
+                                            <div class="flex items-end gap-1 h-20 mb-2">
+                                                ${playerHistory.slice(-10).map((h, i, arr) => {
+                                                    const maxPts = Math.max(...arr.map(x => Math.abs(x.pts)), 1);
+                                                    const height = Math.max(10, (Math.abs(h.pts) / maxPts) * 100);
+                                                    const isNegative = h.pts < 0;
+                                                    return `
+                                                        <div class="flex-1 flex flex-col items-center justify-end">
+                                                            <span class="text-xs font-bold ${isNegative ? 'text-red-400' : 'text-emerald-400'} mb-1">${h.pts}</span>
+                                                            <div class="w-full ${isNegative ? 'bg-red-500/50' : 'bg-emerald-500/50'} rounded-t" style="height: ${height}%"></div>
+                                                            <span class="text-[9px] text-zinc-500 mt-1">R${h.round}</span>
+                                                        </div>
+                                                    `;
+                                                }).join('')}
+                                            </div>
+
+                                            <div class="flex justify-between text-xs text-zinc-500 mt-2 pt-2 border-t border-white/5">
+                                                <span>Média: <span class="text-white font-bold">${(playerHistory.reduce((a, h) => a + h.pts, 0) / playerHistory.length).toFixed(1)}</span></span>
+                                                <span>Máx: <span class="text-emerald-400 font-bold">${Math.max(...playerHistory.map(h => h.pts))}</span></span>
+                                            </div>
+                                        </div>
+                                        ` : ''}
                                     </div>
                                 ` : isLoading ? `
                                     <div class="flex items-center justify-center gap-3 py-6">
@@ -9862,7 +10094,21 @@
             let breakdownItems = [];
             let matchInfo = '';
             let minutesPlayed = 0;
-            
+            let scoutStats = null;
+
+            // 📈 HISTÓRICO DO JOGADOR - pontuação por rodada
+            const playerHistory = [];
+            Object.values(state.users || {}).forEach(user => {
+                if (!user.scores) return;
+                Object.entries(user.scores).forEach(([round, roundData]) => {
+                    const pts = roundData?.players?.[playerId] || roundData?.players?.[player.id];
+                    if (pts !== undefined && !playerHistory.find(h => h.round === parseInt(round))) {
+                        playerHistory.push({ round: parseInt(round), pts });
+                    }
+                });
+            });
+            playerHistory.sort((a, b) => a.round - b.round);
+
             if (cachedStats[playerId] || cachedStats[player.id]) {
                 const statsKey = cachedStats[playerId] ? playerId : player.id;
                 const playerData = cachedStats[statsKey].data;
@@ -9895,9 +10141,40 @@
                     const ag = fixtureData.goals?.away ?? '';
                     matchInfo = `${h} ${hg} x ${ag} ${a}`;
                 }
+
+                // 📊 SCOUT DETALHADO - estatísticas completas da partida
+                if (playerData && playerData.statistics && playerData.statistics[0]) {
+                    const stats = playerData.statistics[0];
+                    scoutStats = {
+                        // Passes
+                        passesTotal: stats.passes?.total || 0,
+                        passesAccuracy: stats.passes?.accuracy || 0,
+                        passesKey: stats.passes?.key || 0,
+                        // Finalizações
+                        shotsTotal: stats.shots?.total || 0,
+                        shotsOn: stats.shots?.on || 0,
+                        // Defesa
+                        tackles: stats.tackles?.total || 0,
+                        interceptions: stats.tackles?.interceptions || 0,
+                        blocks: stats.tackles?.blocks || 0,
+                        // Dribles
+                        dribbles: stats.dribbles?.success || 0,
+                        dribblesAttempts: stats.dribbles?.attempts || 0,
+                        // Duelos
+                        duelsWon: stats.duels?.won || 0,
+                        duelsTotal: stats.duels?.total || 0,
+                        // Goleiro
+                        saves: stats.goals?.saves || 0,
+                        // Faltas
+                        foulsDrawn: stats.fouls?.drawn || 0,
+                        foulsCommitted: stats.fouls?.committed || 0,
+                        // Rating
+                        rating: stats.games?.rating ? parseFloat(stats.games.rating).toFixed(1) : null
+                    };
+                }
             }
-            
-            return { roundScore, isReserve, breakdownItems, matchInfo, minutesPlayed };
+
+            return { roundScore, isReserve, breakdownItems, matchInfo, minutesPlayed, scoutStats, playerHistory };
         }
         
         // Abrir modal — calcula breakdown UMA vez e cacheia
@@ -11493,6 +11770,59 @@
                 .sort((a, b) => b.score - a.score)
                 .slice(0, 5);
 
+            // 🔥 JOGADORES EM ALTA - média das últimas 3 rodadas
+            const hotPlayers = [];
+            const currentRound = state.selectedRound || state.currentRound || 1;
+            const roundsToCheck = Math.min(3, currentRound);
+
+            if (roundsToCheck >= 2) {
+                const playerTotals = {};
+
+                // Calcular pontuação total das últimas 3 rodadas para cada jogador
+                Object.values(state.users || {}).forEach(user => {
+                    if (!user.scores) return;
+
+                    for (let r = currentRound; r > currentRound - roundsToCheck && r >= 1; r--) {
+                        const roundScores = user.scores[r]?.players || {};
+                        Object.entries(roundScores).forEach(([pid, pts]) => {
+                            if (pts > 0) {
+                                if (!playerTotals[pid]) {
+                                    const p = state.players.find(x => String(x.id) === String(pid));
+                                    if (p) {
+                                        playerTotals[pid] = {
+                                            id: pid,
+                                            name: p.name,
+                                            photo: p.photo || pf(p),
+                                            team: p.team,
+                                            position: p.position,
+                                            total: 0,
+                                            rounds: 0,
+                                            scores: []
+                                        };
+                                    }
+                                }
+                                if (playerTotals[pid] && !playerTotals[pid].scores.includes(r)) {
+                                    playerTotals[pid].total += pts;
+                                    playerTotals[pid].rounds++;
+                                    playerTotals[pid].scores.push(r);
+                                }
+                            }
+                        });
+                    }
+                });
+
+                // Calcular média e filtrar jogadores com pelo menos 2 rodadas
+                Object.values(playerTotals).forEach(p => {
+                    if (p.rounds >= 2) {
+                        p.avg = Math.round((p.total / p.rounds) * 10) / 10;
+                        hotPlayers.push(p);
+                    }
+                });
+
+                // Ordenar por média
+                hotPlayers.sort((a, b) => b.avg - a.avg);
+            }
+
             return `
                 <div class="min-h-screen bg-[#0a0a0a]">
                     <!-- Header -->
@@ -11714,6 +12044,32 @@
                                         </div>
                                     `}
                                 </div>
+
+                                <!-- 🔥 Jogadores em Alta -->
+                                ${hotPlayers.length > 0 ? `
+                                <div class="card rounded-xl p-4">
+                                    <h3 class="font-display text-sm text-orange-400 tracking-wider mb-3 flex items-center gap-2">
+                                        <span>EM ALTA</span>
+                                        <span class="text-xs bg-orange-500/20 text-orange-400 px-2 py-0.5 rounded-full">${roundsToCheck} rodadas</span>
+                                    </h3>
+                                    <div class="space-y-2">
+                                        ${hotPlayers.slice(0, 5).map((p, i) => `
+                                            <div class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition" onclick="viewPlayer(${JSON.stringify({id: p.id, name: p.name, photo: p.photo, team: p.team, position: p.position}).replace(/"/g, '&quot;')})">
+                                                <span class="w-5 h-5 flex items-center justify-center text-xs font-bold ${i === 0 ? 'text-orange-400' : 'text-zinc-500'}">${i + 1}</span>
+                                                <img src="${p.photo}" alt="${p.name || '?'}" class="w-7 h-7 rounded-full object-cover" onerror="this.src=getAvatarUrl(this.alt)">
+                                                <div class="flex-1 min-w-0">
+                                                    <span class="text-white text-sm truncate block">${p.name?.split(' ').pop() || 'Jogador'}</span>
+                                                    <span class="text-zinc-500 text-xs">${p.rounds} jogos</span>
+                                                </div>
+                                                <div class="text-right">
+                                                    <span class="text-orange-400 font-bold text-sm block">${p.avg}</span>
+                                                    <span class="text-zinc-500 text-xs">média</span>
+                                                </div>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                                ` : ''}
                             </div>
                         </div>
                         
