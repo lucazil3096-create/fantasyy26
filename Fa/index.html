@@ -5737,15 +5737,22 @@
                     }
                 }
                 
-                // Estratégia 3: Buscar nas escalações dos usuários
+                // Estratégia 3: Buscar nas escalações dos usuários por ID e por nome
                 if (_isHome === null) {
-                    const pid = stats.player?.id || (stats.player ? undefined : undefined);
-                    const playerIdNum = pid || (typeof playerName !== 'undefined' ? null : null);
+                    const pid = stats.player?.id;
                     try {
                         Object.values(state.users || {}).forEach(function(user) {
+                            if (_isHome !== null) return;
                             (user.starters || []).concat(user.reserves || []).forEach(function(p) {
+                                if (_isHome !== null) return;
                                 if (p && p.teamId) {
-                                    // Comparar por nome do jogador (mais confiável quando ID não bate)
+                                    // Comparar por ID primeiro
+                                    if (pid && (String(p.id) === String(pid))) {
+                                        if (p.teamId == _hId) _isHome = true;
+                                        else if (p.teamId == _aId) _isHome = false;
+                                        return;
+                                    }
+                                    // Comparar por nome do jogador
                                     const pName = (p.name || '').toLowerCase();
                                     const myName = (playerName || '').toLowerCase();
                                     if (pName && myName && (pName === myName || pName.indexOf(myName) !== -1 || myName.indexOf(pName) !== -1)) {
@@ -5756,6 +5763,20 @@
                             });
                         });
                     } catch(e) {}
+                }
+                
+                // Estratégia 4: Usar nome do time nas stats para comparar com os times da fixture
+                if (_isHome === null) {
+                    const teamNameFromStats = (s.team?.name || '').toLowerCase();
+                    if (teamNameFromStats) {
+                        const homeTeamName = (fixture.teams.home?.name || '').toLowerCase();
+                        const awayTeamName = (fixture.teams.away?.name || '').toLowerCase();
+                        if (teamNameFromStats === homeTeamName || homeTeamName.indexOf(teamNameFromStats) !== -1 || teamNameFromStats.indexOf(homeTeamName) !== -1) {
+                            _isHome = true;
+                        } else if (teamNameFromStats === awayTeamName || awayTeamName.indexOf(teamNameFromStats) !== -1 || teamNameFromStats.indexOf(awayTeamName) !== -1) {
+                            _isHome = false;
+                        }
+                    }
                 }
                 
                 // Calcular gols sofridos
@@ -6110,7 +6131,7 @@
                     score += 3;
                     breakdown.push(`Vitória(+3)`);
                 } else if (teamGoals === opponentGoals) {
-                    breakdown.push(`Empate(0)`);
+                    breakdown.push(`Empate(+0)`);
                 } else {
                     score -= 3;
                     breakdown.push(`Derrota(-3)`);
@@ -6121,7 +6142,10 @@
             const finalScore = Math.round(score * 10) / 10;
             console.log(`⚽ ${playerName} [${position}]: ${finalScore} pts = ${breakdown.join(' + ')}`);
             
-            // Arredondar para evitar decimais estranhos
+            if (debug === true) {
+                return { score: finalScore, breakdown: breakdown, position: position, rating: parseFloat(s.games?.rating) || 0, minutes: s.games?.minutes || 0 };
+            }
+            
             return finalScore;
         }
 
@@ -6205,6 +6229,8 @@
                 let hasLiveGames = false;
                 let fixtures = [];
                 let gamesToProcess = [];
+                
+                if (!window._cachedPlayerStats) window._cachedPlayerStats = {};
                 
                 if (useCache && cachedStats) {
                     // USAR CACHE
@@ -6340,6 +6366,9 @@
                 // Agora calcular pontuação para TODOS os usuários confirmados
                 const confirmedUsers = Object.entries(state.users)
                     .filter(([nick, u]) => u.isConfirmed && nick !== 'admin');
+                
+                window._cachedPlayerStats = allPlayerStats;
+                window._cachedRound = round;
                 
                 console.log(`📈 Calculando pontos para ${confirmedUsers.length} usuários...`);
                 
@@ -9563,27 +9592,33 @@
             const player = state.viewingPlayer;
             if (!player) return '';
             
-            const teamLogo = getTeamLogo(player.team);
+            // Usar breakdown cacheado (calculado uma vez no viewPlayer)
+            const cached = state._playerBreakdownCache;
+            
             const positionColors = {
-                'GOL': { bg: 'from-yellow-500/30 to-yellow-600/30', text: 'text-amber-400', badge: 'bg-amber-500/10 border-yellow-500/50' },
-                'DEF': { bg: 'from-blue-500/30 to-blue-600/30', text: 'text-blue-400', badge: 'bg-blue-500/20 border-blue-500/50' },
-                'MEI': { bg: 'from-green-500/30 to-green-600/30', text: 'text-emerald-400', badge: 'bg-emerald-600/20 border-emerald-500/50' },
-                'ATA': { bg: 'from-red-500/30 to-red-600/30', text: 'text-red-400', badge: 'bg-red-500/20 border-red-500/50' }
+                'GOL': { bg: 'from-yellow-500/30 to-yellow-600/30', text: 'text-amber-400', badge: 'bg-amber-500/10 border-yellow-500/50', label: '🧤 Goleiro' },
+                'DEF': { bg: 'from-blue-500/30 to-blue-600/30', text: 'text-blue-400', badge: 'bg-blue-500/20 border-blue-500/50', label: '🛡️ Defensor' },
+                'MEI': { bg: 'from-green-500/30 to-green-600/30', text: 'text-emerald-400', badge: 'bg-emerald-600/20 border-emerald-500/50', label: '⚙️ Meia' },
+                'ATA': { bg: 'from-red-500/30 to-red-600/30', text: 'text-red-400', badge: 'bg-red-500/20 border-red-500/50', label: '⚡ Atacante' }
             };
             const pos = normalizePosition(player.position);
             const posStyle = positionColors[pos] || positionColors['MEI'];
             
-            // Buscar pontuação do jogador na rodada atual
-            const roundScore = state.scores[state.selectedRound]?.players?.[player.id];
+            const roundScore = cached?.roundScore;
+            const isReserve = cached?.isReserve || false;
+            const breakdownItems = cached?.breakdownItems || [];
+            const matchInfo = cached?.matchInfo || '';
+            const minutesPlayed = cached?.minutesPlayed || 0;
+            const isLoading = state._loadingPlayerBreakdown;
+            const hasBreakdown = breakdownItems.length > 0;
             
             return `
                 <div class="fixed inset-0 bg-black/95 flex items-center justify-center p-2 sm:p-4" style="z-index: 99999;" onclick="closePlayerModal()">
-                    <div class="card rounded-2xl w-full max-w-md overflow-hidden" onclick="event.stopPropagation()">
-                        <!-- Header com foto -->
-                        <div class="relative bg-gradient-to-br ${posStyle.bg}">
+                    <div class="card rounded-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col" onclick="event.stopPropagation()" style="animation: scaleIn 0.25s ease-out;">
+                        <div class="relative bg-gradient-to-br ${posStyle.bg} flex-shrink-0">
                             <div class="p-6 text-center">
                                 <img src="${pf(player)}" alt="${player.name}"
-                                    class="w-28 h-28 rounded-full border-4 border-white/20 object-cover mx-auto shadow-2xl"
+                                    class="w-24 h-24 rounded-full border-4 border-white/20 object-cover mx-auto shadow-2xl"
                                     onerror="this.src=getAvatarUrl(this.alt)">
                             </div>
                             <button onclick="closePlayerModal()" class="absolute top-3 right-3 text-white/60 hover:text-white p-2 bg-black/30 rounded-full">
@@ -9591,54 +9626,193 @@
                             </button>
                         </div>
                         
-                        <div class="p-6 text-center">
-                            <!-- Nome -->
-                            <h3 class="text-2xl font-bold text-white mb-1">${player.name}</h3>
-                            
-                            <!-- Posição -->
-                            <span class="inline-block px-3 py-1 ${posStyle.badge} ${posStyle.text} text-sm font-bold rounded-full border mb-4">
-                                ${pos === 'GOL' ? '🧤 Goleiro' : pos === 'DEF' ? ' Defensor' : pos === 'MEI' ? '⚙️ Meia' : ' Atacante'}
-                            </span>
-                            
-                            <!-- Time -->
-                            <div class="flex items-center justify-center gap-3 bg-zinc-800/50 rounded-xl p-4 mb-4">
-                                ${teamLogo ? 
-                                    `<img src="${teamLogo}" class="w-12 h-12 object-contain">` :
-                                    `<div class="w-12 h-12 bg-zinc-700 rounded-full flex items-center justify-center text-2xl"></div>`
-                                }
-                                <div class="text-left">
-                                    <p class="text-zinc-400 text-xs uppercase">Time</p>
-                                    <p class="text-white font-bold text-lg">${player.team || 'Sem time'}</p>
-                                </div>
+                        <div class="overflow-y-auto flex-1">
+                            <div class="p-5 text-center">
+                                <h3 class="text-xl font-bold text-white mb-1">${player.name}</h3>
+                                <span class="inline-block px-3 py-1 ${posStyle.badge} ${posStyle.text} text-sm font-bold rounded-full border mb-3">
+                                    ${posStyle.label}
+                                </span>
+                                ${isReserve ? '<span class="inline-block px-2 py-0.5 bg-yellow-500/20 text-yellow-400 text-xs rounded-full border border-yellow-500/30 ml-1">Reserva 50%</span>' : ''}
+                                
+                                ${matchInfo ? `
+                                    <div class="flex items-center justify-between text-zinc-400 text-sm mt-3 mb-1 px-1">
+                                        <span class="text-zinc-300">${matchInfo}</span>
+                                        <span>${minutesPlayed} min</span>
+                                    </div>
+                                    <div class="border-b border-white/5 mb-3"></div>
+                                ` : ''}
+                                
+                                ${hasBreakdown ? `
+                                    <div class="text-left">
+                                        <div class="flex items-center gap-2 mb-3">
+                                            <span class="text-lg">📊</span>
+                                            <h4 class="font-display text-base text-emerald-400 tracking-wider">DETALHAMENTO DA PONTUAÇÃO</h4>
+                                        </div>
+                                        
+                                        <div class="space-y-0 rounded-xl overflow-hidden border border-white/5">
+                                            ${breakdownItems.map((item, idx) => `
+                                                <div class="flex items-center justify-between px-4 py-3 ${idx % 2 === 0 ? 'bg-zinc-800/30' : 'bg-zinc-800/10'} ${idx > 0 ? 'border-t border-white/5' : ''}">
+                                                    <span class="text-white text-sm">${item.label}</span>
+                                                    <span class="font-bold text-sm ${item.pts >= 0 ? 'text-emerald-400' : 'text-red-400'}">${item.pts > 0 ? '+' : ''}${item.pts}</span>
+                                                </div>
+                                            `).join('')}
+                                        </div>
+                                        
+                                        <div class="flex items-center justify-between mt-4 pt-3 border-t border-white/10 px-1">
+                                            <span class="text-white font-bold text-lg">TOTAL</span>
+                                            <span class="text-2xl font-bold ${roundScore >= 0 ? 'text-emerald-400' : 'text-red-400'}">${roundScore} pts</span>
+                                        </div>
+                                    </div>
+                                ` : isLoading ? `
+                                    <div class="flex items-center justify-center gap-3 py-6">
+                                        <div class="w-5 h-5 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
+                                        <span class="text-zinc-400 text-sm">Carregando detalhamento...</span>
+                                    </div>
+                                ` : `
+                                    ${roundScore !== undefined ? `
+                                        <div class="bg-zinc-800/50 rounded-xl p-4 mt-3">
+                                            <p class="text-zinc-400 text-xs mb-1">Pontuação Rodada ${state.selectedRound}</p>
+                                            <p class="text-3xl font-bold ${roundScore >= 0 ? 'text-emerald-400' : 'text-red-400'}">${roundScore} pts</p>
+                                        </div>
+                                        <p class="text-zinc-600 text-xs mt-2">Sincronize a pontuação para ver o detalhamento</p>
+                                    ` : `
+                                        <div class="bg-zinc-800/30 rounded-xl p-4 mt-3">
+                                            <p class="text-zinc-500 text-sm">Sem pontuação na rodada ${state.selectedRound}</p>
+                                        </div>
+                                    `}
+                                `}
                             </div>
-                            
-                            <!-- Pontuação na rodada (se houver) -->
-                            ${roundScore !== undefined ? `
-                                <div class="bg-zinc-800/50 rounded-xl p-4">
-                                    <p class="text-zinc-400 text-xs mb-1">Pontuação Rodada ${state.selectedRound}</p>
-                                    <p class="text-3xl font-bold ${roundScore >= 0 ? 'text-emerald-400' : 'text-red-400'}">${roundScore} pts</p>
-                                </div>
-                            ` : `
-                                <div class="bg-zinc-800/30 rounded-xl p-4">
-                                    <p class="text-zinc-500 text-sm">Sem pontuação na rodada ${state.selectedRound}</p>
-                                </div>
-                            `}
                         </div>
                     </div>
                 </div>
             `;
         }
         
-        // Função para abrir modal de jogador
-        window.viewPlayer = function(player) {
+        // Formatar labels do breakdown para português
+        function _fmtLabel(label) {
+            if (label.startsWith('Rating')) { const v = label.replace('Rating ', ''); return `Nota ${v} (≥8.0)`; }
+            if (label.startsWith('Gol(GOL)')) return label.replace('Gol(GOL)', 'Gol (goleiro)');
+            if (label.startsWith('Gol(DEF)')) return label.replace('Gol(DEF)', 'Gol (defensor)');
+            if (label.startsWith('Gol ')) return label;
+            if (label.startsWith('Chutes(gol)')) return label.replace('Chutes(gol)', 'Finalizações no gol');
+            if (label.startsWith('Duelos')) return 'Duelos ganhos ' + label.replace('Duelos ', '');
+            const map = {
+                'Assist': 'Assistência', 'Amarelo': 'Cartão amarelo', 'Vermelho': 'Cartão vermelho',
+                '2º Amarelo': 'Segundo amarelo', 'GolContra': 'Gol contra', 'PenaltiPerdido': 'Pênalti perdido',
+                'PenDefendido': 'Pênalti defendido', 'PenSofrido': 'Pênalti sofrido',
+                'Intercep': 'Interceptações', 'PasseDecisivo': 'Passe decisivo',
+                'FaltasSofridas': 'Faltas sofridas', 'Passes(85%+)': 'Precisão passe ≥85%',
+                'Não sofreu gol': 'Clean sheet', 'Gols sofridos': 'Gols sofridos',
+                'Defesas': 'Defesas', 'Desarmes': 'Desarmes', 'Bloqueios': 'Bloqueios',
+                'Dribles': 'Dribles certos', 'Vitória': 'Vitória do time',
+                'Derrota': 'Derrota do time', 'Empate': 'Empate'
+            };
+            for (const [k, v] of Object.entries(map)) {
+                if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
+            }
+            return label;
+        }
+        
+        // Calcular e cachear o breakdown UMA VEZ (não a cada render)
+        function _buildPlayerBreakdown(player) {
+            const playerId = Number(player.id);
+            const cachedStats = window._cachedPlayerStats || {};
+            
+            // Buscar roundScore checando todos os users
+            let roundScore = state.scores?.[state.selectedRound]?.players?.[player.id];
+            if (roundScore === undefined) {
+                for (const u of Object.values(state.users || {})) {
+                    const s = u.scores?.[state.selectedRound]?.players?.[player.id];
+                    if (s !== undefined) { roundScore = s; break; }
+                }
+            }
+            
+            // Checar se é reserva em algum user
+            let isReserve = false;
+            for (const u of Object.values(state.users || {})) {
+                if ((u.reserves || []).some(r => r && r.id === player.id)) { isReserve = true; break; }
+            }
+            
+            let breakdownItems = [];
+            let matchInfo = '';
+            let minutesPlayed = 0;
+            
+            if (cachedStats[playerId] || cachedStats[player.id]) {
+                const statsKey = cachedStats[playerId] ? playerId : player.id;
+                const playerData = cachedStats[statsKey].data;
+                const fixtureData = cachedStats[statsKey].fixture;
+                const _tId = player.teamId || cachedStats[statsKey]._teamId || null;
+                
+                const result = calculatePlayerScore(playerData, fixtureData, true, _tId);
+                if (result && result.breakdown) {
+                    minutesPlayed = result.minutes || 0;
+                    
+                    breakdownItems = result.breakdown.map(item => {
+                        const m = item.match(/^(.+?)\(([\+\-][\d\.]+)\)$/);
+                        if (m) return { label: _fmtLabel(m[1].trim()), pts: parseFloat(m[2]) };
+                        return { label: _fmtLabel(item), pts: 0 };
+                    });
+                    
+                    if (isReserve) {
+                        breakdownItems = breakdownItems.map(item => ({
+                            label: item.label,
+                            pts: Math.round(item.pts * 0.5 * 10) / 10
+                        }));
+                    }
+                }
+                
+                if (fixtureData && fixtureData.teams) {
+                    const h = fixtureData.teams.home?.name || '';
+                    const a = fixtureData.teams.away?.name || '';
+                    const hg = fixtureData.goals?.home ?? '';
+                    const ag = fixtureData.goals?.away ?? '';
+                    matchInfo = `${h} ${hg} x ${ag} ${a}`;
+                }
+            }
+            
+            return { roundScore, isReserve, breakdownItems, matchInfo, minutesPlayed };
+        }
+        
+        // Abrir modal — calcula breakdown UMA vez e cacheia
+        window.viewPlayer = async function(player) {
             if (!player) return;
+            // Se já está vendo este jogador, não faz nada
+            if (state.viewingPlayer && state.viewingPlayer.id === player.id) return;
+            
             state.viewingPlayer = player;
+            
+            const playerId = Number(player.id);
+            const hasLocal = window._cachedPlayerStats && (window._cachedPlayerStats[playerId] || window._cachedPlayerStats[player.id]);
+            
+            if (!hasLocal && state.selectedRound) {
+                state._loadingPlayerBreakdown = true;
+                state._playerBreakdownCache = { roundScore: undefined, isReserve: false, breakdownItems: [], matchInfo: '', minutesPlayed: 0 };
+                render();
+                
+                try {
+                    const cacheKey = `scoresCache/round_${state.selectedRound}`;
+                    const res = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
+                    const data = await res.json();
+                    if (data && data.playerStats) {
+                        window._cachedPlayerStats = data.playerStats;
+                        window._cachedRound = state.selectedRound;
+                    }
+                } catch(e) {
+                    console.log('Erro ao buscar breakdown:', e);
+                }
+                
+                state._loadingPlayerBreakdown = false;
+            }
+            
+            // Calcular breakdown UMA vez e cachear
+            state._playerBreakdownCache = _buildPlayerBreakdown(player);
             render();
         };
         
-        // Função para fechar modal de jogador
         window.closePlayerModal = function() {
             state.viewingPlayer = null;
+            state._loadingPlayerBreakdown = false;
+            state._playerBreakdownCache = null;
             render();
         };
 
@@ -10806,9 +10980,9 @@
                                     return `
                                     <div class="absolute transform -translate-x-1/2 -translate-y-1/2" style="top: ${pos.top}; left: ${pos.left}; z-index: 10;">
                                         ${player ? `
-                                            <div class="text-center relative">
+                                            <div class="text-center relative cursor-pointer" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(player).replace(/"/g, '&quot;')})">
                                                 <img src="${player.photo || getAvatarUrl(player.name)}" 
-                                                    class="w-16 h-16 rounded-full border-2 border-white/60 object-cover mx-auto"
+                                                    class="w-16 h-16 rounded-full border-2 border-white/60 object-cover mx-auto hover:border-emerald-400 hover:scale-110 transition"
                                                     onerror="this.src=getAvatarUrl(this.alt)">
                                                 ${playerScore !== undefined ? `
                                                     <div class="absolute -top-2 -right-2 z-20 min-w-[28px] h-7 rounded-full flex items-center justify-center text-xs font-bold px-1
@@ -10856,7 +11030,7 @@
                                             const pObj = user.scores?.[state.selectedRound]?.players || {};
                                             const resScore = pObj[user.reserves[0].id] ?? pObj[String(user.reserves[0].id)];
                                             return `
-                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
+                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[0]).replace(/"/g, '&quot;')})">
                                                 <img src="${user.reserves[0].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[0].name}')">
                                                 ${getTeamLogo(user.reserves[0].team) ? `<img src="${getTeamLogo(user.reserves[0].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[0].team}">` : ''}
                                                 <span class="text-white">${user.reserves[0].name.split(' ').pop()}</span>
@@ -10870,7 +11044,7 @@
                                             const pObj = user.scores?.[state.selectedRound]?.players || {};
                                             const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                             return `
-                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
+                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
                                                 ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
@@ -10884,7 +11058,7 @@
                                             const pObj = user.scores?.[state.selectedRound]?.players || {};
                                             const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                             return `
-                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
+                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
                                                 ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
@@ -10898,7 +11072,7 @@
                                             const pObj = user.scores?.[state.selectedRound]?.players || {};
                                             const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                             return `
-                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1">
+                                            <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
                                                 <img src="${user.reserves[i].photo}" class="w-6 h-6 rounded-full object-cover flex-shrink-0" onerror="this.src=getAvatarUrl('${user.reserves[i]?.name || ''}')">
                                                 ${getTeamLogo(user.reserves[i].team) ? `<img src="${getTeamLogo(user.reserves[i].team)}" class="w-4 h-4 object-contain flex-shrink-0" title="${user.reserves[i].team}">` : ''}
                                                 <span class="text-white">${user.reserves[i].name.split(' ').pop()}</span>
@@ -22937,6 +23111,20 @@ O usuário não poderá mais fazer login.
                     if (_rosterTeamId != null) {
                         if (_rosterTeamId == _hId) _isHomePlayer = true;
                         else if (_rosterTeamId == _aId) _isHomePlayer = false;
+                    }
+                }
+                
+                // Método 4: Usar nome do time nas stats para comparar com os times da fixture
+                if (_isHomePlayer === null) {
+                    var teamNameFromStats = (stats.team ? stats.team.name || '' : '').toLowerCase();
+                    if (teamNameFromStats) {
+                        var homeTeamName = (fixtureData.teams.home ? fixtureData.teams.home.name || '' : '').toLowerCase();
+                        var awayTeamName = (fixtureData.teams.away ? fixtureData.teams.away.name || '' : '').toLowerCase();
+                        if (teamNameFromStats === homeTeamName || homeTeamName.indexOf(teamNameFromStats) !== -1 || teamNameFromStats.indexOf(homeTeamName) !== -1) {
+                            _isHomePlayer = true;
+                        } else if (teamNameFromStats === awayTeamName || awayTeamName.indexOf(teamNameFromStats) !== -1 || teamNameFromStats.indexOf(awayTeamName) !== -1) {
+                            _isHomePlayer = false;
+                        }
                     }
                 }
                 
