@@ -5953,7 +5953,20 @@
                     breakdown.push(`Gol x${goals}(+${goals * 6})`);
                 }
             }
-            
+
+            // ==================== BÔNUS HAT-TRICK ====================
+            // Hat-trick de gols (3+ gols): +2 bônus
+            if (goals >= 3) {
+                score += 2;
+                breakdown.push(`⚽ Hat-trick (3+ gols)(+2)`);
+            }
+
+            // Hat-trick de assistências (3+ assistências): +1 bônus
+            if (assists >= 3) {
+                score += 1;
+                breakdown.push(`🅰️ Hat-trick assists (3+)(+1)`);
+            }
+
             // ==================== GOLEIRO (G) ====================
             if (position === 'G') {
                 // Defesas (+2 cada)
