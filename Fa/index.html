@@ -6135,8 +6135,14 @@
                     score += penWon * 1;
                     breakdown.push(`PenSofrido x${penWon}(+${penWon})`);
                 }
+
+                // Clean sheet (+1) - meia ajuda na marcação
+                if (_conceded !== null && _conceded === 0) {
+                    score += 1;
+                    breakdown.push(`CleanSheetMeia(+1)`);
+                }
             }
-            
+
             // ==================== ATACANTE (F) ====================
             if (position === 'F') {
                 // Finalizações no gol (+1 cada)
@@ -9815,7 +9821,8 @@
                 'HatTrickGols': '⚽ Hat-trick de gols',
                 'HatTrickAssists': '🅰️ Hat-trick de assists',
                 'GrandesChances': '🎯 Grandes chances criadas',
-                'Gol(MEI)': 'Gol (meia)'
+                'Gol(MEI)': 'Gol (meia)',
+                'CleanSheetMeia': '🛡️ Clean sheet (meia)'
             };
             for (const [k, v] of Object.entries(map)) {
                 if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
@@ -21232,63 +21239,75 @@ O usuário não poderá mais fazer login.
         
         // Mudar posição do jogador
         window.adminChangePosition = function(playerId, newPosition) {
+            // Converter para número para comparações consistentes
+            const numId = Number(playerId);
+
             // Atualizar no state.players
-            const player = state.players.find(p => p.id === playerId);
-            if (!player) return;
-            
+            const player = state.players.find(p => p.id === numId || String(p.id) === String(playerId));
+            if (!player) {
+                console.error('❌ Jogador não encontrado:', playerId);
+                return;
+            }
+
             const oldPos = player.position;
             player.position = newPosition;
-            
+
             // Atualizar em starters/reserves de TODOS os usuários
             Object.values(state.users).forEach(u => {
                 if (u.starters) {
                     (Array.isArray(u.starters) ? u.starters : Object.values(u.starters)).forEach(s => {
-                        if (s && s.id === playerId) s.position = newPosition;
+                        if (s && (s.id === numId || String(s.id) === String(playerId))) s.position = newPosition;
                     });
                 }
                 if (u.reserves) {
                     (Array.isArray(u.reserves) ? u.reserves : Object.values(u.reserves)).forEach(s => {
-                        if (s && s.id === playerId) s.position = newPosition;
+                        if (s && (s.id === numId || String(s.id) === String(playerId))) s.position = newPosition;
                     });
                 }
             });
-            
+
             // Atualizar nos starters/reserves do state principal
-            state.starters.forEach(s => { if (s && s.id === playerId) s.position = newPosition; });
-            state.reserves.forEach(s => { if (s && s.id === playerId) s.position = newPosition; });
+            if (state.starters) state.starters.forEach(s => { if (s && (s.id === numId || String(s.id) === String(playerId))) s.position = newPosition; });
+            if (state.reserves) state.reserves.forEach(s => { if (s && (s.id === numId || String(s.id) === String(playerId))) s.position = newPosition; });
             
-            // Salvar no Firebase
+            // Salvar no Firebase usando o ID do player encontrado
+            const saveId = player.id;
             if (db) {
-                if (player.manual || player.id < 0) {
+                if (player.manual || saveId < 0) {
                     // Jogador manual - atualizar no nó manualPlayers
-                    db.ref('manualPlayers/' + Math.abs(playerId)).update({ position: newPosition });
+                    db.ref('manualPlayers/' + Math.abs(saveId)).update({ position: newPosition });
+                    console.log('💾 Salvando posição manual:', saveId, newPosition);
                 } else {
                     // Jogador da API - salvar posição customizada separadamente
-                    db.ref('customPositions/' + playerId).set(newPosition);
+                    db.ref('customPositions/' + saveId).set(newPosition);
+                    console.log('💾 Salvando posição customizada:', saveId, newPosition);
                 }
+            } else {
+                console.error('❌ Firebase db não disponível!');
             }
-            
+
             // Feedback visual
             const saved = document.getElementById('posSaved_' + playerId);
             if (saved) {
                 saved.classList.remove('hidden');
                 setTimeout(() => saved.classList.add('hidden'), 2000);
             }
-            
+
             // Atualizar o badge de posição atual
             const row = document.getElementById('posRow_' + playerId);
             if (row) {
                 const badge = row.querySelector('span.text-zinc-300');
                 if (badge) badge.textContent = normalizePosition(newPosition);
             }
-            
+
             console.log('⚽ Posição alterada:', player.name, oldPos, '→', newPosition);
             saveState();
         };
-        
+
         // Mudar time do jogador
         window.adminChangeTeam = function(playerId, newTeam) {
-            const player = state.players.find(p => p.id === playerId);
+            const numId = Number(playerId);
+            const player = state.players.find(p => p.id === numId || String(p.id) === String(playerId));
             if (!player) return;
             
             const oldTeam = player.team;
@@ -23720,8 +23739,14 @@ O usuário não poderá mais fazer login.
                     breakdown.push({ desc: 'Pênalti sofrido x' + penWonM, value: penWonM });
                     totalScore += penWonM;
                 }
+
+                // Clean sheet (+1) - meia ajuda na marcação
+                if (_goalsConceded !== null && _goalsConceded === 0) {
+                    breakdown.push({ desc: '🛡️ Clean sheet (meia)', value: 1 });
+                    totalScore += 1;
+                }
             }
-            
+
             // ===== ATACANTE (F) =====
             if (position === 'F') {
                 var shotsOnF = stats.shots ? stats.shots.on || 0 : 0;
