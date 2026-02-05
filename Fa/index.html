@@ -40,8 +40,16 @@
             border: 1px solid rgba(255, 255, 255, 0.05);
         }
         
-        /* Smooth transitions */
-        * { transition: all 0.2s ease; }
+        /* Smooth transitions - ONLY on interactive elements, NOT modals/overlays */
+        a, button, input, select, textarea,
+        .card, .btn-primary, .glass,
+        [class*="hover:"] {
+            transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, 
+                        box-shadow 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+        }
+        /* Explicitly disable transitions on modals and fixed overlays to prevent flicker */
+        [style*="position:fixed"], [style*="position: fixed"],
+        .fixed { transition: none !important; }
         
         /* ==================== ANIMAÇÃO DE GOL ==================== */
         .goal-overlay {
@@ -6710,15 +6718,34 @@
         let lastRenderTime = 0;
         const RENDER_DEBOUNCE = 100; // ms
         
-        function render() {
+        var _prevModalState = null;
+        var _prevViewingPlayer = null;
+        
+        function render(force) {
             // Debounce: evitar múltiplos renders em sequência
             const now = Date.now();
             if (now - lastRenderTime < RENDER_DEBOUNCE) {
                 clearTimeout(renderTimeout);
-                renderTimeout = setTimeout(render, RENDER_DEBOUNCE);
+                renderTimeout = setTimeout(() => render(force), RENDER_DEBOUNCE);
                 return;
             }
             lastRenderTime = now;
+            
+            // Auto-detect: se o modal state mudou, é uma ação intencional do usuário
+            const modalChanged = (state.modal !== _prevModalState) || (state.viewingPlayer !== _prevViewingPlayer);
+            _prevModalState = state.modal;
+            _prevViewingPlayer = state.viewingPlayer;
+            
+            // ANTI-FLICKER: Não re-renderizar quando um modal está aberto E nada mudou
+            // Firebase listeners disparam render() frequentemente, o que destrói e recria o modal causando piscar
+            if (!force && !modalChanged) {
+                const hasOpenModal = state.viewingPlayer || state.modal ||
+                                     document.getElementById('player-details-modal');
+                if (hasOpenModal) {
+                    console.log('⏳ Pulando render (modal aberto, sem mudança)');
+                    return;
+                }
+            }
             
             const root = document.getElementById('root');
             
