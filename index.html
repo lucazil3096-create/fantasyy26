@@ -8015,6 +8015,8 @@
             state.marketTab = 'buy';
             state.marketFilter = 'all';
             state.marketSearch = '';
+            state.marketModalTab = 'comprar';
+            state.tradeSubTab = null;
             document.body.classList.add('modal-open');
             document.body.style.top = `-${state.scrollY}px`;
             render();
@@ -8340,6 +8342,9 @@
                 state.selectedForSubstitution = null;
                 state.secondSelection = null;
                 state.substitutionMode = false;
+                state.tradeTab = null;
+                state.tradeSubTab = null;
+                state.marketModalTab = null;
                 render();
             }
         };
@@ -8398,6 +8403,9 @@
             state.secondSelection = null;
             state.substitutionMode = false;
             state.previousModal = null;
+            state.tradeTab = null;
+            state.tradeSubTab = null;
+            state.marketModalTab = null;
             render();
         };
 

@@ -932,7 +932,7 @@
             // Sistema de Controle de Rodada (100% Online via Firebase)
             roundStatus: 'waiting', // 'waiting', 'live', 'finished'
             roundEndedAt: null, // Timestamp quando todos jogos terminaram
-            substitutionsOpen: true, // Se substituições estão liberadas
+            substitutionsOpen: false, // Travado por padrão até Firebase confirmar
             autoConfirmedAt: null, // Quando foi confirmado automaticamente
             delayedGamesRounds: [], // Rodadas com jogos atrasados acontecendo
             
@@ -3850,7 +3850,7 @@
                     state.selectedRound = roundNum;
                     state.roundStatus = data.roundStatus || 'waiting';
                     state.roundEndedAt = data.roundEndedAt || null;
-                    state.substitutionsOpen = data.substitutionsOpen !== false; // default true
+                    state.substitutionsOpen = data.substitutionsOpen === true; // default false - só libera quando explicitamente true
                     state.captainEnabled = data.captainEnabled === true;
                     
                     console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}`);
@@ -8441,21 +8441,7 @@
             }, 3 * 60 * 1000); // 3 minutos
         }
         
-        // Parar auto-refresh quando fechar modal
-        const originalCloseModalDirect = window.closeModalDirect;
-        window.closeModalDirect = function() {
-            if (cravarAutoRefreshInterval) {
-                clearInterval(cravarAutoRefreshInterval);
-                cravarAutoRefreshInterval = null;
-                console.log('🛑 Auto-refresh parado');
-            }
-            if (typeof originalCloseModalDirect === 'function') {
-                originalCloseModalDirect();
-            } else {
-                state.modal = null;
-                render();
-            }
-        };
+        // Auto-refresh cleanup agora é tratado dentro de closeModalDirect()
         
         // Função para verificar acertos e dar pontos - FUNCIONA POR JOGO INDIVIDUAL
         function verificarAcertosAutomatico() {
@@ -16702,6 +16688,8 @@
             state.marketTab = 'buy';
             state.marketFilter = 'all';
             state.marketSearch = '';
+            state.marketModalTab = 'comprar';
+            state.tradeSubTab = null;
             document.body.classList.add('modal-open');
             document.body.style.top = `-${state.scrollY}px`;
             render();
@@ -17336,6 +17324,9 @@
                 state.selectedForSubstitution = null;
                 state.secondSelection = null;
                 state.substitutionMode = false;
+                state.tradeTab = null;
+                state.tradeSubTab = null;
+                state.marketModalTab = null;
                 render();
             }
         };
@@ -17385,6 +17376,13 @@
         };
 
         window.closeModalDirect = function() {
+            // Parar auto-refresh de apostas ao fechar modal
+            if (typeof cravarAutoRefreshInterval !== 'undefined' && cravarAutoRefreshInterval) {
+                clearInterval(cravarAutoRefreshInterval);
+                cravarAutoRefreshInterval = null;
+                console.log('Auto-refresh parado');
+            }
+
             // Se estava vendo um perfil sobreposto, voltar ao modal anterior
             if (state.modal === 'profile' && state.previousModal) {
                 state.modal = state.previousModal;
@@ -17393,7 +17391,7 @@
                 render();
                 return;
             }
-            
+
             document.body.classList.remove('modal-open');
             document.body.style.top = '';
             window.scrollTo(0, state.scrollY || 0);
@@ -17407,6 +17405,9 @@
             state.secondSelection = null;
             state.substitutionMode = false;
             state.previousModal = null;
+            state.tradeTab = null;
+            state.tradeSubTab = null;
+            state.marketModalTab = null;
             render();
         };
 
