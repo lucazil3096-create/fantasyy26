@@ -5845,7 +5845,12 @@
             
             // ==================== TODOS OS JOGADORES ====================
             
-            // REMOVIDO: Entrar em campo não dá mais pontos
+            // Entrar em campo (+1)
+            const minutes = s.games?.minutes || 0;
+            if (minutes > 0) {
+                score += 1;
+                breakdown.push(`Entrou em campo(+1)`);
+            }
             
             // Nota do jogo (rating) - Goleiro tem valores diferentes
             const rating = parseFloat(s.games?.rating) || 0;
@@ -9742,7 +9747,8 @@
                 'Não sofreu gol': 'Clean sheet', 'Gols sofridos': 'Gols sofridos',
                 'Defesas': 'Defesas', 'Desarmes': 'Desarmes', 'Bloqueios': 'Bloqueios',
                 'Dribles': 'Dribles certos', 'Vitória': 'Vitória do time',
-                'Derrota': 'Derrota do time', 'Empate': 'Empate'
+                'Derrota': 'Derrota do time', 'Empate': 'Empate',
+                'Entrou em campo': 'Entrou em campo ✅'
             };
             for (const [k, v] of Object.entries(map)) {
                 if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
@@ -23207,7 +23213,11 @@ O usuário não poderá mais fazer login.
             var totalScore = 0;
             
             // ===== TODOS OS JOGADORES =====
-            // REMOVIDO: Entrar em campo não dá mais pontos
+            // Entrar em campo (+1)
+            if (minutes > 0) {
+                breakdown.push({ desc: 'Entrou em campo', value: 1 });
+                totalScore += 1;
+            }
             
             // Nota do jogo - Goleiro tem valores diferentes
             var ratingNum = parseFloat(rating) || 0;
