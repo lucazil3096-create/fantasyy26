@@ -21213,7 +21213,8 @@ O usuário não poderá mais fazer login.
             const teamNames = state.teams.map(t => t.name).sort();
             
             container.innerHTML = results.map(p => {
-                const currentPos = normalizePosition(p.position);
+                const rawPos = (p.position || '').toUpperCase();
+                const normalizedPos = normalizePosition(p.position);
                 const teamLogo = getTeamLogo(p.team) || '';
                 return `
                     <div class="flex items-center gap-2 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50 flex-wrap sm:flex-nowrap" id="posRow_${p.id}">
@@ -21229,7 +21230,7 @@ O usuário não poderá mais fazer login.
                             ${teamNames.map(t => `<option value="${t}" ${p.team === t ? 'selected' : ''}>${t}</option>`).join('')}
                         </select>
                         <select id="posSelect_${p.id}" class="px-2 py-1.5 bg-zinc-700 text-white rounded-lg border border-zinc-600 text-xs" onchange="adminChangePosition(${p.id}, this.value)">
-                            ${posOptions.map(o => `<option value="${o.val}" ${currentPos === o.norm ? 'selected' : ''}>${o.label}</option>`).join('')}
+                            ${posOptions.map(o => `<option value="${o.val}" ${rawPos === o.val.toUpperCase() || rawPos === o.norm || normalizedPos === o.norm ? 'selected' : ''}>${o.label}</option>`).join('')}
                         </select>
                         <span id="posSaved_${p.id}" class="text-emerald-400 text-xs hidden">✅</span>
                     </div>
