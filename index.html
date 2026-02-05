@@ -2739,12 +2739,12 @@
             }
 
             // ==================== BÔNUS HAT-TRICK ====================
-            // Hat-trick de gols (3+ gols): +5 bônus
-            if (goals >= 3) score += 5;
+            // Hat-trick de gols (3+ gols): +3 bônus
+            if (goals >= 3) score += 3;
 
-            // Hat-trick de assistências (3+ assistências): +5 bônus
+            // Hat-trick de assistências (3+ assistências): +1 bônus
             const assists = s.goals?.assists || 0;
-            if (assists >= 3) score += 5;
+            if (assists >= 3) score += 1;
 
             // ==================== GOLEIRO (G) ====================
             if (position === 'G') {
