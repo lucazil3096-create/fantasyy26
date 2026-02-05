@@ -6146,11 +6146,11 @@
                     breakdown.push(`Chutes(gol) x${shotsOn}(+${shotsOn})`);
                 }
 
-                // Grandes chances criadas (+2 cada) - passes decisivos
+                // Grandes chances criadas (+1 cada) - passes decisivos
                 const keyPasses = s.passes?.key || 0;
                 if (keyPasses > 0) {
-                    score += keyPasses * 2;
-                    breakdown.push(`GrandesChances x${keyPasses}(+${keyPasses * 2})`);
+                    score += keyPasses * 1;
+                    breakdown.push(`GrandesChances x${keyPasses}(+${keyPasses})`);
                 }
                 
                 // Dribles certos (+0.5 cada)

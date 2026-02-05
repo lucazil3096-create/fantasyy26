@@ -2846,9 +2846,9 @@
                 const shotsOn = s.shots?.on || 0;
                 score += shotsOn * 1;
 
-                // Grandes chances criadas (+2 cada)
+                // Grandes chances criadas (+1 cada)
                 const keyPasses = s.passes?.key || 0;
-                score += keyPasses * 2;
+                score += keyPasses * 1;
                 
                 // Dribles certos (+0.5 cada)
                 const dribbles = s.dribbles?.success || 0;
