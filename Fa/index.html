@@ -3909,20 +3909,21 @@
             
             let hasLiveGames = false;
             let allGamesFinished = true;
+            let hasFinishedGames = false;
             let lastGameEndTime = 0;
             let firstUpcomingGameTime = Infinity;
-            
+
             // Analisar todos os jogos
             for (const fixture of state.liveFixtures) {
                 const status = fixture.fixture?.status?.short;
                 const matchTime = new Date(fixture.fixture?.date).getTime();
-                
+
                 // Jogos ao vivo
                 if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
                     hasLiveGames = true;
                     allGamesFinished = false;
                 }
-                
+
                 // Jogos não iniciados
                 if (['NS', 'TBD', 'PST'].includes(status)) {
                     allGamesFinished = false;
@@ -3930,37 +3931,43 @@
                         firstUpcomingGameTime = matchTime;
                     }
                 }
-                
+
                 // Jogos finalizados
                 if (['FT', 'AET', 'PEN'].includes(status)) {
+                    hasFinishedGames = true;
                     const estimatedEndTime = matchTime + (2 * 60 * 60 * 1000);
                     if (estimatedEndTime > lastGameEndTime) {
                         lastGameEndTime = estimatedEndTime;
                     }
                 }
             }
-            
+
             // Determinar novo estado
             let newRoundStatus = state.roundStatus;
             let newSubstitutionsOpen = state.substitutionsOpen;
             let shouldAdvanceRound = false;
-            
+
             if (hasLiveGames) {
                 // Jogos ao vivo - travar
                 newRoundStatus = 'live';
                 newSubstitutionsOpen = false;
             } else if (!allGamesFinished) {
                 // Tem jogos não iniciados
-                if (firstUpcomingGameTime !== Infinity) {
+                if (hasFinishedGames) {
+                    // Rodada já começou (tem jogos finalizados + jogos pendentes) - TRAVAR
+                    newRoundStatus = 'live';
+                    newSubstitutionsOpen = false;
+                    console.log('🔒 Rodada em andamento (jogos finalizados + pendentes) - TRAVADO');
+                } else if (firstUpcomingGameTime !== Infinity) {
                     const timeUntilFirstGame = firstUpcomingGameTime - now;
-                    
+
                     if (timeUntilFirstGame <= thirtyMinutes && timeUntilFirstGame > 0) {
                         // Falta menos de 30 min - TRAVAR
                         newRoundStatus = 'waiting';
                         newSubstitutionsOpen = false;
                         console.log(`🔒 Faltam ${Math.ceil(timeUntilFirstGame/60000)} min - TRAVANDO`);
                     } else if (timeUntilFirstGame > thirtyMinutes) {
-                        // Falta mais de 30 min - liberado
+                        // Nenhum jogo começou ainda e falta mais de 30 min - liberado
                         newRoundStatus = 'waiting';
                         newSubstitutionsOpen = true;
                     }
