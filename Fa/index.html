@@ -907,6 +907,9 @@
         }
 
         // ==================== STATE ====================
+        // Mapa global de posições customizadas (persiste entre re-renders)
+        const customPositionsMap = {};
+
         let state = {
             screen: 'auth',
             authMode: 'login',
@@ -21213,8 +21216,11 @@ O usuário não poderá mais fazer login.
             const teamNames = state.teams.map(t => t.name).sort();
             
             container.innerHTML = results.map(p => {
-                const rawPos = (p.position || '').toUpperCase();
-                const normalizedPos = normalizePosition(p.position);
+                // PRIORIDADE: usar posição do mapa customizado, depois do player
+                const customPos = customPositionsMap[p.id] || customPositionsMap[String(p.id)];
+                const actualPos = customPos || p.position || '';
+                const rawPos = actualPos.toUpperCase();
+                const normalizedPos = normalizePosition(actualPos);
                 const teamLogo = getTeamLogo(p.team) || '';
                 return `
                     <div class="flex items-center gap-2 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50 flex-wrap sm:flex-nowrap" id="posRow_${p.id}">
@@ -21252,6 +21258,10 @@ O usuário não poderá mais fazer login.
 
             const oldPos = player.position;
             player.position = newPosition;
+
+            // Armazenar no mapa de posições customizadas (persiste entre re-renders)
+            customPositionsMap[numId] = newPosition;
+            customPositionsMap[String(playerId)] = newPosition;
 
             // Atualizar em starters/reserves de TODOS os usuários
             Object.values(state.users).forEach(u => {
@@ -21292,6 +21302,14 @@ O usuário não poderá mais fazer login.
             if (saved) {
                 saved.classList.remove('hidden');
                 setTimeout(() => saved.classList.add('hidden'), 2000);
+            }
+
+            // GARANTIR que o select mantenha o valor correto
+            const select = document.getElementById('posSelect_' + playerId);
+            if (select) {
+                select.value = newPosition;
+                // Armazenar na propriedade do elemento para persistir entre re-renders
+                select.dataset.savedPosition = newPosition;
             }
 
             // Atualizar o badge de posição atual
@@ -22080,6 +22098,11 @@ O usuário não poderá mais fazer login.
                     Object.entries(customPositions).forEach(([playerId, position]) => {
                         if (!position) return;
                         const numId = Number(playerId);
+
+                        // Armazenar no mapa global (persiste entre re-renders)
+                        customPositionsMap[numId] = position;
+                        customPositionsMap[playerId] = position;
+
                         const player = state.players.find(p => p.id === numId);
                         if (player) {
                             player.position = position;
