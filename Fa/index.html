@@ -5958,13 +5958,13 @@
             // Hat-trick de gols (3+ gols): +2 bônus
             if (goals >= 3) {
                 score += 2;
-                breakdown.push(`⚽ Hat-trick (3+ gols)(+2)`);
+                breakdown.push(`HatTrickGols(+2)`);
             }
 
             // Hat-trick de assistências (3+ assistências): +1 bônus
             if (assists >= 3) {
                 score += 1;
-                breakdown.push(`🅰️ Hat-trick assists (3+)(+1)`);
+                breakdown.push(`HatTrickAssists(+1)`);
             }
 
             // ==================== GOLEIRO (G) ====================
@@ -9807,7 +9807,9 @@
                 'Defesas': 'Defesas', 'Desarmes': 'Desarmes', 'Bloqueios': 'Bloqueios',
                 'Dribles': 'Dribles certos', 'Vitória': 'Vitória do time',
                 'Derrota': 'Derrota do time', 'Empate': 'Empate',
-                'Entrou em campo': 'Entrou em campo ✅'
+                'Entrou em campo': 'Entrou em campo ✅',
+                'HatTrickGols': '⚽ Hat-trick de gols',
+                'HatTrickAssists': '🅰️ Hat-trick de assists'
             };
             for (const [k, v] of Object.entries(map)) {
                 if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
