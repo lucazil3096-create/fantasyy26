@@ -2735,7 +2735,8 @@
             if (goals > 0) {
                 if (position === 'G') score += goals * 10;      // Goleiro - raridade!
                 else if (position === 'D') score += goals * 6;  // Defensor
-                else score += goals * 5;                         // Meia e Atacante
+                else if (position === 'M') score += goals * 6;  // Meia
+                else score += goals * 5;                         // Atacante
             }
 
             // ==================== BÔNUS HAT-TRICK ====================
@@ -2844,10 +2845,10 @@
                 // Finalizações no gol (+1 cada)
                 const shotsOn = s.shots?.on || 0;
                 score += shotsOn * 1;
-                
-                // Passe decisivo (+1 cada)
+
+                // Grandes chances criadas (+2 cada)
                 const keyPasses = s.passes?.key || 0;
-                score += keyPasses * 1;
+                score += keyPasses * 2;
                 
                 // Dribles certos (+0.5 cada)
                 const dribbles = s.dribbles?.success || 0;

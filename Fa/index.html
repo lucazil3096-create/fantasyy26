@@ -5948,9 +5948,13 @@
                 } else if (position === 'D') {
                     score += goals * 6;
                     breakdown.push(`Gol(DEF) x${goals}(+${goals * 6})`);
-                } else {
+                } else if (position === 'M') {
                     score += goals * 6;
-                    breakdown.push(`Gol x${goals}(+${goals * 6})`);
+                    breakdown.push(`Gol(MEI) x${goals}(+${goals * 6})`);
+                } else {
+                    // Atacante: 5 pontos por gol
+                    score += goals * 5;
+                    breakdown.push(`Gol x${goals}(+${goals * 5})`);
                 }
             }
 
@@ -6141,12 +6145,12 @@
                     score += shotsOn * 1;
                     breakdown.push(`Chutes(gol) x${shotsOn}(+${shotsOn})`);
                 }
-                
-                // Passe decisivo (+1 cada)
+
+                // Grandes chances criadas (+2 cada) - passes decisivos
                 const keyPasses = s.passes?.key || 0;
                 if (keyPasses > 0) {
-                    score += keyPasses * 1;
-                    breakdown.push(`PasseDecisivo x${keyPasses}(+${keyPasses})`);
+                    score += keyPasses * 2;
+                    breakdown.push(`GrandesChances x${keyPasses}(+${keyPasses * 2})`);
                 }
                 
                 // Dribles certos (+0.5 cada)
@@ -9809,7 +9813,9 @@
                 'Derrota': 'Derrota do time', 'Empate': 'Empate',
                 'Entrou em campo': 'Entrou em campo ✅',
                 'HatTrickGols': '⚽ Hat-trick de gols',
-                'HatTrickAssists': '🅰️ Hat-trick de assists'
+                'HatTrickAssists': '🅰️ Hat-trick de assists',
+                'GrandesChances': '🎯 Grandes chances criadas',
+                'Gol(MEI)': 'Gol (meia)'
             };
             for (const [k, v] of Object.entries(map)) {
                 if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
