@@ -6198,7 +6198,7 @@
         }
 
         // Calcular pontuação do técnico
-        function calculateCoachScore(fixture, teamId) {
+        function calculateCoachScore(fixture, teamId, allPlayerStats) {
             let score = 0;
             
             const isHome = fixture.teams?.home?.id === teamId;
@@ -6209,7 +6209,7 @@
             
             // Vitória
             if ((isHome && homeGoals > awayGoals) || (!isHome && awayGoals > homeGoals)) {
-                score += 8;
+                score += 6;
             }
             // Empate
             else if (homeGoals === awayGoals) {
@@ -6224,6 +6224,21 @@
             
             // Bônus 3+ gols
             if (teamGoals >= 3) score += 3;
+            
+            // Bônus reservas: gols (+3) e assistências (+1) de jogadores que entraram do banco
+            if (allPlayerStats) {
+                Object.values(allPlayerStats).forEach(entry => {
+                    if (entry._teamId !== teamId) return;
+                    const stats = entry.data?.statistics?.[0];
+                    if (!stats) return;
+                    const isSub = stats.games?.substitute === true;
+                    if (!isSub) return;
+                    const subGoals = stats.goals?.total || 0;
+                    const subAssists = stats.goals?.assists || 0;
+                    score += subGoals * 3;
+                    score += subAssists * 1;
+                });
+            }
             
             return score;
         }
@@ -6543,7 +6558,7 @@
                         const coachTeamId = user.coach.teamId;
                         gamesToProcess.forEach(fixture => {
                             if (fixture.teams?.home?.id === coachTeamId || fixture.teams?.away?.id === coachTeamId) {
-                                user.scores[round].coach = calculateCoachScore(fixture, coachTeamId);
+                                user.scores[round].coach = calculateCoachScore(fixture, coachTeamId, allPlayerStats);
                             }
                         });
                     }
@@ -6721,12 +6736,12 @@
         var _prevModalState = null;
         var _prevViewingPlayer = null;
         
-        function render(force) {
+        function render() {
             // Debounce: evitar múltiplos renders em sequência
             const now = Date.now();
             if (now - lastRenderTime < RENDER_DEBOUNCE) {
                 clearTimeout(renderTimeout);
-                renderTimeout = setTimeout(() => render(force), RENDER_DEBOUNCE);
+                renderTimeout = setTimeout(render, RENDER_DEBOUNCE);
                 return;
             }
             lastRenderTime = now;
@@ -6737,10 +6752,11 @@
             _prevViewingPlayer = state.viewingPlayer;
             
             // ANTI-FLICKER: Não re-renderizar quando um modal está aberto E nada mudou
-            // Firebase listeners disparam render() frequentemente, o que destrói e recria o modal causando piscar
-            if (!force && !modalChanged) {
+            // Firebase listeners disparam render() frequentemente, destruindo e recriando o modal (piscar)
+            if (!modalChanged) {
                 const hasOpenModal = state.viewingPlayer || state.modal ||
-                                     document.getElementById('player-details-modal');
+                                     document.getElementById('player-details-modal') ||
+                                     document.getElementById('coach-details-modal');
                 if (hasOpenModal) {
                     console.log('⏳ Pulando render (modal aberto, sem mudança)');
                     return;
@@ -7769,7 +7785,7 @@
 
                             <!-- Técnico (inline compacto) -->
                             <div class="card rounded-xl p-3">
-                                <div onclick="openCoachModal()" class="cursor-pointer flex items-center gap-3">
+                                <div onclick="onCoachCardClick()" class="cursor-pointer flex items-center gap-3">
                                     ${state.coach ? `
                                         <img src="${state.coach.photo}" alt="${state.coach.name}" class="w-10 h-10 rounded-lg object-cover border border-orange-500/30 flex-shrink-0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                                         <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-orange-500/20 to-orange-600/10 items-center justify-center text-xs font-bold text-orange-400 flex-shrink-0 border border-orange-500/30" style="display:none">
@@ -11078,7 +11094,7 @@
                             ${user.coach ? (() => {
                                 const coachScore = user.scores?.[state.selectedRound]?.coach;
                                 return `
-                                <div class="bg-white/5 rounded-lg p-3 mb-4 flex items-center gap-3">
+                                <div onclick="showCoachBreakdownFor('${user.coach.name.replace(/'/g, "\\'")}', '${user.coach.team.replace(/'/g, "\\'")}', '${user.coach.photo || ''}', ${user.coach.teamId}, ${coachScore !== undefined ? coachScore : 'undefined'}, ${state.selectedRound})" class="cursor-pointer bg-white/5 hover:bg-white/10 rounded-lg p-3 mb-4 flex items-center gap-3">
                                     <img src="${user.coach.photo}" alt="${user.coach.name}" class="w-10 h-10 rounded-lg object-cover bg-white/10 flex-shrink-0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
                                     <div class="w-10 h-10 rounded-lg bg-white/10 items-center justify-center text-sm font-bold text-white" style="display:none">
                                         ${user.coach.name.split(' ').map(n => n[0]).join('').slice(0,2)}
@@ -15501,6 +15517,177 @@
             alert('⚠️ Escalação travada!\n\nO técnico será escolhido no DRAFT.\n\nAguarde o draft na segunda-feira!');
             return;
         };
+
+        // Dispatcher: se tem pontuação do técnico, mostra breakdown; senão, abre modal de seleção
+        window.onCoachCardClick = function() {
+            if (state.coach && state.scores[state.selectedRound]?.coach !== undefined) {
+                showCoachBreakdown();
+            } else {
+                openCoachModal();
+            }
+        };
+
+        // Modal de detalhamento da pontuação do técnico
+        window.showCoachBreakdown = function() {
+            if (!state.coach) return;
+            var round = state.selectedRound;
+            var coachScore = state.scores[round]?.coach;
+            if (coachScore === undefined) return;
+            _showCoachBreakdownInternal(state.coach, coachScore, round);
+        };
+
+        // Versão para ver técnico de OUTRO usuário (passando dados diretamente)
+        window.showCoachBreakdownFor = function(name, team, photo, teamId, score, round) {
+            if (score === undefined || score === 'undefined') return;
+            var fakeCoach = { name: name, team: team, photo: photo, teamId: teamId };
+            _showCoachBreakdownInternal(fakeCoach, parseFloat(score), round);
+        };
+
+        // Função interna reutilizada por ambas as versões
+        function _showCoachBreakdownInternal(coach, coachScore, round) {
+            // Encontrar o jogo do time do técnico
+            var coachTeamId = coach.teamId;
+            var fixture = null;
+            var fixtures = state.liveFixtures || [];
+            
+            for (var i = 0; i < fixtures.length; i++) {
+                var f = fixtures[i];
+                if (f.teams?.home?.id === coachTeamId || f.teams?.away?.id === coachTeamId) {
+                    fixture = f;
+                    break;
+                }
+            }
+            
+            var breakdown = [];
+            var totalScore = 0;
+            
+            if (fixture) {
+                var isHome = fixture.teams?.home?.id === coachTeamId;
+                var homeGoals = fixture.goals?.home || 0;
+                var awayGoals = fixture.goals?.away || 0;
+                var teamGoals = isHome ? homeGoals : awayGoals;
+                var opponentGoals = isHome ? awayGoals : homeGoals;
+                
+                if ((isHome && homeGoals > awayGoals) || (!isHome && awayGoals > homeGoals)) {
+                    breakdown.push({ desc: '✅ Vitória do time', value: 6 });
+                    totalScore += 6;
+                } else if (homeGoals === awayGoals) {
+                    breakdown.push({ desc: '🤝 Empate', value: 4 });
+                    totalScore += 4;
+                } else {
+                    breakdown.push({ desc: '❌ Derrota', value: 0 });
+                }
+                
+                if (opponentGoals === 0) {
+                    breakdown.push({ desc: '🧤 Clean sheet (sem sofrer gol)', value: 3 });
+                    totalScore += 3;
+                }
+                
+                if (teamGoals > 0) {
+                    breakdown.push({ desc: '⚽ Gols marcados x' + teamGoals, value: teamGoals });
+                    totalScore += teamGoals;
+                }
+                
+                if (teamGoals >= 3) {
+                    breakdown.push({ desc: '🔥 Bônus goleada (3+ gols)', value: 3 });
+                    totalScore += 3;
+                }
+                
+                // Bônus reservas: gols e assistências de jogadores que entraram do banco
+                var cachedStats = window._cachedPlayerStats || {};
+                var subGoalsTotal = 0;
+                var subAssistsTotal = 0;
+                var subDetails = [];
+                Object.values(cachedStats).forEach(function(entry) {
+                    if (entry._teamId !== coachTeamId) return;
+                    var stats = entry.data?.statistics?.[0];
+                    if (!stats) return;
+                    var isSub = stats.games?.substitute === true;
+                    if (!isSub) return;
+                    var sg = stats.goals?.total || 0;
+                    var sa = stats.goals?.assists || 0;
+                    if (sg > 0 || sa > 0) {
+                        var playerName = entry.data?.player?.name || 'Reserva';
+                        // Pegar só o sobrenome
+                        var shortName = playerName.split(' ').pop();
+                        if (sg > 0) subDetails.push(shortName + ' ⚽x' + sg);
+                        if (sa > 0) subDetails.push(shortName + ' 🅰️x' + sa);
+                    }
+                    subGoalsTotal += sg;
+                    subAssistsTotal += sa;
+                });
+                
+                if (subGoalsTotal > 0) {
+                    breakdown.push({ desc: '🔄 Gol de reserva x' + subGoalsTotal + (subDetails.length ? '' : ''), value: subGoalsTotal * 3 });
+                    totalScore += subGoalsTotal * 3;
+                }
+                if (subAssistsTotal > 0) {
+                    breakdown.push({ desc: '🔄 Assistência de reserva x' + subAssistsTotal, value: subAssistsTotal * 1 });
+                    totalScore += subAssistsTotal * 1;
+                }
+            } else {
+                breakdown.push({ desc: 'Pontuação da rodada', value: coachScore });
+                totalScore = coachScore;
+            }
+            
+            var matchInfo = '';
+            if (fixture) {
+                matchInfo = (fixture.teams?.home?.name || '') + ' ' + (fixture.goals?.home ?? '-') + ' x ' + (fixture.goals?.away ?? '-') + ' ' + (fixture.teams?.away?.name || '');
+            }
+            
+            var oldModal = document.getElementById('coach-details-modal');
+            if (oldModal) oldModal.remove();
+            
+            var modal = document.createElement('div');
+            modal.id = 'coach-details-modal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.9);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+            modal.onclick = function(e) { if (e.target === modal) modal.remove(); };
+            
+            var breakdownHtml = breakdown.map(function(b) {
+                var color = b.value <= 0 ? '#ef4444' : '#10b981';
+                var prefix = b.value > 0 ? '+' : '';
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:#1a1a1a;border-radius:8px;">' +
+                    '<span style="color:#fff;font-size:14px;">' + b.desc + '</span>' +
+                    '<span style="color:' + color + ';font-weight:700;font-size:14px;">' + prefix + b.value + '</span>' +
+                '</div>';
+            }).join('');
+            
+            var coachInitials = coach.name.split(' ').map(function(n) { return n[0]; }).join('').slice(0, 2);
+            
+            modal.innerHTML = 
+                '<div style="background:#111;border-radius:16px;width:100%;max-width:500px;max-height:90vh;overflow:hidden;display:flex;flex-direction:column;">' +
+                    '<div style="padding:20px;border-bottom:1px solid #333;display:flex;justify-content:space-between;align-items:center;">' +
+                        '<div style="display:flex;align-items:center;gap:12px;">' +
+                            '<img src="' + (coach.photo || '') + '" alt="' + coach.name + '" style="width:48px;height:48px;border-radius:10px;object-fit:cover;border:2px solid rgba(249,115,22,0.4);" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">' +
+                            '<div style="width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,rgba(249,115,22,0.2),rgba(234,88,12,0.1));display:none;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#f97316;border:2px solid rgba(249,115,22,0.4);">' + coachInitials + '</div>' +
+                            '<div>' +
+                                '<h2 style="color:#fff;margin:0;font-size:18px;">' + coach.name + '</h2>' +
+                                '<p style="color:#888;margin:4px 0 0;font-size:14px;">' +
+                                    '<span style="background:rgba(249,115,22,0.15);color:#f97316;padding:2px 8px;border-radius:4px;font-size:12px;margin-right:8px;border:1px solid rgba(249,115,22,0.3);">👔 Técnico</span>' +
+                                    coach.team +
+                                '</p>' +
+                            '</div>' +
+                        '</div>' +
+                        '<button onclick="document.getElementById(\'coach-details-modal\').remove()" style="background:#333;border:none;color:#fff;width:36px;height:36px;border-radius:50%;cursor:pointer;font-size:18px;">✕</button>' +
+                    '</div>' +
+                    (matchInfo ? '<div style="padding:15px 20px;background:#0a0a0a;border-bottom:1px solid #333;">' +
+                        '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                            '<span style="color:#888;font-size:14px;">' + matchInfo + '</span>' +
+                            '<span style="color:#888;font-size:14px;">Rodada ' + round + '</span>' +
+                        '</div>' +
+                    '</div>' : '') +
+                    '<div style="flex:1;overflow-y:auto;padding:15px 20px;">' +
+                        '<h3 style="color:#f97316;font-size:14px;margin:0 0 15px;font-weight:600;">📊 DETALHAMENTO DA PONTUAÇÃO</h3>' +
+                        '<div style="display:flex;flex-direction:column;gap:8px;">' + breakdownHtml + '</div>' +
+                    '</div>' +
+                    '<div style="padding:20px;border-top:1px solid #333;background:#0a0a0a;display:flex;justify-content:space-between;align-items:center;">' +
+                        '<span style="color:#fff;font-size:16px;font-weight:600;">TOTAL</span>' +
+                        '<span style="color:#10b981;font-size:28px;font-weight:700;">' + totalScore + ' pts</span>' +
+                    '</div>' +
+                '</div>';
+            
+            document.body.appendChild(modal);
+        }
 
         window.openOffersModal = function() {
             state.scrollY = window.scrollY;
