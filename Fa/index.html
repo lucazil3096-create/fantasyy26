@@ -4536,17 +4536,17 @@
             return obj;
         }
         
-        function savePlayers() {
+        // OTIMIZAÇÃO: savePlayers agora só salva no Firebase quando explicitamente solicitado
+        // Isso economiza ~70% da quota do Firebase
+        function savePlayers(toFirebase = false) {
             try {
                 // Limpar undefined dos jogadores (Firebase não aceita)
                 const cleanedPlayers = cleanUndefined(state.players);
                 const cleanedTeams = cleanUndefined(state.teams);
-                
-                // PROTEÇÃO: Não salvar dados corrompidos no Firebase
-                // Se temos menos de 100 jogadores, algo está errado
+
+                // PROTEÇÃO: Não salvar dados corrompidos
                 if (cleanedPlayers.length < 100) {
-                    console.warn(`⚠️ savePlayers BLOQUEADO: apenas ${cleanedPlayers.length} jogadores (mínimo 100). Dados possivelmente corrompidos.`);
-                    // Salvar só no cache local (não propagar dados ruins para outros usuários)
+                    console.warn(`⚠️ savePlayers BLOQUEADO: apenas ${cleanedPlayers.length} jogadores (mínimo 100).`);
                     localStorage.setItem('fantasyPlayers2026', JSON.stringify({
                         players: cleanedPlayers,
                         teams: cleanedTeams,
@@ -4554,9 +4554,9 @@
                     }));
                     return;
                 }
-                
-                // Salvar no Firebase (fonte de verdade para todos os usuários)
-                if (db) {
+
+                // Salvar no Firebase APENAS se solicitado (economiza quota)
+                if (toFirebase && db) {
                     db.ref('gameData/players').set({
                         players: cleanedPlayers,
                         teams: cleanedTeams,
@@ -4567,13 +4567,17 @@
                         console.error('❌ Erro ao salvar no Firebase:', err.message);
                     });
                 }
-                
-                // Também salvar cache local (para carregamento mais rápido)
+
+                // Sempre salvar cache local (rápido e gratuito)
                 localStorage.setItem('fantasyPlayers2026', JSON.stringify({
                     players: cleanedPlayers,
                     teams: cleanedTeams,
                     lastSync: new Date().toISOString()
                 }));
+
+                if (!toFirebase) {
+                    console.log('💾 Cache local atualizado:', cleanedPlayers.length, 'jogadores');
+                }
             } catch (e) {
                 console.error('Erro ao salvar jogadores:', e);
             }
@@ -4690,8 +4694,8 @@
                                 
                                 mergeManualPlayers();
                                 console.log('📦 Usando cache local:', state.players.length, 'jogadores');
-                                
-                                // Salvar no Firebase para outros usuários
+
+                                // Só atualizar cache local (Firebase já tem os dados)
                                 savePlayers();
                                 
                                 // Só render se não estiver digitando
@@ -5327,8 +5331,9 @@
                 
                 // Mesclar jogadores manuais
                 mergeManualPlayers();
-                
-                savePlayers();
+
+                // SYNC MANUAL: salvar no Firebase para todos usuários
+                savePlayers(true);
                 
                 localStorage.setItem('fantasy_last_sync', new Date().toISOString());
                 localStorage.setItem('fantasy_api_source', 'api-football');
@@ -22593,8 +22598,8 @@ O usuário não poderá mais fazer login.
                         }
                     });
                     
-                    // Salvar no Firebase (atualiza para TODOS os usuários)
-                    savePlayers();
+                    // SYNC MANUAL: salvar no Firebase para todos usuários
+                    savePlayers(true);
                     
                     // Também atualizar data da última sync no Firebase
                     if (db) {
@@ -23196,7 +23201,8 @@ O usuário não poderá mais fazer login.
                 }
                 
                 if (newPlayers > 0) {
-                    savePlayers();
+                    // SYNC LEVE: salvar no Firebase para todos usuários
+                    savePlayers(true);
                     console.log(`✅ ${newPlayers} jogadores novos adicionados!`);
                 }
                 
