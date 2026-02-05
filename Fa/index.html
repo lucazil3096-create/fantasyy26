@@ -908,7 +908,8 @@
 
         // ==================== STATE ====================
         // Mapa global de posições customizadas (persiste entre re-renders)
-        const customPositionsMap = {};
+        // Usando window para garantir acesso global em todas funções
+        window.customPositionsMap = window.customPositionsMap || {};
 
         let state = {
             screen: 'auth',
@@ -21217,10 +21218,12 @@ O usuário não poderá mais fazer login.
             
             container.innerHTML = results.map(p => {
                 // PRIORIDADE: usar posição do mapa customizado, depois do player
-                const customPos = customPositionsMap[p.id] || customPositionsMap[String(p.id)];
+                const customPos = window.customPositionsMap[p.id] || window.customPositionsMap[String(p.id)];
                 const actualPos = customPos || p.position || '';
                 const rawPos = actualPos.toUpperCase();
                 const normalizedPos = normalizePosition(actualPos);
+                // Debug: verificar posição customizada
+                if (customPos) console.log('🎯 Posição customizada encontrada:', p.name, p.id, '→', customPos);
                 const teamLogo = getTeamLogo(p.team) || '';
                 return `
                     <div class="flex items-center gap-2 bg-zinc-800/70 rounded-lg p-3 border border-zinc-700/50 flex-wrap sm:flex-nowrap" id="posRow_${p.id}">
@@ -21260,8 +21263,8 @@ O usuário não poderá mais fazer login.
             player.position = newPosition;
 
             // Armazenar no mapa de posições customizadas (persiste entre re-renders)
-            customPositionsMap[numId] = newPosition;
-            customPositionsMap[String(playerId)] = newPosition;
+            window.customPositionsMap[numId] = newPosition;
+            window.customPositionsMap[String(playerId)] = newPosition;
 
             // Atualizar em starters/reserves de TODOS os usuários
             Object.values(state.users).forEach(u => {
@@ -22100,8 +22103,8 @@ O usuário não poderá mais fazer login.
                         const numId = Number(playerId);
 
                         // Armazenar no mapa global (persiste entre re-renders)
-                        customPositionsMap[numId] = position;
-                        customPositionsMap[playerId] = position;
+                        window.customPositionsMap[numId] = position;
+                        window.customPositionsMap[playerId] = position;
 
                         const player = state.players.find(p => p.id === numId);
                         if (player) {
