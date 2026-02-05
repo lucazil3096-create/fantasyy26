@@ -932,7 +932,7 @@
             // Sistema de Controle de Rodada (100% Online via Firebase)
             roundStatus: 'waiting', // 'waiting', 'live', 'finished'
             roundEndedAt: null, // Timestamp quando todos jogos terminaram
-            substitutionsOpen: true, // Se substituições estão liberadas
+            substitutionsOpen: false, // Travado por padrão até Firebase confirmar
             autoConfirmedAt: null, // Quando foi confirmado automaticamente
             delayedGamesRounds: [], // Rodadas com jogos atrasados acontecendo
             
@@ -3850,7 +3850,7 @@
                     state.selectedRound = roundNum;
                     state.roundStatus = data.roundStatus || 'waiting';
                     state.roundEndedAt = data.roundEndedAt || null;
-                    state.substitutionsOpen = data.substitutionsOpen !== false; // default true
+                    state.substitutionsOpen = data.substitutionsOpen === true; // default false - só libera quando explicitamente true
                     state.captainEnabled = data.captainEnabled === true;
                     
                     console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}`);
