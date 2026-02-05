@@ -23361,23 +23361,23 @@ O usuário não poderá mais fazer login.
                 return;
             }
             
-            var playerData = fullData.playerData;
-            var fixtureData = fullData.fixtureData;
-            var stats = fullData.stats;
-            var position = stats.games ? stats.games.position || '?' : '?';
-            var playerName = playerData.player.name || 'Desconhecido';
-            var teamName = stats.team ? stats.team.name || '' : '';
-            var minutes = stats.games ? stats.games.minutes || 0 : 0;
-            var rating = stats.games ? stats.games.rating || '-' : '-';
-            
+            var playerData = fullData.playerData || {};
+            var fixtureData = fullData.fixtureData || {};
+            var stats = fullData.stats || {};
+            var position = (stats.games && stats.games.position) ? stats.games.position : '?';
+            var playerName = (playerData && playerData.player && playerData.player.name) ? playerData.player.name : 'Desconhecido';
+            var teamName = (stats.team && stats.team.name) ? stats.team.name : '';
+            var minutes = (stats.games && stats.games.minutes) ? stats.games.minutes : 0;
+            var rating = (stats.games && stats.games.rating) ? stats.games.rating : '-';
+
             // Usar posição manual se disponível
             var _overridePosModal = _getManualPosition(playerId);
             if (_overridePosModal) {
                 var _pmU = _overridePosModal.toUpperCase();
-                if (_pmU === 'GOL' || _pmU === 'GOALKEEPER') position = 'G';
-                else if (_pmU === 'DEF' || _pmU === 'DEFENDER' || _pmU === 'ZAG' || _pmU === 'LD' || _pmU === 'LE' || _pmU === 'LAT') position = 'D';
-                else if (_pmU === 'MEI' || _pmU === 'MIDFIELDER' || _pmU === 'MC' || _pmU === 'VOL') position = 'M';
-                else if (_pmU === 'ATA' || _pmU === 'ATTACKER' || _pmU === 'PE' || _pmU === 'PD' || _pmU === 'SA' || _pmU === 'CA') position = 'F';
+                if (_pmU === 'GOL' || _pmU === 'GOALKEEPER' || _pmU === 'GK' || _pmU === 'G') position = 'G';
+                else if (_pmU === 'DEF' || _pmU === 'DEFENDER' || _pmU === 'ZAG' || _pmU === 'LD' || _pmU === 'LE' || _pmU === 'LAT' || _pmU === 'CB' || _pmU === 'D') position = 'D';
+                else if (_pmU === 'MEI' || _pmU === 'MIDFIELDER' || _pmU === 'MC' || _pmU === 'VOL' || _pmU === 'M') position = 'M';
+                else if (_pmU === 'ATA' || _pmU === 'ATTACKER' || _pmU === 'PE' || _pmU === 'PD' || _pmU === 'SA' || _pmU === 'CA' || _pmU === 'F') position = 'F';
             }
             
             // ===== DETERMINAR GOLS SOFRIDOS PELO TIME DO JOGADOR =====
