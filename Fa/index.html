@@ -5953,7 +5953,20 @@
                     breakdown.push(`Gol x${goals}(+${goals * 6})`);
                 }
             }
-            
+
+            // ==================== BÔNUS HAT-TRICK ====================
+            // Hat-trick de gols (3+ gols): +2 bônus
+            if (goals >= 3) {
+                score += 2;
+                breakdown.push(`HatTrickGols(+2)`);
+            }
+
+            // Hat-trick de assistências (3+ assistências): +1 bônus
+            if (assists >= 3) {
+                score += 1;
+                breakdown.push(`HatTrickAssists(+1)`);
+            }
+
             // ==================== GOLEIRO (G) ====================
             if (position === 'G') {
                 // Defesas (+2 cada)
@@ -9794,7 +9807,9 @@
                 'Defesas': 'Defesas', 'Desarmes': 'Desarmes', 'Bloqueios': 'Bloqueios',
                 'Dribles': 'Dribles certos', 'Vitória': 'Vitória do time',
                 'Derrota': 'Derrota do time', 'Empate': 'Empate',
-                'Entrou em campo': 'Entrou em campo ✅'
+                'Entrou em campo': 'Entrou em campo ✅',
+                'HatTrickGols': '⚽ Hat-trick de gols',
+                'HatTrickAssists': '🅰️ Hat-trick de assists'
             };
             for (const [k, v] of Object.entries(map)) {
                 if (label.startsWith(k)) { const rest = label.replace(k, '').trim(); return v + (rest ? ' ' + rest : ''); }
@@ -23534,7 +23549,20 @@ O usuário não poderá mais fazer login.
                     totalScore += goals * 6;
                 }
             }
-            
+
+            // ===== BÔNUS HAT-TRICK =====
+            // Hat-trick de gols (3+ gols): +2 bônus
+            if (goals >= 3) {
+                breakdown.push({ desc: '⚽ Hat-trick (3+ gols)', value: 2 });
+                totalScore += 2;
+            }
+
+            // Hat-trick de assistências (3+ assistências): +1 bônus
+            if (assists >= 3) {
+                breakdown.push({ desc: '🅰️ Hat-trick de assists (3+)', value: 1 });
+                totalScore += 1;
+            }
+
             // ===== GOLEIRO (G) =====
             if (position === 'G') {
                 // Defesas (+2 cada)
