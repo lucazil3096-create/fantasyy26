@@ -5985,22 +5985,25 @@
                 }
             }
             
-            // LOG RAW DATA para debug
-            console.log(`📊 RAW DATA ${playerName}:`, {
-                position: position,
-                minutes: s.games?.minutes,
-                rating: s.games?.rating,
-                goals: s.goals,
-                assists: s.goals?.assists,
-                cards: s.cards,
-                tackles: s.tackles,
-                dribbles: s.dribbles,
-                passes: s.passes,
-                shots: s.shots,
-                fouls: s.fouls,
-                duels: s.duels,
-                penalty: s.penalty
-            });
+            // LOG RAW DATA para debug (desabilitado para performance)
+            // Para debug individual, usar: window._debugScores = true;
+            if (window._debugScores) {
+                console.log(`📊 RAW DATA ${playerName}:`, {
+                    position: position,
+                    minutes: s.games?.minutes,
+                    rating: s.games?.rating,
+                    goals: s.goals,
+                    assists: s.goals?.assists,
+                    cards: s.cards,
+                    tackles: s.tackles,
+                    dribbles: s.dribbles,
+                    passes: s.passes,
+                    shots: s.shots,
+                    fouls: s.fouls,
+                    duels: s.duels,
+                    penalty: s.penalty
+                });
+            }
             
             // ==================== TODOS OS JOGADORES ====================
             
@@ -6360,9 +6363,10 @@
                 }
             }
             
-            // Log detalhado para debug
             const finalScore = Math.round(score * 10) / 10;
-            console.log(`⚽ ${playerName} [${position}]: ${finalScore} pts = ${breakdown.join(' + ')}`);
+            if (window._debugScores) {
+                console.log(`⚽ ${playerName} [${position}]: ${finalScore} pts = ${breakdown.join(' + ')}`);
+            }
             
             if (debug === true) {
                 return { score: finalScore, breakdown: breakdown, position: position, rating: parseFloat(s.games?.rating) || 0, minutes: s.games?.minutes || 0 };
@@ -6549,22 +6553,34 @@
                         return;
                     }
 
-                    // Coletar todas as stats dos jogadores
-                    for (let i = 0; i < gamesToProcess.length; i++) {
-                        const fixture = gamesToProcess[i];
-                        
-                        if (!fixture || !fixture.teams || !fixture.teams.home || !fixture.teams.away) {
-                            continue;
-                        }
-                        
+                    // Coletar todas as stats dos jogadores (em paralelo para velocidade)
+                    const validFixtures = gamesToProcess.filter(f => f && f.teams && f.teams.home && f.teams.away);
+
+                    validFixtures.forEach(fixture => {
                         teamsWithGames.add(fixture.teams.home.id);
                         teamsWithGames.add(fixture.teams.away.id);
-                        
                         const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
                         console.log(`   ${fixture.teams.home.name} x ${fixture.teams.away.name} ${isFinished ? '(FIM)' : '(AO VIVO)'}`);
-                        
-                        const playerStats = await getPlayerStats(fixture.fixture.id, isFinished);
-                        
+                    });
+
+                    // Buscar stats em lotes de 2 (respeitar rate limit da API)
+                    const allResults = [];
+                    for (let i = 0; i < validFixtures.length; i += 2) {
+                        const batch = validFixtures.slice(i, i + 2);
+                        const batchResults = await Promise.all(
+                            batch.map(fixture => {
+                                const isFinished = finishedStatuses.includes(fixture.fixture?.status?.short);
+                                return getPlayerStats(fixture.fixture.id, isFinished)
+                                    .then(playerStats => ({ fixture, playerStats }));
+                            })
+                        );
+                        allResults.push(...batchResults);
+                        if (i + 2 < validFixtures.length) {
+                            await new Promise(r => setTimeout(r, 500));
+                        }
+                    }
+
+                    allResults.forEach(({ fixture, playerStats }) => {
                         playerStats.forEach(team => {
                             const _teamId = team.team?.id || null;
                             const _teamName = team.team?.name || '';
@@ -6580,9 +6596,7 @@
                                 }
                             });
                         });
-
-                        await new Promise(r => setTimeout(r, 300));
-                    }
+                    });
                     
                     // SALVAR NO FIREBASE PARA OUTROS USUÁRIOS USAREM
                     try {
@@ -6606,10 +6620,29 @@
                 // Agora calcular pontuação para TODOS os usuários confirmados
                 const confirmedUsers = Object.entries(state.users)
                     .filter(([nick, u]) => u.isConfirmed && nick !== 'admin');
-                
+
                 window._cachedPlayerStats = allPlayerStats;
                 window._cachedRound = round;
-                
+
+                // Se usou cache e NÃO tem jogos ao vivo, verificar se já tem scores calculados
+                // Pular recálculo desnecessário para carregar mais rápido
+                if (useCache && !hasLiveGames) {
+                    const allUsersHaveScores = confirmedUsers.every(([nick, u]) => {
+                        return u.scores && u.scores[round] && u.scores[round].players &&
+                               Object.keys(u.scores[round].players).length > 0;
+                    });
+                    if (allUsersHaveScores) {
+                        console.log('⚡ Scores já calculados, pulando recálculo (sem jogos ao vivo)');
+                        if (state.currentUser && state.users[state.currentUser]) {
+                            state.scores = state.users[state.currentUser].scores || {};
+                        }
+                        state.isUpdatingScores = false;
+                        state.liveScoresUpdating = false;
+                        render();
+                        return;
+                    }
+                }
+
                 console.log(`📈 Calculando pontos para ${confirmedUsers.length} usuários...`);
                 
                 for (const [nick, user] of confirmedUsers) {
@@ -6747,15 +6780,9 @@
                     
                     console.log(`    ${nick}: ${userTotal} pts`);
                     
-                    // DEBUG: Mostrar manualPlayers antes de salvar
-                    if (user.scores[round].manualPlayers && Object.keys(user.scores[round].manualPlayers).length > 0) {
+                    // DEBUG: Mostrar manualPlayers (ativar com window._debugScores = true)
+                    if (window._debugScores && user.scores[round].manualPlayers && Object.keys(user.scores[round].manualPlayers).length > 0) {
                         console.log(`    📌 ${nick} manualPlayers:`, user.scores[round].manualPlayers);
-                        console.log(`    📌 ${nick} players com pontos manuais:`, 
-                            Object.keys(user.scores[round].manualPlayers).map(pid => ({
-                                pid, 
-                                score: user.scores[round].players[pid] ?? user.scores[round].players[String(pid)]
-                            }))
-                        );
                     }
                     
                     // Salvar no Firebase - APENAS os scores calculados (não manuais)
