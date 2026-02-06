@@ -7581,8 +7581,15 @@
             // Countdown
             const now = Date.now();
             let countdownHTML = '';
+            // Verificar se todos os jogos terminaram
+            const allFixtures = state.liveFixtures || [];
+            const finishedStatuses = ['FT', 'AET', 'PEN', 'PST', 'CANC', 'ABD', 'AWD', 'WO'];
+            const allGamesFinished = allFixtures.length > 0 && allFixtures.every(f => finishedStatuses.includes(f.fixture?.status?.short));
+
             if (liveGames.length > 0) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">AO VIVO</span></div></div>';
+            } else if (allGamesFinished) {
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div></div>';
             } else if (upcomingGames.length > 0) {
                 const nextDate = new Date(upcomingGames[0].fixture.date);
                 const diff = nextDate - now;
@@ -8648,123 +8655,120 @@
         // Auto-refresh cleanup agora é tratado dentro de closeModalDirect()
         
         // Função para verificar acertos e dar pontos - FUNCIONA POR JOGO INDIVIDUAL
+        // Verifica TODOS os usuários confirmados (não só o atual)
         function verificarAcertosAutomatico() {
             if (!state.currentUser) return;
-            
+
             const rodada = state.currentRound;
             const jogos = getJogosDaRodada();
-            const userData = state.users?.[state.currentUser];
-            
-            if (!userData) return;
+
             if (jogos.length === 0) return;
-            
-            // Verificar se o usuário cravou palpites
-            const palpites = userData.palpitesCravados?.[rodada];
-            if (!palpites) return;
-            
-            // Inicializar registro de jogos já conferidos
-            if (!userData.jogosConferidos) userData.jogosConferidos = {};
-            if (!userData.jogosConferidos[rodada]) userData.jogosConferidos[rodada] = {};
-            
-            // Verificar cada jogo finalizado INDIVIDUALMENTE
-            let novosAcertos = 0;
-            let novosJogosConferidos = [];
-            
-            jogos.forEach(jogo => {
-                // Status de jogos finalizados
-                const statusFinalizados = ['FT', 'AET', 'PEN', 'AWD', 'WO'];
-                const estaFinalizado = statusFinalizados.includes(jogo.status) || 
+
+            // Pré-filtrar jogos finalizados
+            const statusFinalizados = ['FT', 'AET', 'PEN', 'AWD', 'WO'];
+            const jogosFinalizados = jogos.filter(jogo => {
+                const estaFinalizado = statusFinalizados.includes(jogo.status) ||
                     (jogo.timestamp && Date.now() > jogo.timestamp + (3 * 60 * 60 * 1000) && !['1H', '2H', 'HT', 'LIVE', 'ET', 'P', 'BT', 'NS', 'TBD'].includes(jogo.status));
-                
-                // Só verificar jogos finalizados que tenham placar
-                if (!estaFinalizado) return;
-                if (jogo.golsCasa === null || jogo.golsCasa === undefined) return;
-                
-                // Verificar se este jogo já foi conferido
-                const jogoKey = String(jogo.id);
-                if (userData.jogosConferidos[rodada][jogoKey]) return;
-                
-                // IMPORTANTE: Salvar resultado final no Firebase quando jogo termina
-                salvarResultadoFinal(rodada, jogo.id, jogo.golsCasa, jogo.golsFora);
-                
-                // Usar resultado persistido (prioridade) ou da API
-                const resultadoSalvo = getResultadoFinal(rodada, jogo.id);
-                const resultadoCasa = resultadoSalvo ? resultadoSalvo.casa : String(jogo.golsCasa).trim();
-                const resultadoFora = resultadoSalvo ? resultadoSalvo.fora : String(jogo.golsFora).trim();
-                
-                // Buscar palpite do usuário
-                const palpite = palpites[jogo.id] || palpites[jogoKey];
-                if (!palpite || palpite.casa === '' || palpite.fora === '') {
-                    // Marcar como conferido mesmo sem palpite
-                    userData.jogosConferidos[rodada][jogoKey] = { conferido: true, acertou: false };
-                    novosJogosConferidos.push(jogoKey);
-                    return;
-                }
-                
-                // Comparar (converter para string)
-                const palpiteCasa = String(palpite.casa).trim();
-                const palpiteFora = String(palpite.fora).trim();
-                
-                const acertou = (palpiteCasa === resultadoCasa && palpiteFora === resultadoFora);
-                
-                // Marcar como conferido
-                userData.jogosConferidos[rodada][jogoKey] = { 
-                    conferido: true, 
-                    acertou: acertou,
-                    palpite: `${palpiteCasa}x${palpiteFora}`,
-                    resultado: `${resultadoCasa}x${resultadoFora}`
-                };
-                novosJogosConferidos.push(jogoKey);
-                
-                if (acertou) {
-                    novosAcertos++;
-                    console.log(`✓ ACERTOU! ${jogo.casa} ${resultadoCasa}x${resultadoFora} ${jogo.fora}`);
-                }
+                return estaFinalizado && jogo.golsCasa !== null && jogo.golsCasa !== undefined;
             });
-            
-            // Se teve novos acertos, dar pontos
-            if (novosAcertos > 0) {
-                const pontosGanhos = novosAcertos * 5;
-                
-                console.log(`🎯 @${state.currentUser} acertou ${novosAcertos} novo(s) palpite(s) = +${pontosGanhos} pts`);
-                
-                // Adicionar pontos ao usuário
-                if (!userData.scores) userData.scores = {};
-                if (!userData.scores.market) userData.scores.market = { purchases: [] };
-                if (!userData.scores.market.purchases) userData.scores.market.purchases = [];
-                if (!Array.isArray(userData.scores.market.purchases)) userData.scores.market.purchases = [];
-                
-                userData.scores.market.purchases.push({
-                    type: 'cravar_bonus',
-                    playerId: 0,
-                    playerName: `Cravar R${rodada} (+${novosAcertos} acerto${novosAcertos > 1 ? 's' : ''})`,
-                    price: pontosGanhos,
-                    date: new Date().toISOString()
+            if (jogosFinalizados.length === 0) return;
+
+            // Salvar resultados finais
+            jogosFinalizados.forEach(jogo => {
+                salvarResultadoFinal(rodada, jogo.id, jogo.golsCasa, jogo.golsFora);
+            });
+
+            // Verificar TODOS os usuários confirmados
+            const usersToCheck = Object.entries(state.users)
+                .filter(([nick, u]) => u.isConfirmed && nick !== 'admin');
+
+            let needsRender = false;
+
+            for (const [nick, userData] of usersToCheck) {
+                // Verificar se o usuário cravou palpites
+                const palpites = userData.palpitesCravados?.[rodada];
+                if (!palpites) continue;
+
+                // Inicializar registro de jogos já conferidos
+                if (!userData.jogosConferidos) userData.jogosConferidos = {};
+                if (!userData.jogosConferidos[rodada]) userData.jogosConferidos[rodada] = {};
+
+                let novosAcertos = 0;
+                let novosJogosConferidos = [];
+
+                jogosFinalizados.forEach(jogo => {
+                    const jogoKey = String(jogo.id);
+                    if (userData.jogosConferidos[rodada][jogoKey]) return;
+
+                    // Usar resultado persistido (prioridade) ou da API
+                    const resultadoSalvo = getResultadoFinal(rodada, jogo.id);
+                    const resultadoCasa = resultadoSalvo ? resultadoSalvo.casa : String(jogo.golsCasa).trim();
+                    const resultadoFora = resultadoSalvo ? resultadoSalvo.fora : String(jogo.golsFora).trim();
+
+                    // Buscar palpite do usuário
+                    const palpite = palpites[jogo.id] || palpites[jogoKey];
+                    if (!palpite || palpite.casa === '' || palpite.fora === '') {
+                        userData.jogosConferidos[rodada][jogoKey] = { conferido: true, acertou: false };
+                        novosJogosConferidos.push(jogoKey);
+                        return;
+                    }
+
+                    const palpiteCasa = String(palpite.casa).trim();
+                    const palpiteFora = String(palpite.fora).trim();
+                    const acertou = (palpiteCasa === resultadoCasa && palpiteFora === resultadoFora);
+
+                    userData.jogosConferidos[rodada][jogoKey] = {
+                        conferido: true, acertou: acertou,
+                        palpite: `${palpiteCasa}x${palpiteFora}`,
+                        resultado: `${resultadoCasa}x${resultadoFora}`
+                    };
+                    novosJogosConferidos.push(jogoKey);
+
+                    if (acertou) {
+                        novosAcertos++;
+                        console.log(`✓ ${nick} ACERTOU! ${jogo.casa} ${resultadoCasa}x${resultadoFora} ${jogo.fora}`);
+                    }
                 });
-                
-                // Atualizar state.scores também
-                if (!state.scores) state.scores = {};
-                if (!state.scores.market) state.scores.market = { purchases: [] };
-                state.scores.market = userData.scores.market;
-                
-                // Salvar no Firebase
-                if (db) {
-                    db.ref('users/' + state.currentUser + '/scores/market').set(userData.scores.market);
-                    db.ref('users/' + state.currentUser + '/jogosConferidos').set(userData.jogosConferidos);
-                }
-                
-                // Mostrar notificação
-                setTimeout(() => {
-                    showNotification(`+${pontosGanhos} pts! Voce acertou ${novosAcertos} palpite(s)!`, 'success');
-                }, 300);
-                
-                render();
-            } else if (novosJogosConferidos.length > 0) {
-                // Salvar jogos conferidos mesmo sem acertos
-                if (db) {
-                    db.ref('users/' + state.currentUser + '/jogosConferidos').set(userData.jogosConferidos);
+
+                if (novosAcertos > 0) {
+                    const pontosGanhos = novosAcertos * 5;
+                    console.log(`🎯 @${nick} acertou ${novosAcertos} palpite(s) = +${pontosGanhos} pts`);
+
+                    if (!userData.scores) userData.scores = {};
+                    if (!userData.scores.market) userData.scores.market = { purchases: [] };
+                    if (!userData.scores.market.purchases) userData.scores.market.purchases = [];
+                    if (!Array.isArray(userData.scores.market.purchases)) userData.scores.market.purchases = [];
+
+                    userData.scores.market.purchases.push({
+                        type: 'cravar_bonus', playerId: 0,
+                        playerName: `Cravar R${rodada} (+${novosAcertos} acerto${novosAcertos > 1 ? 's' : ''})`,
+                        price: pontosGanhos, date: new Date().toISOString()
+                    });
+
+                    // Salvar no Firebase
+                    if (db) {
+                        db.ref('users/' + nick + '/scores/market').set(userData.scores.market);
+                        db.ref('users/' + nick + '/jogosConferidos').set(userData.jogosConferidos);
+                    }
+
+                    // Se é o usuário atual, atualizar state e notificar
+                    if (nick === state.currentUser) {
+                        if (!state.scores) state.scores = {};
+                        if (!state.scores.market) state.scores.market = { purchases: [] };
+                        state.scores.market = userData.scores.market;
+                        setTimeout(() => {
+                            showNotification(`+${pontosGanhos} pts! Voce acertou ${novosAcertos} palpite(s)!`, 'success');
+                        }, 300);
+                    }
+                    needsRender = true;
+                } else if (novosJogosConferidos.length > 0) {
+                    if (db) {
+                        db.ref('users/' + nick + '/jogosConferidos').set(userData.jogosConferidos);
+                    }
                 }
             }
+
+            if (needsRender) render();
         }
         
         // Função para contar acertos do usuário na rodada
