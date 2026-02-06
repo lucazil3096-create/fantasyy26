@@ -21957,24 +21957,52 @@ O usuário não poderá mais fazer login.
         };
         
         // Remover jogador manual
-        window.adminRemoveManualPlayer = function(playerId) {
+        window.adminRemoveManualPlayer = async function(playerId) {
             const player = state.players.find(p => String(p.id) === String(playerId));
             if (!player) return;
-            
+
             if (!confirm(`Remover "${player.name}" (${player.team}) da lista de jogadores manuais?`)) return;
-            
-            // Remover do Firebase
+
+            // Remover do Firebase - tentar todas as chaves possíveis
             if (db) {
-                db.ref('manualPlayers/' + Math.abs(playerId)).remove().then(() => {
-                    console.log('Jogador manual removido:', player.name);
-                    // O listener do Firebase vai atualizar automaticamente
-                }).catch(err => {
-                    alert('Erro ao remover: ' + err.message);
-                });
+                const keysToTry = [
+                    String(Math.abs(playerId)),
+                    String(playerId),
+                    String(playerId).replace('-', '')
+                ];
+                // Também buscar por snapshot para encontrar a chave exata
+                try {
+                    const snapshot = await db.ref('manualPlayers').once('value');
+                    const allManual = snapshot.val() || {};
+                    for (const [key, val] of Object.entries(allManual)) {
+                        if (val && (String(val.id) === String(playerId) ||
+                            String(Math.abs(val.id)) === String(Math.abs(playerId)) ||
+                            val.name === player.name)) {
+                            keysToTry.push(key);
+                        }
+                    }
+                } catch(e) {}
+
+                // Remover todas as chaves encontradas
+                const uniqueKeys = [...new Set(keysToTry)];
+                for (const key of uniqueKeys) {
+                    try {
+                        await db.ref('manualPlayers/' + key).remove();
+                        console.log('🗑️ Removido manualPlayers/' + key);
+                    } catch(e) {}
+                }
+                console.log('✅ Jogador manual removido:', player.name);
             }
-            
-            // Remover do state local também
-            state.players = state.players.filter(p => String(p.id) !== String(playerId));
+
+            // Remover do cache local
+            delete _firebaseManualPlayersCache[String(Math.abs(playerId))];
+            delete _firebaseManualPlayersCache[String(playerId)];
+
+            // Remover do state local
+            state.players = state.players.filter(p =>
+                String(p.id) !== String(playerId) &&
+                String(Math.abs(p.id)) !== String(Math.abs(playerId))
+            );
             render();
         };
 
@@ -23436,15 +23464,15 @@ O usuário não poderá mais fazer login.
             
             // Se não é forçado, verificar se precisa sincronizar
             const needsSync = await shouldAutoSync();
-            const tooFewPlayers = state.players.length < 100;
-            
+            const tooFewPlayers = state.players.length < 700;
+
             if (!forceSync && !needsSync && !tooFewPlayers && state.players.length > 0) {
                 console.log('✓ Já sincronizou hoje, pulando...');
                 return;
             }
-            
-            if (tooFewPlayers) {
-                console.log(`⚠️ Apenas ${state.players.length} jogadores - forçando sync!`);
+
+            if (tooFewPlayers && state.players.length > 0) {
+                console.log(`⚠️ Apenas ${state.players.length} jogadores (mínimo 700) - forçando sync!`);
             }
             
             // Marcar como sincronizando
