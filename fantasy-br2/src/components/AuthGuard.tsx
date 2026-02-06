@@ -2,31 +2,30 @@
 
 import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { ref, get } from 'firebase/database';
+import { ref, get, onValue } from 'firebase/database';
 import { auth, db } from '@/lib/firebase';
 import { useStore } from '@/store/useStore';
+import { DEFAULT_APPEARANCE } from '@/lib/appearance';
 import LoginScreen from '@/components/LoginScreen';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { setUser, setLoading, isLoading, isLoggedIn } = useStore();
+  const { setUser, setLoading, isLoading, isLoggedIn, setPlayers, setAppearance, setCurrentRound, setNextGameDate } = useStore();
   const [ready, setReady] = useState(false);
 
+  // Auth listener
   useEffect(() => {
     if (!auth) return;
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          // Get nickname from uidToNick
           const nickSnap = await get(ref(db, `uidToNick/${firebaseUser.uid}`));
           const nickname = nickSnap.val();
 
           if (nickname) {
-            // Get user data
             const userSnap = await get(ref(db, `users/${nickname}`));
             const userData = userSnap.val() || {};
 
-            // Check admin
             const adminSnap = await get(ref(db, `adminUids/${firebaseUser.uid}`));
             const isAdmin = adminSnap.val() === true;
 
@@ -53,6 +52,43 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
 
     return () => unsubscribe();
   }, [setUser, setLoading]);
+
+  // Load players from Firebase (real-time)
+  useEffect(() => {
+    const playersRef = ref(db, 'gameData/players/players');
+    const unsub = onValue(playersRef, (snap) => {
+      const data = snap.val();
+      if (Array.isArray(data)) {
+        setPlayers(data);
+      }
+    });
+    return () => unsub();
+  }, [setPlayers]);
+
+  // Load appearance config
+  useEffect(() => {
+    const appearanceRef = ref(db, 'config/appearance');
+    const unsub = onValue(appearanceRef, (snap) => {
+      const data = snap.val();
+      if (data) {
+        setAppearance({ ...DEFAULT_APPEARANCE, ...data });
+      }
+    });
+    return () => unsub();
+  }, [setAppearance]);
+
+  // Load game state
+  useEffect(() => {
+    const gameStateRef = ref(db, 'gameState');
+    const unsub = onValue(gameStateRef, (snap) => {
+      const data = snap.val();
+      if (data) {
+        if (data.currentRound) setCurrentRound(data.currentRound);
+        if (data.nextGameDate) setNextGameDate(data.nextGameDate);
+      }
+    });
+    return () => unsub();
+  }, [setCurrentRound, setNextGameDate]);
 
   if (!ready || isLoading) {
     return (

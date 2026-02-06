@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { DraftState, DraftPick } from '@/lib/draft';
+import { AppearanceConfig, DEFAULT_APPEARANCE } from '@/lib/appearance';
 
 export type Screen = 'home' | 'lineup' | 'draft' | 'ranking' | 'trades' | 'admin';
 
@@ -41,6 +43,15 @@ interface AppState {
   isRoundActive: boolean;
   nextGameDate: string | null;
 
+  // Draft
+  draft: DraftState | null;
+  setDraft: (draft: DraftState | null) => void;
+  addDraftPick: (pick: DraftPick) => void;
+
+  // Appearance
+  appearance: AppearanceConfig;
+  setAppearance: (config: AppearanceConfig) => void;
+
   // Auth actions
   setUser: (user: UserData | null) => void;
   setLoading: (loading: boolean) => void;
@@ -69,6 +80,26 @@ export const useStore = create<AppState>((set) => ({
   currentRound: 1,
   isRoundActive: false,
   nextGameDate: null,
+
+  // Draft
+  draft: null,
+  setDraft: (draft) => set({ draft }),
+  addDraftPick: (pick) =>
+    set((s) => {
+      if (!s.draft) return {};
+      return {
+        draft: {
+          ...s.draft,
+          picks: [...s.draft.picks, pick],
+          currentPick: s.draft.currentPick + 1,
+          availablePlayers: s.draft.availablePlayers.filter((id) => id !== pick.playerId),
+        },
+      };
+    }),
+
+  // Appearance
+  appearance: DEFAULT_APPEARANCE,
+  setAppearance: (appearance) => set({ appearance }),
 
   // Auth actions
   setUser: (user) => set({ user, isLoggedIn: !!user }),
