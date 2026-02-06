@@ -2450,15 +2450,38 @@
                     console.log('Erro ao ler gameState:', e.message);
                 }
                 
-                // gameState é a FONTE DA VERDADE, mas com validação contra a API
+                // gameState é a FONTE DA VERDADE, com auto-avanço e validação
                 if (gameState && gameState.currentRound) {
                     let roundNum = toRoundNumber(gameState.currentRound);
                     let roundStatus = gameState.roundStatus || 'waiting';
+                    let subsOpen = gameState.substitutionsOpen === true;
 
-                    // VALIDAÇÃO: buscar rodada da API pra confirmar que gameState não está à frente
+                    // AUTO-AVANÇO: Se rodada "finished" e já passou das 6h da manhã do dia seguinte
+                    if (roundStatus === 'finished' && gameState.roundEndedAt && roundNum < 38) {
+                        const endDate = new Date(gameState.roundEndedAt);
+                        const next6am = new Date(endDate);
+                        next6am.setDate(next6am.getDate() + 1);
+                        next6am.setHours(6, 0, 0, 0);
+                        if (Date.now() >= next6am.getTime()) {
+                            roundNum = Math.min(roundNum + 1, 38);
+                            roundStatus = 'waiting';
+                            subsOpen = true;
+                            if (db) {
+                                await db.ref('gameState').update({
+                                    currentRound: roundNum,
+                                    roundStatus: 'waiting',
+                                    substitutionsOpen: true,
+                                    roundEndedAt: null,
+                                    updatedAt: Date.now()
+                                });
+                            }
+                            console.log(`🔄 AUTO-AVANÇO no carregamento: → Rodada ${roundNum}`);
+                        }
+                    }
+
+                    // VALIDAÇÃO: buscar rodada da API pra confirmar que não estamos à frente
                     try {
-                        const seasonsCheck = [SEASON, SEASON_FALLBACK];
-                        for (const season of seasonsCheck) {
+                        for (const season of [SEASON, SEASON_FALLBACK]) {
                             const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
                             if (nextRes.response && nextRes.response.length > 0) {
                                 const roundStr = nextRes.response[0].league.round;
@@ -2466,10 +2489,10 @@
                                 if (match) {
                                     const apiRound = parseInt(match[1]);
                                     if (roundNum > apiRound) {
-                                        // gameState está À FRENTE da API - corrigir!
-                                        console.log(`⚠️ CORREÇÃO: gameState rodada ${roundNum} > API rodada ${apiRound}. Corrigindo para ${apiRound}`);
+                                        console.log(`⚠️ CORREÇÃO: Rodada ${roundNum} > API ${apiRound}. Auto-corrigindo.`);
                                         roundNum = apiRound;
                                         roundStatus = 'waiting';
+                                        subsOpen = true;
                                         if (db) {
                                             await db.ref('gameState').update({
                                                 currentRound: apiRound,
@@ -2485,16 +2508,16 @@
                             }
                         }
                     } catch (e) {
-                        console.log('⚠️ Não foi possível validar rodada contra API:', e.message);
+                        console.log('⚠️ Não foi possível validar contra API:', e.message);
                     }
 
                     state.currentRound = roundNum;
                     state.selectedRound = roundNum;
-                    state.substitutionsOpen = gameState.substitutionsOpen === true;
+                    state.substitutionsOpen = subsOpen;
                     state.roundStatus = roundStatus;
                     state.captainEnabled = gameState.captainEnabled === true;
                     state.delayedGamesRounds = gameState.delayedGamesRounds || [];
-                    console.log(`✅ Usando gameState Firebase: Rodada ${roundNum} | Status: ${state.roundStatus}`);
+                    console.log(`✅ gameState: Rodada ${roundNum} | Status: ${roundStatus} | Subs: ${subsOpen ? 'Abertas' : 'Travadas'}`);
                     return;
                 }
                 
@@ -4004,11 +4027,25 @@
         // Atualizar estado do jogo no Firebase (chamado periodicamente)
         async function updateGameState() {
             if (!state.liveFixtures || state.liveFixtures.length === 0) return;
-            
+
+            // SEGURANÇA: Verificar se as fixtures são da rodada atual
+            // Se as fixtures são de outra rodada (ex: rodada anterior após avanço), ignorar
+            const sampleFixture = state.liveFixtures[0];
+            if (sampleFixture?.league?.round) {
+                const roundMatch = sampleFixture.league.round.match(/Regular Season - (\d+)/);
+                if (roundMatch && parseInt(roundMatch[1]) !== state.currentRound) {
+                    console.log(`⚠️ updateGameState: Fixtures são da rodada ${roundMatch[1]}, mas estamos na ${state.currentRound}. Aguardando refresh.`);
+                    return;
+                }
+            }
+
+            // Capturar rodada no início para detectar race conditions
+            const roundAtStart = state.currentRound;
+
             const now = Date.now();
             const oneHour = 60 * 60 * 1000;
             const thirtyMinutes = 30 * 60 * 1000;
-            
+
             let hasLiveGames = false;
             let allGamesFinished = true;
             let hasFinishedGames = false;
@@ -4115,31 +4152,35 @@
             }
             
             // Atualizar Firebase se houver mudanças
-            const stateChanged = 
-                newRoundStatus !== state.roundStatus || 
+            const stateChanged =
+                newRoundStatus !== state.roundStatus ||
                 newSubstitutionsOpen !== state.substitutionsOpen ||
                 shouldAdvanceRound;
-            
+
             if (stateChanged && db) {
-                const newRound = shouldAdvanceRound ? state.currentRound + 1 : state.currentRound;
+                // RACE CONDITION CHECK: se a rodada mudou durante a execução, abortar
+                if (state.currentRound !== roundAtStart) {
+                    console.log(`⚠️ updateGameState: Rodada mudou de ${roundAtStart} para ${state.currentRound} durante execução. Abortando.`);
+                    return;
+                }
 
                 console.log('📤 Atualizando gameState no Firebase...');
 
                 if (shouldAdvanceRound) {
-                    // AVANÇANDO RODADA: nova rodada começa "waiting" com subs abertas
+                    // Usar roundAtStart (capturado no início) para evitar race condition
+                    const newRound = Math.min(roundAtStart + 1, 38);
                     await db.ref('gameState').update({
-                        currentRound: Math.min(newRound, 38),
+                        currentRound: newRound,
                         roundStatus: 'waiting',
                         roundEndedAt: null,
                         substitutionsOpen: true,
                         updatedAt: Date.now()
                     });
-                    console.log(`🔄 Avançando para rodada ${newRound}...`);
+                    console.log(`🔄 Avançando rodada ${roundAtStart} → ${newRound}`);
                     setTimeout(() => fetchLiveFixtures(true), 1000);
                 } else {
-                    // Atualizando status da rodada atual
                     await db.ref('gameState').update({
-                        currentRound: state.currentRound,
+                        currentRound: roundAtStart,
                         roundStatus: newRoundStatus,
                         roundEndedAt: allGamesFinished ? lastGameEndTime : null,
                         substitutionsOpen: newSubstitutionsOpen,
