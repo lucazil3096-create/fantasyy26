@@ -7621,16 +7621,18 @@
             const allGamesFinished = allFixtures.length > 0 && allFixtures.every(f => finishedStatuses.includes(f.fixture?.status?.short));
             // Considerar rodada encerrada se:
             // 1. gameState diz finished, OU
-            // 2. Todos os jogos terminaram (FT/PST/etc), OU
-            // 3. Maioria finalizou, nenhum ao vivo, e os "NS" restantes são adiados (data já passou)
+            // 2. Todos os jogos FT/PST, OU
+            // 3. Nenhum ao vivo + tem jogos finalizados + jogos NS restantes são adiados
+            //    (data já passou OU data > 48h no futuro = jogo remarcado pra outra data)
             const finishedCount = allFixtures.filter(f => finishedStatuses.includes(f.fixture?.status?.short)).length;
             const nsGames = allFixtures.filter(f => ['NS', 'TBD'].includes(f.fixture?.status?.short || 'NS'));
-            const nsAllInPast = nsGames.length > 0 && nsGames.every(f => {
-                const gameDate = new Date(f.fixture?.date);
-                return (now - gameDate.getTime()) > 3 * 60 * 60 * 1000; // Mais de 3h atrás
+            const fortyEightHours = 48 * 60 * 60 * 1000;
+            const nsAllPostponed = nsGames.length > 0 && nsGames.every(f => {
+                const gameDate = new Date(f.fixture?.date).getTime();
+                return (now - gameDate > 3 * 60 * 60 * 1000) || (gameDate - now > fortyEightHours);
             });
             const isRoundFinished = state.roundStatus === 'finished' || allGamesFinished ||
-                (liveGames.length === 0 && finishedCount > 0 && (nsGames.length === 0 || nsAllInPast));
+                (liveGames.length === 0 && finishedCount > 0 && (nsGames.length === 0 || nsAllPostponed));
 
             if (liveGames.length > 0) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">AO VIVO</span></div></div>';
