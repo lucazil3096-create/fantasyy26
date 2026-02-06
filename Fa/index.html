@@ -671,7 +671,12 @@
         // Marca um UID como admin no Firebase
         async function setAdminUid(uid) {
             if (db && uid) {
-                await db.ref('adminUids/' + uid).set(true);
+                try {
+                    await db.ref('adminUids/' + uid).set(true);
+                    console.log('🔐 Admin UID salvo:', uid);
+                } catch (e) {
+                    console.warn('⚠️ setAdminUid falhou (ignorando):', e.message);
+                }
             }
         }
 
