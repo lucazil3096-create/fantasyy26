@@ -1,0 +1,101 @@
+{
+  "rules": {
+    "gameState": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "cache": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "scoresCache": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "nextRound": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "settings": {
+      ".read": true,
+      ".write": "auth != null && root.child('adminUids/' + auth.uid).val() === true"
+    },
+    "bannedUsers": {
+      ".read": true,
+      ".write": "auth != null && root.child('adminUids/' + auth.uid).val() === true"
+    },
+    "temporadaIniciada": {
+      ".read": true,
+      ".write": "auth != null && root.child('adminUids/' + auth.uid).val() === true"
+    },
+
+    "users": {
+      ".read": true,
+      "$nickname": {
+        ".write": "auth != null && (root.child('nickToUid/' + $nickname).val() === auth.uid || root.child('adminUids/' + auth.uid).val() === true || !data.exists())"
+      }
+    },
+
+    "adminUsers": {
+      ".read": "auth != null",
+      "$nickname": {
+        ".write": "auth != null && root.child('adminUids/' + auth.uid).val() === true"
+      }
+    },
+
+    "nickToUid": {
+      ".read": true,
+      "$nickname": {
+        ".write": "auth != null && (!data.exists() || data.val() === auth.uid)"
+      }
+    },
+    "uidToNick": {
+      ".read": true,
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "adminUids": {
+      ".read": true,
+      ".write": "auth != null && root.child('adminUids/' + auth.uid).val() === true"
+    },
+
+    "tradeOffers": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "monthlyTrades": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "notifications": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "resultadosFinais": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "totalArrecadado": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "draftChat": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "draftStatus": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "privateMessages": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}
