@@ -9127,7 +9127,7 @@
                         ` : `
                         <!-- ABA VER GALERA -->
                         <div class="p-4">
-                            ${renderPalpitesGalera(jogos, rodada, jogosFinalizados)}
+                            ${(() => { try { return renderPalpitesGalera(jogos, rodada, jogosFinalizados); } catch(e) { console.error('Erro ao renderizar palpites da galera:', e); return '<p class="text-red-400 text-sm">Erro ao carregar palpites. Tente recarregar.</p>'; } })()}
                         </div>
                         `}
                     </div>
@@ -9391,7 +9391,7 @@
                                             <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                                 ${palpitesJogo.map(p => `
                                                     <div class="flex items-center gap-2 p-2 rounded-lg ${p.acertou && estaFinalizado ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-zinc-800/50 border border-zinc-700/30'}">
-                                                        <img src="${pf(p)}" alt="${p.name || ''}" class="w-7 h-7 rounded-full object-cover border ${p.acertou && estaFinalizado ? 'border-emerald-500' : 'border-zinc-600'}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.username)}&background=27272a&color=fff'">
+                                                        <img src="${p.photo}" alt="${p.username || ''}" class="w-7 h-7 rounded-full object-cover border ${p.acertou && estaFinalizado ? 'border-emerald-500' : 'border-zinc-600'}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(p.username)}&background=27272a&color=fff'">
                                                         <div class="flex-1 min-w-0">
                                                             <p class="text-[11px] ${p.acertou && estaFinalizado ? 'text-emerald-400' : 'text-zinc-400'} truncate">${p.username === state.currentUser ? 'Você' : p.username}</p>
                                                             <p class="text-sm font-bold ${p.acertou && estaFinalizado ? 'text-emerald-300' : 'text-white'}">${p.palpite} ${p.acertou && estaFinalizado ? '✓' : ''}</p>
@@ -17361,6 +17361,7 @@
                 state.tradeTab = null;
                 state.tradeSubTab = null;
                 state.marketModalTab = null;
+                state.cravarTab = null;
                 render();
             }
         };
@@ -17442,6 +17443,7 @@
             state.tradeTab = null;
             state.tradeSubTab = null;
             state.marketModalTab = null;
+            state.cravarTab = null;
             render();
         };
 
