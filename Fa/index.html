@@ -3905,13 +3905,16 @@
                     
                     console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'} | Status: ${state.roundStatus}`);
 
-                    // AUTO-AVANÇO: Se rodada está "finished" e já passou 1 hora, avançar
-                    if (state.roundStatus === 'finished' && state.roundEndedAt) {
-                        const timeSinceEnd = Date.now() - state.roundEndedAt;
-                        const oneHour = 60 * 60 * 1000;
-                        if (timeSinceEnd >= oneHour && state.currentRound < 38) {
+                    // AUTO-AVANÇO: Se rodada está "finished", avançar às 6h do dia seguinte
+                    if (state.roundStatus === 'finished' && state.roundEndedAt && state.currentRound < 38) {
+                        const endDate = new Date(state.roundEndedAt);
+                        const next6am = new Date(endDate);
+                        next6am.setDate(next6am.getDate() + 1);
+                        next6am.setHours(6, 0, 0, 0);
+
+                        if (Date.now() >= next6am.getTime()) {
                             const newRound = state.currentRound + 1;
-                            console.log(`🔄 AUTO-AVANÇO: Rodada ${state.currentRound} acabou há ${Math.round(timeSinceEnd/60000)}min → avançando para ${newRound}`);
+                            console.log(`🔄 AUTO-AVANÇO: Passou das 6h → Rodada ${state.currentRound} → ${newRound}`);
                             db.ref('gameState').update({
                                 currentRound: Math.min(newRound, 38),
                                 roundStatus: 'waiting',
@@ -3919,7 +3922,7 @@
                                 roundEndedAt: null,
                                 updatedAt: Date.now()
                             });
-                            return; // O update vai triggerar o listener de novo
+                            return;
                         }
                     }
 
@@ -4055,24 +4058,28 @@
             } else {
                 // Todos os jogos terminaram (ou adiados)
                 newRoundStatus = 'finished';
+                newSubstitutionsOpen = false;
 
+                // Avançar rodada às 6h da manhã do dia seguinte ao fim dos jogos
+                // Isso dá tempo para os usuários conferirem as pontuações
+                const nextMorning6am = new Date();
                 if (lastGameEndTime > 0) {
-                    const timeSinceLastGame = now - lastGameEndTime;
+                    // Dia seguinte ao último jogo
+                    const lastGameDate = new Date(lastGameEndTime);
+                    nextMorning6am.setFullYear(lastGameDate.getFullYear(), lastGameDate.getMonth(), lastGameDate.getDate() + 1);
+                } else {
+                    // Fallback: amanhã 6h
+                    nextMorning6am.setDate(nextMorning6am.getDate() + 1);
+                }
+                nextMorning6am.setHours(6, 0, 0, 0);
 
-                    if (timeSinceLastGame >= oneHour) {
-                        newSubstitutionsOpen = true;
-                        shouldAdvanceRound = true;
-                        console.log(`🔓 Passou 1 hora desde o fim - LIBERANDO e AVANÇANDO`);
-                    } else {
-                        newSubstitutionsOpen = false;
-                        const remaining = Math.ceil((oneHour - timeSinceLastGame) / 60000);
-                        console.log(`⏳ Faltam ${remaining} min para liberar substituições`);
-                    }
-                } else if (hasFinishedGames) {
-                    // Tem jogos finalizados mas lastGameEndTime=0 (improvável) - avançar
+                if (now >= nextMorning6am.getTime()) {
                     newSubstitutionsOpen = true;
                     shouldAdvanceRound = true;
-                    console.log(`🔓 Jogos finalizados sem timestamp - AVANÇANDO`);
+                    console.log(`🔓 Passou das 6h da manhã - AVANÇANDO RODADA e LIBERANDO`);
+                } else {
+                    const hoursLeft = Math.ceil((nextMorning6am.getTime() - now) / (60 * 60 * 1000));
+                    console.log(`⏳ Rodada encerrada. Próxima rodada abre às 6h (~${hoursLeft}h)`);
                 }
             }
             
