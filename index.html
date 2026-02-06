@@ -7404,9 +7404,9 @@
             const passwordValue = document.getElementById('password')?.value || '';
             const accessCodeValue = document.getElementById('accessCode')?.value || '';
             
-            // AUTO-CARREGAR jogos se estiver na lineup e não tiver dados
-            if (state.screen === 'lineup' && state.currentUser && 
-                (!state.liveFixtures || state.liveFixtures.length === 0) && 
+            // AUTO-CARREGAR jogos se estiver na home ou lineup e não tiver dados
+            if ((state.screen === 'lineup' || state.screen === 'home') && state.currentUser &&
+                (!state.liveFixtures || state.liveFixtures.length === 0) &&
                 !state.isLoadingFixtures && !autoLoadingFixtures) {
                 autoLoadingFixtures = true;
                 console.log('🔄 Auto-carregando jogos da rodada...');
@@ -7881,23 +7881,46 @@
                 // Countdown: até o próximo jogo OU até a próxima rodada abrir
                 let nextRoundInfo = '';
                 let countdownBoxes = '';
+                // Tentar pegar data do próximo jogo de várias fontes
+                let targetDate = null;
+                let targetHome = '';
+                let targetAway = '';
                 if (upcomingGames.length > 0) {
-                    // Mostrar countdown até o próximo jogo da rodada
-                    const nextGame = upcomingGames[0];
-                    const gameDate = new Date(nextGame.fixture.date);
-                    const diff = gameDate.getTime() - now;
+                    targetDate = new Date(upcomingGames[0].fixture.date);
+                    targetHome = upcomingGames[0].teams?.home?.name || '';
+                    targetAway = upcomingGames[0].teams?.away?.name || '';
+                } else if (state.nextRoundDate) {
+                    targetDate = new Date(state.nextRoundDate);
+                } else {
+                    // Fallback: buscar de allFixtures qualquer jogo NS futuro
+                    const futureNS = allFixtures.filter(f => {
+                        const st = f.fixture?.status?.short || 'NS';
+                        return st === 'NS' && new Date(f.fixture?.date) > new Date();
+                    }).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+                    if (futureNS.length > 0) {
+                        targetDate = new Date(futureNS[0].fixture.date);
+                        targetHome = futureNS[0].teams?.home?.name || '';
+                        targetAway = futureNS[0].teams?.away?.name || '';
+                    }
+                }
+                if (targetDate) {
+                    const diff = targetDate.getTime() - now;
                     if (diff > 0) {
                         const d = Math.floor(diff / (24*60*60*1000));
                         const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
                         const m = Math.floor((diff % (60*60*1000)) / (60*1000));
                         const s = Math.floor((diff % (60*1000)) / 1000);
-                        const homeName = (nextGame.teams?.home?.name || '').split(' ').pop();
-                        const awayName = (nextGame.teams?.away?.name || '').split(' ').pop();
                         const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-                        const dayName = dayNames[gameDate.getDay()];
-                        const timeStr = String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0');
-                        nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-white font-bold">' + homeName + ' x ' + awayName + '</span> <span class="text-zinc-500">(' + dayName + ' ' + timeStr + ')</span></p>';
-                        countdownBoxes = '<div id="homeCountdownBoxes" data-target="' + gameDate.getTime() + '" class="flex justify-center gap-2 mt-3">' +
+                        const dayName = dayNames[targetDate.getDay()];
+                        const timeStr = String(targetDate.getHours()).padStart(2,'0') + ':' + String(targetDate.getMinutes()).padStart(2,'0');
+                        if (targetHome && targetAway) {
+                            const homeName = targetHome.split(' ').pop();
+                            const awayName = targetAway.split(' ').pop();
+                            nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-white font-bold">' + homeName + ' x ' + awayName + '</span> <span class="text-zinc-500">(' + dayName + ' ' + timeStr + ')</span></p>';
+                        } else {
+                            nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-zinc-500">' + dayName + ' ' + timeStr + '</span></p>';
+                        }
+                        countdownBoxes = '<div id="homeCountdownBoxes" data-target="' + targetDate.getTime() + '" class="flex justify-center gap-2 mt-3">' +
                             (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
                             '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
                             '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
