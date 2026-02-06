@@ -6951,9 +6951,19 @@
             lastRenderTime = now;
             
             // Auto-detect: se o modal state mudou, é uma ação intencional do usuário
-            const modalChanged = (state.modal !== _prevModalState) || (state.viewingPlayer !== _prevViewingPlayer);
+            const _prevCravarTab = window._prevCravarTab || null;
+            const _prevTradeSubTab = window._prevTradeSubTab || null;
+            const _prevMarketModalTab = window._prevMarketModalTab || null;
+            const modalChanged = (state.modal !== _prevModalState) ||
+                                 (state.viewingPlayer !== _prevViewingPlayer) ||
+                                 (state.cravarTab !== _prevCravarTab) ||
+                                 (state.tradeSubTab !== _prevTradeSubTab) ||
+                                 (state.marketModalTab !== _prevMarketModalTab);
             _prevModalState = state.modal;
             _prevViewingPlayer = state.viewingPlayer;
+            window._prevCravarTab = state.cravarTab;
+            window._prevTradeSubTab = state.tradeSubTab;
+            window._prevMarketModalTab = state.marketModalTab;
             
             // ANTI-FLICKER: Não re-renderizar quando um modal está aberto E nada mudou
             // Firebase listeners disparam render() frequentemente, destruindo e recriando o modal (piscar)
