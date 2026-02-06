@@ -7820,7 +7820,33 @@
             if (liveGames.length > 0) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">AO VIVO</span></div></div>';
             } else if (isRoundFinished) {
-                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div></div>';
+                // Calcular countdown para próxima rodada (6h da manhã seguinte)
+                let nextRoundInfo = '';
+                if (state.roundEndedAt || allGamesFinished) {
+                    const refDate = state.roundEndedAt ? new Date(state.roundEndedAt) : new Date();
+                    const next6am = new Date(refDate);
+                    next6am.setDate(next6am.getDate() + 1);
+                    next6am.setHours(6, 0, 0, 0);
+                    const diffMs = next6am.getTime() - now;
+                    if (diffMs > 0) {
+                        const hLeft = Math.floor(diffMs / (60*60*1000));
+                        const mLeft = Math.floor((diffMs % (60*60*1000)) / (60*1000));
+                        nextRoundInfo = '<p class="text-zinc-400 text-xs mt-2">Rodada ' + (state.currentRound + 1) + ' abre em <span class="text-purple-400 font-bold">' + hLeft + 'h ' + String(mLeft).padStart(2,'0') + 'm</span></p>';
+                    } else {
+                        nextRoundInfo = '<p class="text-emerald-400 text-xs mt-2 font-bold">Próxima rodada abrindo...</p>';
+                    }
+                }
+                // Buscar data do próximo jogo para mostrar
+                let nextGameInfo = '';
+                if (upcomingGames.length > 0) {
+                    const nextGame = upcomingGames[0];
+                    const gameDate = new Date(nextGame.fixture.date);
+                    const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+                    const dayName = dayNames[gameDate.getDay()];
+                    const timeStr = String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0');
+                    nextGameInfo = '<p class="text-zinc-500 text-[10px] mt-1">Próximo jogo: ' + dayName + ' ' + timeStr + '</p>';
+                }
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>' + nextRoundInfo + nextGameInfo + '</div>';
             } else if (upcomingGames.length > 0) {
                 const nextDate = new Date(upcomingGames[0].fixture.date);
                 const diff = nextDate - now;
