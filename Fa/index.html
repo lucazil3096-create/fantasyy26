@@ -650,14 +650,19 @@
                         return null;
                     }
                 } else if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
-                    // Senha mudou desde a criação da conta Firebase Auth
-                    // Tentar deletar e recriar (só funciona se logado)
-                    console.warn('⚠️ Firebase Auth: senha não confere, tentando recriar...');
+                    // invalid-credential pode ser user-not-found (Firebase oculta por segurança)
+                    // Tentar criar conta
+                    console.warn('⚠️ Firebase Auth: invalid-credential, tentando criar conta...');
                     try {
-                        // Criar conta nova com email ligeiramente diferente não é ideal
-                        // Melhor: apenas logar sem Firebase Auth neste caso
-                        return null;
-                    } catch (recreateErr) {
+                        const cred = await fbAuth.createUserWithEmailAndPassword(email, plainPassword);
+                        console.log('🔐 Firebase Auth: conta criada para', nickname);
+                        if (db) {
+                            await db.ref('nickToUid/' + nickname).set(cred.user.uid);
+                            await db.ref('uidToNick/' + cred.user.uid).set(nickname);
+                        }
+                        return cred.user;
+                    } catch (createErr) {
+                        console.warn('⚠️ Firebase Auth: não conseguiu criar conta:', createErr.code);
                         return null;
                     }
                 }
