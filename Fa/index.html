@@ -2130,9 +2130,6 @@
             return arr;
         }
         
-        // Sanitiza array para Firebase (converte undefined para null)
-        function sanitizeArrayForFirebase(arr, length) {
-
         // Sanitiza scores: Firebase converte {1: {...}, 2: {...}} em Array(3)
         // Esta função converte de volta para Object com chaves numéricas corretas
         function sanitizeScores(scores) {
@@ -2150,9 +2147,10 @@
             return obj;
         }
 
-
+        // Sanitiza array para Firebase (converte undefined para null)
+        function sanitizeArrayForFirebase(arr, length) {
             if (!arr) return Array(length).fill(null);
-            
+
             const result = [];
             for (let i = 0; i < length; i++) {
                 if (arr[i] === undefined || arr[i] === null) {
