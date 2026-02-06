@@ -6,6 +6,7 @@
     <title>Fantasy Brasileirão 2026</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
     <style>
@@ -603,12 +604,73 @@
 
         // Inicializar Firebase
         let db = null;
+        let fbAuth = null;
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.database();
+            fbAuth = firebase.auth();
             console.log(' Firebase conectado!');
         } catch (e) {
             console.log('Firebase não configurado, usando localStorage');
+        }
+
+        // ==================== FIREBASE AUTH HELPERS ====================
+        // Gera email fake para Firebase Auth baseado no nickname
+        function getAuthEmail(nickname) {
+            return nickname.toLowerCase().replace(/[^a-z0-9_-]/g, '') + '@fantasybr.app';
+        }
+
+        // Faz login no Firebase Auth (ou cria conta se não existir)
+        // Retorna o user ou null se falhar
+        async function firebaseAuthSignIn(nickname, plainPassword) {
+            if (!fbAuth) return null;
+            const email = getAuthEmail(nickname);
+            try {
+                const cred = await fbAuth.signInWithEmailAndPassword(email, plainPassword);
+                console.log('🔐 Firebase Auth: logado como', nickname);
+                // Garantir UID mappings
+                if (db) {
+                    await db.ref('nickToUid/' + nickname).set(cred.user.uid);
+                    await db.ref('uidToNick/' + cred.user.uid).set(nickname);
+                }
+                return cred.user;
+            } catch (e) {
+                if (e.code === 'auth/user-not-found') {
+                    // Conta não existe ainda - criar (migração de usuário existente)
+                    try {
+                        const cred = await fbAuth.createUserWithEmailAndPassword(email, plainPassword);
+                        console.log('🔐 Firebase Auth: conta criada para', nickname);
+                        if (db) {
+                            await db.ref('nickToUid/' + nickname).set(cred.user.uid);
+                            await db.ref('uidToNick/' + cred.user.uid).set(nickname);
+                        }
+                        return cred.user;
+                    } catch (createErr) {
+                        console.warn('⚠️ Firebase Auth create falhou:', createErr.code);
+                        return null;
+                    }
+                } else if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+                    // Senha mudou desde a criação da conta Firebase Auth
+                    // Tentar deletar e recriar (só funciona se logado)
+                    console.warn('⚠️ Firebase Auth: senha não confere, tentando recriar...');
+                    try {
+                        // Criar conta nova com email ligeiramente diferente não é ideal
+                        // Melhor: apenas logar sem Firebase Auth neste caso
+                        return null;
+                    } catch (recreateErr) {
+                        return null;
+                    }
+                }
+                console.warn('⚠️ Firebase Auth erro:', e.code);
+                return null;
+            }
+        }
+
+        // Marca um UID como admin no Firebase
+        async function setAdminUid(uid) {
+            if (db && uid) {
+                await db.ref('adminUids/' + uid).set(true);
+            }
         }
 
         // ==================== LOGO DO SITE ====================
@@ -16054,7 +16116,10 @@
                 state.users[nickname] = { password: password, teamName: '', scores: {} };
                 state.currentUser = nickname;
                 state.screen = 'createTeam';
-                
+
+                // Firebase Auth: criar conta para o novo usuário
+                await firebaseAuthSignIn(nickname, password);
+
                 if (db) {
                     hashPassword(password).then(h => db.ref('users/' + nickname + '/password').set(h));
                 }
@@ -16086,6 +16151,10 @@
                     if (adminData) {
                         const passOk = await verifyPassword(password, adminData.password);
                         if (passOk) {
+                            // Firebase Auth: login admin
+                            const authUser = await firebaseAuthSignIn(nickname, password);
+                            if (authUser) await setAdminUid(authUser.uid);
+
                             state.currentUser = nickname;
                             state.isAdmin = true;
                             state.teamName = adminData.teamName || 'ADMIN';
@@ -16115,11 +16184,14 @@
                     
                     const passOk = await verifyPassword(password, firebaseUser.password);
                     if (!passOk) { errorEl.textContent = ' Senha incorreta'; return; }
-                    
+
+                    // Firebase Auth: login do usuário
+                    await firebaseAuthSignIn(nickname, password);
+
                     if (firebaseUser.password && !firebaseUser.password.startsWith('sha256$')) {
                         hashPassword(password).then(h => db.ref('users/' + nickname + '/password').set(h));
                     }
-                    
+
                     const localUser = state.users[nickname] || {};
                     state.users[nickname] = {
                         ...localUser,
@@ -16130,7 +16202,7 @@
                         formation: firebaseUser.formation || localUser.formation || '4-3-3',
                         scores: firebaseUser.scores || localUser.scores || {}
                     };
-                    
+
                     completeLogin(nickname, state.users[nickname]);
                 } catch(err) {
                     console.error('Erro login:', err);
@@ -22926,7 +22998,7 @@ O usuário não poderá mais fazer login.
             loadAdminSettings();
         }
 
-        window.logout = function(forgetDevice = false) {
+        window.logout = async function(forgetDevice = false) {
             // Se forgetDevice é true, limpa credenciais do "lembrar dispositivo"
             if (forgetDevice) {
                 localStorage.removeItem('fantasyRememberDevice');
@@ -22954,6 +23026,11 @@ O usuário não poderá mais fazer login.
                 currentUser: null
             }));
             
+            // Firebase Auth: signOut
+            if (fbAuth) {
+                try { await fbAuth.signOut(); } catch(e) {}
+            }
+
             console.log('👋 Logout realizado');
             render();
         };
@@ -22996,16 +23073,19 @@ O usuário não poderá mais fazer login.
                 return false;
             }
             
+            // Firebase Auth: login automático (antes de acessar dados)
+            await firebaseAuthSignIn(savedUser, password);
+
             // Buscar do Firebase com timeout
             if (db) {
                 try {
                     // Timeout de 5 segundos
-                    const timeoutPromise = new Promise((_, reject) => 
+                    const timeoutPromise = new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Timeout')), 5000)
                     );
-                    
+
                     const firebasePromise = db.ref('users/' + savedUser).once('value');
-                    
+
                     // Checar se é admin primeiro
                     try {
                         const adminSnap = await Promise.race([db.ref('adminUsers/' + savedUser).once('value'), timeoutPromise]);
@@ -23013,6 +23093,9 @@ O usuário não poderá mais fazer login.
                         if (adminData) {
                             const adminPassOk = await verifyPassword(password, adminData.password);
                             if (adminPassOk) {
+                                // Marcar como admin no Firebase Auth
+                                if (fbAuth && fbAuth.currentUser) await setAdminUid(fbAuth.currentUser.uid);
+
                                 state.currentUser = savedUser;
                                 state.isAdmin = true;
                                 state.teamName = adminData.teamName || 'ADMIN';
