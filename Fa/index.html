@@ -625,50 +625,47 @@
         async function firebaseAuthSignIn(nickname, plainPassword) {
             if (!fbAuth) return null;
             const email = getAuthEmail(nickname);
+            let user = null;
+
+            // 1. Tentar login
             try {
                 const cred = await fbAuth.signInWithEmailAndPassword(email, plainPassword);
                 console.log('🔐 Firebase Auth: logado como', nickname);
-                // Garantir UID mappings
-                if (db) {
-                    await db.ref('nickToUid/' + nickname).set(cred.user.uid);
-                    await db.ref('uidToNick/' + cred.user.uid).set(nickname);
-                }
-                return cred.user;
+                user = cred.user;
             } catch (e) {
-                if (e.code === 'auth/user-not-found') {
-                    // Conta não existe ainda - criar (migração de usuário existente)
+                // 2. Se não existe ou credencial inválida, tentar criar
+                if (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
                     try {
                         const cred = await fbAuth.createUserWithEmailAndPassword(email, plainPassword);
                         console.log('🔐 Firebase Auth: conta criada para', nickname);
-                        if (db) {
-                            await db.ref('nickToUid/' + nickname).set(cred.user.uid);
-                            await db.ref('uidToNick/' + cred.user.uid).set(nickname);
-                        }
-                        return cred.user;
+                        user = cred.user;
                     } catch (createErr) {
-                        console.warn('⚠️ Firebase Auth create falhou:', createErr.code);
+                        if (createErr.code === 'auth/email-already-in-use') {
+                            // Conta existe mas senha diferente - auth sem DB mapping
+                            console.warn('⚠️ Firebase Auth: conta existe com senha diferente');
+                        } else {
+                            console.warn('⚠️ Firebase Auth create falhou:', createErr.code);
+                        }
                         return null;
                     }
-                } else if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
-                    // invalid-credential pode ser user-not-found (Firebase oculta por segurança)
-                    // Tentar criar conta
-                    console.warn('⚠️ Firebase Auth: invalid-credential, tentando criar conta...');
-                    try {
-                        const cred = await fbAuth.createUserWithEmailAndPassword(email, plainPassword);
-                        console.log('🔐 Firebase Auth: conta criada para', nickname);
-                        if (db) {
-                            await db.ref('nickToUid/' + nickname).set(cred.user.uid);
-                            await db.ref('uidToNick/' + cred.user.uid).set(nickname);
-                        }
-                        return cred.user;
-                    } catch (createErr) {
-                        console.warn('⚠️ Firebase Auth: não conseguiu criar conta:', createErr.code);
-                        return null;
-                    }
+                } else {
+                    console.warn('⚠️ Firebase Auth erro:', e.code);
+                    return null;
                 }
-                console.warn('⚠️ Firebase Auth erro:', e.code);
-                return null;
             }
+
+            // 3. Salvar UID mappings (separado - falha aqui não afeta o auth)
+            if (user && db) {
+                try {
+                    await db.ref('nickToUid/' + nickname).set(user.uid);
+                    await db.ref('uidToNick/' + user.uid).set(nickname);
+                } catch (dbErr) {
+                    console.warn('⚠️ UID mapping falhou (DB):', dbErr.message);
+                    // Auth funcionou, retorna user mesmo assim
+                }
+            }
+
+            return user;
         }
 
         // Marca um UID como admin no Firebase
