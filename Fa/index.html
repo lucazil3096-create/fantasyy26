@@ -3994,14 +3994,20 @@
 
                 // Jogos não iniciados (apenas NS e TBD)
                 if (['NS', 'TBD'].includes(status)) {
-                    allGamesFinished = false;
-                    if (matchTime < firstUpcomingGameTime) {
-                        firstUpcomingGameTime = matchTime;
+                    const fortyEightHours = 48 * 60 * 60 * 1000;
+                    const isPostponed = (matchTime - now > fortyEightHours) || (now - matchTime > 3 * 60 * 60 * 1000);
+                    if (isPostponed) {
+                        // Jogo remarcado (>48h no futuro ou data já passou) - tratar como adiado
+                        console.log(`⏭️ ${fixture.teams?.home?.name} x ${fixture.teams?.away?.name} - NS mas adiado (ignorado)`);
+                    } else {
+                        allGamesFinished = false;
+                        if (matchTime < firstUpcomingGameTime) {
+                            firstUpcomingGameTime = matchTime;
+                        }
                     }
                 }
 
                 // Jogos adiados/cancelados - NÃO contam para status da rodada
-                // Permitem que a rodada termine normalmente
                 if (['PST', 'CANC', 'ABD', 'AWD', 'WO'].includes(status)) {
                     console.log(`⏭️ ${fixture.teams?.home?.name} x ${fixture.teams?.away?.name} - ${status} (ignorado)`);
                 }
@@ -4047,23 +4053,26 @@
                     }
                 }
             } else {
-                // Todos os jogos terminaram
+                // Todos os jogos terminaram (ou adiados)
                 newRoundStatus = 'finished';
-                
+
                 if (lastGameEndTime > 0) {
                     const timeSinceLastGame = now - lastGameEndTime;
-                    
+
                     if (timeSinceLastGame >= oneHour) {
-                        // Passou 1 hora - AVANÇAR RODADA e LIBERAR
                         newSubstitutionsOpen = true;
                         shouldAdvanceRound = true;
                         console.log(`🔓 Passou 1 hora desde o fim - LIBERANDO e AVANÇANDO`);
                     } else {
-                        // Ainda não passou 1 hora
                         newSubstitutionsOpen = false;
                         const remaining = Math.ceil((oneHour - timeSinceLastGame) / 60000);
                         console.log(`⏳ Faltam ${remaining} min para liberar substituições`);
                     }
+                } else if (hasFinishedGames) {
+                    // Tem jogos finalizados mas lastGameEndTime=0 (improvável) - avançar
+                    newSubstitutionsOpen = true;
+                    shouldAdvanceRound = true;
+                    console.log(`🔓 Jogos finalizados sem timestamp - AVANÇANDO`);
                 }
             }
             
