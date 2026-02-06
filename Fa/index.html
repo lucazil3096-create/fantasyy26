@@ -2821,22 +2821,40 @@
                     }
                 }
                 
+                // FALLBACK: Se API falhou e temos cache expirado, usar ele
+                if (fixtures.length === 0 && !forceRefresh) {
+                    let fallbackCache = null;
+                    try {
+                        if (db) {
+                            const snap = await db.ref(`cache/${cacheKey}`).once('value');
+                            fallbackCache = snap.val();
+                        } else {
+                            const cacheRes = await fetch(`${FIREBASE_URL}/cache/${cacheKey}.json`);
+                            if (cacheRes.ok) fallbackCache = await cacheRes.json();
+                        }
+                    } catch(e) {}
+                    if (fallbackCache && fallbackCache.fixtures && fallbackCache.fixtures.length > 0) {
+                        fixtures = fallbackCache.fixtures;
+                        console.log(`🔄 API falhou, usando cache expirado (${fallbackCache.fixtures.length} jogos)`);
+                    }
+                }
+
                 // Filtrar fixtures válidos (todos os campos necessários)
-                state.liveFixtures = (fixtures || []).filter(f => 
+                state.liveFixtures = (fixtures || []).filter(f =>
                     f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away
                 );
                 state.fixturesLastUpdate = Date.now();
-                
+
                 // Verificar acertos automaticamente após carregar jogos
                 if (typeof verificarAcertosAutomatico === 'function') {
                     setTimeout(() => verificarAcertosAutomatico(), 500);
                 }
-                
+
                 // Verificar estado do jogo (transição de rodada, trava de substituições)
                 setTimeout(() => updateGameState(), 1000);
-                
+
                 render();
-                
+
             } catch (e) {
                 console.error('Erro ao buscar jogos:', e);
             }
