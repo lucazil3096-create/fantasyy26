@@ -5673,29 +5673,26 @@
                 // 6. Incrementar contador
                 apiKeyManager.incrementRequest();
                 
-                // 7. Salvar no cache do Firebase (SEMPRE - usar SDK)
+                // 7. Salvar no cache do Firebase (fire-and-forget para não bloquear)
                 if (useCache && data) {
                     const cacheKey = `cache/${endpoint.replace(/[^a-zA-Z0-9]/g, '_')}`;
-                    try {
-                        const apiCacheData = {
-                            data: data,
-                            timestamp: Date.now(),
-                            endpoint: endpoint,
-                            isFinished: isFinished,
-                            savedBy: state.currentUser || 'anonymous'
-                        };
-                        if (db) {
-                            await db.ref(cacheKey).set(apiCacheData);
-                        } else {
-                            await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
-                                method: 'PUT',
-                                body: JSON.stringify(apiCacheData)
-                            });
-                        }
-                        console.log(`💾 Cache salvo no Firebase (${Math.round(effectiveCacheDuration/60000)}min)`);
-                    } catch(e) {
-                        // Falha no cache não é crítica
-                    }
+                    const apiCacheData = {
+                        data: data,
+                        timestamp: Date.now(),
+                        endpoint: endpoint,
+                        isFinished: isFinished,
+                        savedBy: state.currentUser || 'anonymous'
+                    };
+                    // Non-blocking: don't await the cache write
+                    const cachePromise = db
+                        ? db.ref(cacheKey).set(apiCacheData)
+                        : fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                            method: 'PUT',
+                            body: JSON.stringify(apiCacheData)
+                        });
+                    cachePromise
+                        .then(() => console.log(`💾 Cache salvo (${Math.round(effectiveCacheDuration/60000)}min)`))
+                        .catch(() => { /* cache miss não é crítico */ });
                 }
                 
                 // Log status
@@ -5722,11 +5719,19 @@
             return status;
         };
 
+        let _addLogRenderPending = false;
         function addLog(message, type = 'info') {
             const time = new Date().toLocaleTimeString();
             state.syncLogs.unshift({ time, message, type });
             if (state.syncLogs.length > 50) state.syncLogs.pop();
-            render();
+            // Throttle render: only schedule one render per animation frame
+            if (!_addLogRenderPending) {
+                _addLogRenderPending = true;
+                requestAnimationFrame(() => {
+                    _addLogRenderPending = false;
+                    render();
+                });
+            }
         }
 
         async function syncAllData() {
@@ -5786,8 +5791,12 @@
                 // Mesclar jogadores manuais
                 mergeManualPlayers();
 
-                // SYNC MANUAL: salvar no Firebase para todos usuários
-                savePlayers(true);
+                // Só salvar no Firebase se sync foi completo (700+ jogadores)
+                const shouldSaveToFB = allPlayers.length >= 700;
+                if (!shouldSaveToFB) {
+                    addLog(`⚠️ Sync incompleto (${allPlayers.length} jogadores) - Firebase NÃO atualizado`, 'warning');
+                }
+                savePlayers(shouldSaveToFB);
                 
                 localStorage.setItem('fantasy_last_sync', new Date().toISOString());
                 localStorage.setItem('fantasy_api_source', 'api-football');
@@ -5846,63 +5855,79 @@
 
             addLog(`   ${state.teams.length} times encontrados! (temporada ${usedSeason})`, 'success');
 
-            // Buscar jogadores de cada time
+            // Buscar jogadores de cada time (com retry)
             const allPlayers = [];
-            
+            const failedTeams = [];
+
             for (let i = 0; i < state.teams.length; i++) {
                 const team = state.teams[i];
-                addLog(`📋 [${i + 1}/${state.teams.length}] Carregando ${team.name}...`, 'info');
-                
-                try {
-                    // Primeiro tentar buscar o squad atual
-                    let squadData = await apiCall(`/players/squads?team=${team.id}`);
-                    
-                    if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
-                        squadData.response[0].players.forEach(p => {
-                            allPlayers.push({
-                                id: p.id,
-                                name: p.name,
-                                photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
-                                position: translatePosition(p.position, p.number),
-                                team: team.name || '',
-                                teamId: team.id,
-                                teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
-                                number: p.number || 0  // Evitar undefined
-                            });
-                        });
-                        addLog(`   ✓ ${squadData.response[0].players.length} jogadores (squad)`, 'success');
-                    } else {
-                        // Se não encontrar squad, tentar players da temporada
-                        let playersData = await apiCall(`/players?team=${team.id}&season=${usedSeason}`);
-                        
-                        if (playersData.response && playersData.response.length > 0) {
-                            playersData.response.forEach(p => {
+                addLog(`📋 [${i + 1}/${state.teams.length}] ${team.name}...`, 'info');
+
+                let teamSuccess = false;
+                for (let attempt = 0; attempt < 3 && !teamSuccess; attempt++) {
+                    try {
+                        if (attempt > 0) {
+                            addLog(`   🔄 Tentativa ${attempt + 1}/3...`, 'warning');
+                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                        }
+
+                        let squadData = await apiCall(`/players/squads?team=${team.id}`);
+
+                        if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
+                            squadData.response[0].players.forEach(p => {
                                 allPlayers.push({
-                                    id: p.player.id,
-                                    name: p.player.name || '',
-                                    photo: p.player.photo || '',
-                                    position: translatePosition(p.statistics[0]?.games?.position),
+                                    id: p.id,
+                                    name: p.name,
+                                    photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
+                                    position: translatePosition(p.position, p.number),
                                     team: team.name || '',
                                     teamId: team.id,
                                     teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
-                                    age: p.player.age || 0,
-                                    nationality: p.player.nationality || ''
+                                    number: p.number || 0
                                 });
                             });
-                            addLog(`   ✓ ${playersData.response.length} jogadores (season)`, 'success');
+                            addLog(`   ✓ ${squadData.response[0].players.length} jogadores`, 'success');
+                            teamSuccess = true;
                         } else {
-                            addLog(`   ⚠ Nenhum jogador encontrado`, 'warning');
+                            let playersData = await apiCall(`/players?team=${team.id}&season=${usedSeason}`);
+
+                            if (playersData.response && playersData.response.length > 0) {
+                                playersData.response.forEach(p => {
+                                    allPlayers.push({
+                                        id: p.player.id,
+                                        name: p.player.name || '',
+                                        photo: p.player.photo || '',
+                                        position: translatePosition(p.statistics[0]?.games?.position),
+                                        team: team.name || '',
+                                        teamId: team.id,
+                                        teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
+                                        age: p.player.age || 0,
+                                        nationality: p.player.nationality || ''
+                                    });
+                                });
+                                addLog(`   ✓ ${playersData.response.length} jogadores (season)`, 'success');
+                                teamSuccess = true;
+                            }
+                        }
+
+                        // Delay para não exceder rate limit
+                        await new Promise(r => setTimeout(r, 400));
+
+                    } catch (e) {
+                        if (attempt === 2) {
+                            addLog(`   ❌ Falhou: ${e.message}`, 'error');
                         }
                     }
-                    
-                    // Delay para não exceder rate limit
-                    await new Promise(r => setTimeout(r, 400));
-                    
-                } catch (e) {
-                    addLog(`   ❌ Erro: ${e.message}`, 'error');
+                }
+                if (!teamSuccess) {
+                    failedTeams.push(team.name);
                 }
             }
-            
+
+            if (failedTeams.length > 0) {
+                addLog(`⚠️ Times sem dados (${failedTeams.length}): ${failedTeams.join(', ')}`, 'warning');
+            }
+
             return allPlayers;
         }
 
@@ -13279,7 +13304,13 @@
                                         <p class="text-blue-400 font-medium text-sm">🔄 Sincronizar Jogadores da API</p>
                                         <p class="text-zinc-500 text-xs">Total: ${state.players.length} jogadores | Última sync: ${localStorage.getItem('fantasy_last_sync') ? new Date(localStorage.getItem('fantasy_last_sync')).toLocaleString('pt-BR') : 'nunca'}</p>
                                     </div>
-                                    <button onclick="autoSyncPlayers(true).then(() => { alert('✅ Sincronização completa! ' + state.players.length + ' jogadores'); render(); })"
+                                    <button id="btnForceSyncApi" onclick="(async()=>{
+                                        const btn=document.getElementById('btnForceSyncApi');
+                                        btn.disabled=true; btn.textContent='⏳ Sincronizando...'; btn.classList.add('opacity-50');
+                                        try { await autoSyncPlayers(true); alert('✅ Sincronização completa! ' + state.players.length + ' jogadores'); }
+                                        catch(e){ alert('❌ Erro: ' + e.message); }
+                                        finally { btn.disabled=false; btn.textContent='🔄 Forçar Sync API'; btn.classList.remove('opacity-50'); render(); }
+                                    })()"
                                         class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-sm">
                                         🔄 Forçar Sync API
                                     </button>
@@ -14653,11 +14684,21 @@
                                         </div>
                                     </div>
                                     <div class="flex flex-wrap gap-3">
-                                        <button onclick="syncAllData()" 
+                                        <button id="btnSyncNow" onclick="(async()=>{
+                                            const btn=document.getElementById('btnSyncNow');
+                                            btn.disabled=true; btn.innerHTML='⏳ Sincronizando...'; btn.classList.add('opacity-50');
+                                            try { await syncAllData(); } catch(e){}
+                                            finally { btn.disabled=false; btn.innerHTML='Sincronizar Agora'; btn.classList.remove('opacity-50'); }
+                                        })()"
                                             class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">
                                             Sincronizar Agora
                                         </button>
-                                        <button onclick="adminForceSync()" 
+                                        <button id="btnClearSync" onclick="(async()=>{
+                                            const btn=document.getElementById('btnClearSync');
+                                            btn.disabled=true; btn.innerHTML='⏳ Limpando + Sync...'; btn.classList.add('opacity-50');
+                                            try { await adminForceSync(); } catch(e){}
+                                            finally { btn.disabled=false; btn.innerHTML='Limpar Cache + Sync'; btn.classList.remove('opacity-50'); }
+                                        })()"
                                             class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-medium">
                                             Limpar Cache + Sync
                                         </button>
