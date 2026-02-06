@@ -5234,15 +5234,27 @@
         let _firebaseManualPlayersCache = {};
         
         function mergeManualPlayers() {
+            // IDs de jogadores escalados (para preservar manuais escalados)
+            const rosteredIds = new Set();
+            Object.values(state.users).forEach(u => {
+                [...ensureArray(u.starters, 11), ...ensureArray(u.reserves, 7)].forEach(p => {
+                    if (p && p.id) rosteredIds.add(String(p.id));
+                });
+            });
+            [...(state.starters || []), ...(state.reserves || [])].forEach(p => {
+                if (p && p.id) rosteredIds.add(String(p.id));
+            });
+
             // 1. Mesclar jogadores do array JOGADORES_MANUAIS (hardcoded)
             JOGADORES_MANUAIS.forEach(manualPlayer => {
                 const existsById = state.players.find(p => String(p.id) === String(manualPlayer.id));
-                const existsByName = state.players.find(p => 
-                    p.name.toLowerCase() === manualPlayer.name.toLowerCase() && 
+                const existsByName = state.players.find(p =>
+                    p.name.toLowerCase() === manualPlayer.name.toLowerCase() &&
                     p.team === manualPlayer.team
                 );
-                
-                if (!existsById && !existsByName) {
+
+                // Adicionar se não existe, OU se está escalado com esse ID (precisa existir)
+                if (!existsById && (!existsByName || rosteredIds.has(String(manualPlayer.id)))) {
                     state.players.push({
                         ...manualPlayer,
                         teamLogo: TEAM_LOGOS[manualPlayer.team] || '',
@@ -5250,23 +5262,25 @@
                     });
                 }
             });
-            
+
             // 2. Mesclar jogadores manuais do Firebase (cache)
             Object.values(_firebaseManualPlayersCache).forEach(player => {
                 if (!player || !player.id) return;
-                
+
                 // Verificar por ID (normal e absoluto) e por nome+time
-                const existsById = state.players.find(p => 
-                    String(p.id) === String(player.id) || 
+                const existsById = state.players.find(p =>
+                    String(p.id) === String(player.id) ||
                     String(p.id) === String(Math.abs(player.id)) ||
                     String(Math.abs(p.id)) === String(Math.abs(player.id))
                 );
-                const existsByName = state.players.find(p => 
-                    p.name.toLowerCase() === (player.name || '').toLowerCase() && 
+                const existsByName = state.players.find(p =>
+                    p.name.toLowerCase() === (player.name || '').toLowerCase() &&
                     (p.team === player.team || capitalizeTeamName(p.team) === capitalizeTeamName(player.team))
                 );
-                
-                if (!existsById && !existsByName) {
+
+                // Adicionar se não existe, OU se está escalado com esse ID manual
+                const isRostered = rosteredIds.has(String(player.id));
+                if (!existsById && (!existsByName || isRostered)) {
                     state.players.push({
                         ...player,
                         team: capitalizeTeamName(player.team),
@@ -5283,6 +5297,8 @@
                     });
                 }
             });
+
+            console.log(`🔄 Jogadores manuais atualizados: ${state.players.filter(p => p.manual || p.id < 0).length} | Total jogadores: ${state.players.length}`);
         }
 
         // ==================== API FUNCTIONS ====================
@@ -13256,7 +13272,19 @@
                         ${state.adminTab === 'players' ? `
                             <div class="space-y-4">
                                 <h3 class="text-xl font-bold text-white">⚽ Gerenciar Jogadores</h3>
-                                
+
+                                <!-- Sincronizar com API -->
+                                <div class="bg-zinc-900 rounded-xl p-4 border border-blue-500/30 flex items-center justify-between">
+                                    <div>
+                                        <p class="text-blue-400 font-medium text-sm">🔄 Sincronizar Jogadores da API</p>
+                                        <p class="text-zinc-500 text-xs">Total: ${state.players.length} jogadores | Última sync: ${localStorage.getItem('fantasy_last_sync') ? new Date(localStorage.getItem('fantasy_last_sync')).toLocaleString('pt-BR') : 'nunca'}</p>
+                                    </div>
+                                    <button onclick="autoSyncPlayers(true).then(() => { alert('✅ Sincronização completa! ' + state.players.length + ' jogadores'); render(); })"
+                                        class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-sm">
+                                        🔄 Forçar Sync API
+                                    </button>
+                                </div>
+
                                 <!-- Adicionar Jogador Manual -->
                                 <div class="bg-zinc-900 rounded-xl p-6 border border-emerald-500/30">
                                     <h4 class="text-emerald-400 font-medium mb-4">➕ Adicionar Jogador Manualmente</h4>
