@@ -23317,23 +23317,23 @@ O usuário não poderá mais fazer login.
             manageUpdateInterval();
         };
 
-        // Primeira atualização de pontuação ao carregar (se confirmado)
+        // Primeira atualização de pontuação ao carregar
         setTimeout(async () => {
-            if (state.isConfirmed) {
-                // AUTO-MIGRATION v2: Forçar recálculo de scores se versão antiga
-                var _scoreVersion = localStorage.getItem('scoreCalcVersion');
-                if (_scoreVersion !== 'v2_conceded_fix') {
-                    console.log('🔄 AUTO-MIGRATION: Recalculando scores com nova fórmula de gols sofridos...');
-                    // Limpar cache de scores para forçar recálculo
-                    try {
-                        var round = state.selectedRound || state.currentRound;
-                        if (round) {
-                            await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
-                            console.log('🗑️ Cache de scores limpo para migração');
-                        }
-                    } catch(e) {}
-                    localStorage.setItem('scoreCalcVersion', 'v2_conceded_fix');
-                }
+            // AUTO-MIGRATION v2: Forçar recálculo de scores se versão antiga
+            var _scoreVersion = localStorage.getItem('scoreCalcVersion');
+            if (_scoreVersion !== 'v2_conceded_fix') {
+                console.log('🔄 AUTO-MIGRATION: Recalculando scores com nova fórmula de gols sofridos...');
+                try {
+                    var round = state.selectedRound || state.currentRound;
+                    if (round) {
+                        await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                        console.log('🗑️ Cache de scores limpo para migração');
+                    }
+                } catch(e) {}
+                localStorage.setItem('scoreCalcVersion', 'v2_conceded_fix');
+            }
+            // Sempre sincronizar pontuação e gerenciar updates (não depender de isConfirmed)
+            if (state.currentUser) {
                 await syncRoundScores();
                 manageUpdateInterval();
             }
