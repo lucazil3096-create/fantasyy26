@@ -7529,12 +7529,29 @@
                 // Timer ao vivo da home (atualiza countdown a cada segundo)
                 if (state.screen === 'home') {
                     if (window._homeTimer) clearInterval(window._homeTimer);
+                    // Atualizar countdown inline a cada segundo (sem full render)
                     window._homeTimer = setInterval(() => {
                         if (state.screen !== 'home') { clearInterval(window._homeTimer); return; }
-                        // Re-render só a home a cada 30s pra manter countdown atualizado
-                    }, 30000);
-                    // Atualizar countdown suave
-                    setTimeout(() => render(), 30000);
+                        const el = document.getElementById('homeCountdownBoxes');
+                        if (el && el.dataset.target) {
+                            const diff = parseInt(el.dataset.target) - Date.now();
+                            if (diff > 0) {
+                                const d = Math.floor(diff / (24*60*60*1000));
+                                const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
+                                const m = Math.floor((diff % (60*60*1000)) / (60*1000));
+                                const s = Math.floor((diff % (60*1000)) / 1000);
+                                const boxes = (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
+                                    '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
+                                    '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                                    '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                                    '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                                    '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div>';
+                                el.innerHTML = boxes;
+                            } else {
+                                el.innerHTML = '<span class="text-emerald-400 font-bold text-sm">Começando!</span>';
+                            }
+                        }
+                    }, 1000);
                 }
                 
                 // Atualizar countdown após render
@@ -7861,10 +7878,36 @@
             if (liveGames.length > 0) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">AO VIVO</span></div></div>';
             } else if (isRoundFinished) {
-                // Calcular countdown para próxima rodada (6h da manhã seguinte)
+                // Countdown: até o próximo jogo OU até a próxima rodada abrir
                 let nextRoundInfo = '';
-                if (state.roundEndedAt || allGamesFinished) {
-                    const refDate = state.roundEndedAt ? new Date(state.roundEndedAt) : new Date();
+                let countdownBoxes = '';
+                if (upcomingGames.length > 0) {
+                    // Mostrar countdown até o próximo jogo da rodada
+                    const nextGame = upcomingGames[0];
+                    const gameDate = new Date(nextGame.fixture.date);
+                    const diff = gameDate.getTime() - now;
+                    if (diff > 0) {
+                        const d = Math.floor(diff / (24*60*60*1000));
+                        const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
+                        const m = Math.floor((diff % (60*60*1000)) / (60*1000));
+                        const s = Math.floor((diff % (60*1000)) / 1000);
+                        const homeName = (nextGame.teams?.home?.name || '').split(' ').pop();
+                        const awayName = (nextGame.teams?.away?.name || '').split(' ').pop();
+                        const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+                        const dayName = dayNames[gameDate.getDay()];
+                        const timeStr = String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0');
+                        nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-white font-bold">' + homeName + ' x ' + awayName + '</span> <span class="text-zinc-500">(' + dayName + ' ' + timeStr + ')</span></p>';
+                        countdownBoxes = '<div id="homeCountdownBoxes" data-target="' + gameDate.getTime() + '" class="flex justify-center gap-2 mt-3">' +
+                            (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
+                            '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
+                            '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                            '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                            '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                            '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>';
+                    }
+                } else if (state.roundEndedAt && state.roundEndedAt > 0) {
+                    // Se não tem próximo jogo, mostrar quando próxima rodada abre
+                    const refDate = new Date(state.roundEndedAt);
                     const next6am = new Date(refDate);
                     next6am.setDate(next6am.getDate() + 1);
                     next6am.setHours(6, 0, 0, 0);
@@ -7877,17 +7920,7 @@
                         nextRoundInfo = '<p class="text-emerald-400 text-xs mt-2 font-bold">Próxima rodada abrindo...</p>';
                     }
                 }
-                // Buscar data do próximo jogo para mostrar
-                let nextGameInfo = '';
-                if (upcomingGames.length > 0) {
-                    const nextGame = upcomingGames[0];
-                    const gameDate = new Date(nextGame.fixture.date);
-                    const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-                    const dayName = dayNames[gameDate.getDay()];
-                    const timeStr = String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0');
-                    nextGameInfo = '<p class="text-zinc-500 text-[10px] mt-1">Próximo jogo: ' + dayName + ' ' + timeStr + '</p>';
-                }
-                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>' + nextRoundInfo + nextGameInfo + '</div>';
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>' + countdownBoxes + nextRoundInfo + '</div>';
             } else if (upcomingGames.length > 0) {
                 const nextDate = new Date(upcomingGames[0].fixture.date);
                 const diff = nextDate - now;
@@ -7895,11 +7928,14 @@
                     const d = Math.floor(diff / (24*60*60*1000));
                     const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
                     const m = Math.floor((diff % (60*60*1000)) / (60*1000));
-                    countdownHTML = '<div class="flex justify-center gap-2">' +
+                    const s = Math.floor((diff % (60*1000)) / 1000);
+                    countdownHTML = '<div id="homeCountdownBoxes" data-target="' + nextDate.getTime() + '" class="flex justify-center gap-2">' +
                         (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
                         '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
                         '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
-                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div></div>';
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                        '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>';
                 }
             }
 
