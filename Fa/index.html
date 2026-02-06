@@ -923,7 +923,7 @@
             reserves: Array(7).fill(null),
             coach: null,
             isConfirmed: false,
-            selectedRound: 1,
+            selectedRound: 2,
             currentRound: 1, // Rodada atual do campeonato (detectada automaticamente)
             nextRoundDate: null, // Data/hora do início da próxima rodada
             nextRoundNumber: null, // Número da próxima rodada
@@ -2629,15 +2629,15 @@
                 }
                 
                 // 7. Último recurso
-                state.currentRound = 1;
-                state.selectedRound = 1;
+                state.currentRound = STARTING_ROUND;
+                state.selectedRound = STARTING_ROUND;
                 state.delayedGamesRounds = [];
-                console.log('⚠️ Nenhum dado disponível, usando rodada 1');
-                
+                console.log(`⚠️ Nenhum dado disponível, usando rodada ${STARTING_ROUND}`);
+
             } catch (e) {
                 console.error('❌ Erro ao detectar rodada:', e);
-                state.currentRound = 1;
-                state.selectedRound = 1;
+                state.currentRound = STARTING_ROUND;
+                state.selectedRound = STARTING_ROUND;
                 state.delayedGamesRounds = [];
             }
         }
@@ -8133,9 +8133,10 @@
                                 <div class="flex items-center justify-between mt-3 pt-3 border-t border-zinc-800/50">
                                     <div class="flex items-center gap-3">
                                         <select onchange="changeRound(this.value)" class="px-2 py-1 input-dark rounded text-white text-xs">
-                                            ${Array.from({length: state.currentRound || 1}, (_, i) => `
-                                                <option value="${i+1}" ${state.selectedRound === i+1 ? 'selected' : ''}>R${i+1}</option>
-                                            `).join('')}
+                                            ${Array.from({length: (state.currentRound || STARTING_ROUND) - STARTING_ROUND + 1}, (_, i) => {
+                                                const r = STARTING_ROUND + i;
+                                                return `<option value="${r}" ${state.selectedRound === r ? 'selected' : ''}>R${r}</option>`;
+                                            }).join('')}
                                         </select>
                                         ${(() => {
                                             const roundScore = state.scores[state.selectedRound];
@@ -12035,9 +12036,10 @@
                             <img src="${SITE_LOGO}" alt="Fantasy BR26" class="h-14 sm:h-16">
                             <div class="flex items-center gap-4">
                                 <select onchange="state.selectedRound=parseInt(this.value);render()" class="px-4 py-2.5 input-dark rounded-lg text-white text-base">
-                                    ${Array.from({length: state.currentRound || 1}, (_, i) => `
-                                        <option value="${i+1}" ${state.selectedRound === i+1 ? 'selected' : ''}>Rodada ${i+1}</option>
-                                    `).join('')}
+                                    ${Array.from({length: (state.currentRound || STARTING_ROUND) - STARTING_ROUND + 1}, (_, i) => {
+                                        const r = STARTING_ROUND + i;
+                                        return `<option value="${r}" ${state.selectedRound === r ? 'selected' : ''}>Rodada ${r}</option>`;
+                                    }).join('')}
                                 </select>
                                 <button onclick="state.screen='lineup';render()" class="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-base font-display tracking-wider">
                                     VOLTAR
