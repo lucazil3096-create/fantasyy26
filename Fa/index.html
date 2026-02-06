@@ -2450,24 +2450,19 @@
                     console.log('Erro ao ler gameState:', e.message);
                 }
                 
-                if (gameState && gameState.currentRound && gameState.lastApiSync) {
-                    const timeSinceSync = Date.now() - gameState.lastApiSync;
-                    const hoursAgo = Math.round(timeSinceSync / 1000 / 60 / 60);
-                    
-                    if (timeSinceSync < CACHE_24H) {
-                        // Cache válido! Usar dados do Firebase
-                        const roundNum = toRoundNumber(gameState.currentRound);
-                        state.currentRound = roundNum;
-                        state.selectedRound = roundNum;
-                        state.substitutionsOpen = gameState.substitutionsOpen === true;
-                        state.roundStatus = gameState.roundStatus || 'waiting';
-                        state.captainEnabled = gameState.captainEnabled === true;
-                        state.delayedGamesRounds = gameState.delayedGamesRounds || []; // Rodadas com jogos atrasados
-                        console.log(`✅ Usando cache Firebase (${hoursAgo}h atrás): Rodada ${roundNum}`);
-                        return;
-                    } else {
-                        console.log(`⏰ Cache expirado (${hoursAgo}h), buscando na API...`);
-                    }
+                // gameState é a FONTE DA VERDADE para a rodada atual
+                // A transição de rodada é controlada por updateGameState (6h da manhã)
+                // detectCurrentRound NÃO deve sobrescrever a rodada do gameState
+                if (gameState && gameState.currentRound) {
+                    const roundNum = toRoundNumber(gameState.currentRound);
+                    state.currentRound = roundNum;
+                    state.selectedRound = roundNum;
+                    state.substitutionsOpen = gameState.substitutionsOpen === true;
+                    state.roundStatus = gameState.roundStatus || 'waiting';
+                    state.captainEnabled = gameState.captainEnabled === true;
+                    state.delayedGamesRounds = gameState.delayedGamesRounds || [];
+                    console.log(`✅ Usando gameState Firebase: Rodada ${roundNum} | Status: ${state.roundStatus}`);
+                    return;
                 }
                 
                 // 2. Cache expirado ou não existe: Buscar na API
@@ -20577,12 +20572,13 @@ O usuário não poderá mais fazer login.
             
             console.log(`🔄 Admin mudando rodada: ${state.currentRound} → ${newRound}`);
             
-            // Salvar no Firebase com formato correto - número puro
+            // Salvar no Firebase - usar update para preservar campos existentes (lastApiSync etc)
             if (db) {
-                await db.ref('gameState').set({
-                    currentRound: newRound, // Número puro
+                await db.ref('gameState').update({
+                    currentRound: newRound,
                     substitutionsOpen: true,
                     roundStatus: 'waiting',
+                    roundEndedAt: null,
                     updatedAt: Date.now()
                 });
             }
