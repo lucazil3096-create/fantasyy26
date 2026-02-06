@@ -4334,6 +4334,35 @@
                             console.log(`🔧 Re-salvando scores de ${nick} no Firebase (Array→Object)`);
                             db.ref('users/' + nick + '/scores').set(state.users[nick].scores);
                         }
+
+                        // MIGRAÇÃO: Mover cravar_bonus do market para a rodada correta
+                        const userScores = state.users[nick].scores;
+                        if (userScores && userScores.market && userScores.market.purchases) {
+                            const cravarEntries = userScores.market.purchases.filter(p => p.type === 'cravar_bonus');
+                            if (cravarEntries.length > 0) {
+                                cravarEntries.forEach(entry => {
+                                    // Extrair rodada do playerName: "Cravar R2 (+1 acerto)"
+                                    const match = entry.playerName && entry.playerName.match(/R(\d+)/);
+                                    if (match) {
+                                        const round = parseInt(match[1]);
+                                        if (!userScores[round]) userScores[round] = { players: {}, coach: 0 };
+                                        userScores[round].cravar = (userScores[round].cravar || 0) + (entry.price || 0);
+                                        console.log(`🔄 Migrado cravar de ${nick}: R${round} +${entry.price} pts`);
+                                    }
+                                });
+                                // Remover cravar_bonus do market
+                                userScores.market.purchases = userScores.market.purchases.filter(p => p.type !== 'cravar_bonus');
+                                // Salvar no Firebase
+                                if (db) {
+                                    db.ref('users/' + nick + '/scores/market/purchases').set(userScores.market.purchases);
+                                    Object.keys(userScores).forEach(key => {
+                                        if (key !== 'market' && userScores[key] && userScores[key].cravar) {
+                                            db.ref('users/' + nick + '/scores/' + key + '/cravar').set(userScores[key].cravar);
+                                        }
+                                    });
+                                }
+                            }
+                        }
                         
                         // Aplicar foto custom do técnico de cada usuário
                         if (state.users[nick].coach && state.users[nick].coach.id) {
@@ -6962,8 +6991,11 @@
             let total = 0;
             Object.entries(state.scores || {}).forEach(([key, round]) => {
                 if (key === 'market') {
+                    // Market: contar apenas compras/vendas, NÃO cravar_bonus (já contado na rodada)
                     if (round && round.purchases) {
-                        round.purchases.forEach(t => total += (t.price || 0));
+                        round.purchases.forEach(t => {
+                            if (t.type !== 'cravar_bonus') total += (t.price || 0);
+                        });
                     }
                 } else {
                     // Ignorar rodadas antes da rodada inicial
@@ -6972,6 +7004,7 @@
                         Object.values(round.players).forEach(s => total += (s || 0));
                     }
                     total += (round && round.coach) || 0;
+                    total += (round && round.cravar) || 0; // Pontos do Cravar
                 }
             });
             return Math.round(total * 10) / 10;
@@ -6991,6 +7024,7 @@
                 }
             });
             total += r.coach || 0;
+            total += r.cravar || 0; // Pontos do Cravar (palpites certos)
             return Math.round(total * 10) / 10;
         }
         
@@ -8735,28 +8769,23 @@
                     const pontosGanhos = novosAcertos * 5;
                     console.log(`🎯 @${nick} acertou ${novosAcertos} palpite(s) = +${pontosGanhos} pts`);
 
+                    // Creditar pontos do Cravar DIRETAMENTE na rodada (não no market)
                     if (!userData.scores) userData.scores = {};
-                    if (!userData.scores.market) userData.scores.market = { purchases: [] };
-                    if (!userData.scores.market.purchases) userData.scores.market.purchases = [];
-                    if (!Array.isArray(userData.scores.market.purchases)) userData.scores.market.purchases = [];
-
-                    userData.scores.market.purchases.push({
-                        type: 'cravar_bonus', playerId: 0,
-                        playerName: `Cravar R${rodada} (+${novosAcertos} acerto${novosAcertos > 1 ? 's' : ''})`,
-                        price: pontosGanhos, date: new Date().toISOString()
-                    });
+                    if (!userData.scores[rodada]) userData.scores[rodada] = { players: {}, coach: 0 };
+                    // Somar ao cravar existente (pode ter acertos parciais de antes)
+                    userData.scores[rodada].cravar = (userData.scores[rodada].cravar || 0) + pontosGanhos;
 
                     // Salvar no Firebase
                     if (db) {
-                        db.ref('users/' + nick + '/scores/market').set(userData.scores.market);
+                        db.ref('users/' + nick + '/scores/' + rodada + '/cravar').set(userData.scores[rodada].cravar);
                         db.ref('users/' + nick + '/jogosConferidos').set(userData.jogosConferidos);
                     }
 
                     // Se é o usuário atual, atualizar state e notificar
                     if (nick === state.currentUser) {
                         if (!state.scores) state.scores = {};
-                        if (!state.scores.market) state.scores.market = { purchases: [] };
-                        state.scores.market = userData.scores.market;
+                        if (!state.scores[rodada]) state.scores[rodada] = { players: {}, coach: 0 };
+                        state.scores[rodada].cravar = userData.scores[rodada].cravar;
                         setTimeout(() => {
                             showNotification(`+${pontosGanhos} pts! Voce acertou ${novosAcertos} palpite(s)!`, 'success');
                         }, 300);
@@ -15623,8 +15652,11 @@
             const userCaptain = user.captain;
             Object.entries(user.scores || {}).forEach(([key, round]) => {
                 if (key === 'market') {
-                    if (round.purchases) {
-                        round.purchases.forEach(t => total += t.price);
+                    // Market: contar apenas compras/vendas, NÃO cravar_bonus (já contado na rodada)
+                    if (round && round.purchases) {
+                        round.purchases.forEach(t => {
+                            if (t.type !== 'cravar_bonus') total += (t.price || 0);
+                        });
                     }
                 } else {
                     // Ignorar rodadas antes da rodada inicial
@@ -15638,6 +15670,7 @@
                         }
                     });
                     total += round.coach || 0;
+                    total += round.cravar || 0; // Pontos do Cravar
                 }
             });
             return Math.round(total * 10) / 10;
