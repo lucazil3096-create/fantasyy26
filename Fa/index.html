@@ -6986,6 +6986,18 @@
                 return;
             }
             
+            // PRESERVAR SCROLL - Salvar posição antes do render
+            const scrollY = window.scrollY;
+            const scrollX = window.scrollX;
+            // Também salvar scroll de containers com overflow
+            const scrollableModals = document.querySelectorAll('.overflow-y-auto, .overflow-auto');
+            const modalScrolls = [];
+            scrollableModals.forEach((el, i) => {
+                if (el.scrollTop > 0) {
+                    modalScrolls.push({ index: i, top: el.scrollTop, className: el.className });
+                }
+            });
+
             // PRESERVAR FOCO - Salvar elemento focado antes do render
             const activeElement = document.activeElement;
             const activeId = activeElement?.id;
@@ -7184,6 +7196,20 @@
                         }
                     }, 0);
                 }
+
+                // RESTAURAR SCROLL - Restaurar posição após render
+                requestAnimationFrame(() => {
+                    window.scrollTo(scrollX, scrollY);
+                    // Restaurar scroll de modais/containers
+                    if (modalScrolls.length > 0) {
+                        const newScrollables = document.querySelectorAll('.overflow-y-auto, .overflow-auto');
+                        modalScrolls.forEach(saved => {
+                            if (newScrollables[saved.index]) {
+                                newScrollables[saved.index].scrollTop = saved.top;
+                            }
+                        });
+                    }
+                });
             } catch(e) {
                 console.error('Erro no render (' + state.screen + '):', e);
                 root.innerHTML = '<div style="color:white;padding:20px;"><h1>Erro ao renderizar</h1><p>Tela: ' + state.screen + '</p><p>' + e.message + '</p><button onclick="localStorage.clear();location.reload()">Limpar dados e recarregar</button></div>';
