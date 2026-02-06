@@ -21831,31 +21831,43 @@ O usuário não poderá mais fazer login.
         };
         
         // Forçar sincronização (limpa cache)
-        window.adminForceSync = function() {
-            if (!confirm('Isso vai LIMPAR o cache de jogadores da API e buscar TODOS os dados novamente.\n\nJogadores manuais serão PRESERVADOS.\n\nContinuar?')) {
+        window.adminForceSync = async function() {
+            if (!confirm('Isso vai buscar TODOS os jogadores novamente da API.\n\nJogadores manuais serão PRESERVADOS.\nO Firebase só será atualizado se a sync for completa (700+ jogadores).\n\nContinuar?')) {
                 return;
             }
-            
-            // Salvar jogadores manuais antes de limpar
+
+            // Salvar jogadores manuais e dados atuais como backup
             const manualPlayers = state.players.filter(p => p.manual || p.id < 0);
-            
-            // Limpar cache de jogadores
+            const backupPlayerCount = state.players.length;
+
+            // Limpar apenas cache LOCAL (NÃO Firebase! Só apagar Firebase depois de sync OK)
             localStorage.removeItem('fantasyPlayers2026');
             localStorage.removeItem('fantasy_last_sync');
-            
+
             // Limpar do state (mas manter manuais)
             state.players = [...manualPlayers];
             state.teams = [];
-            
-            // Limpar do Firebase (só gameData/players, NÃO manualPlayers!)
-            if (db) {
-                db.ref('gameData/players').remove();
-                console.log('☁️ Jogadores API removidos do Firebase (manuais preservados)');
+
+            // NÃO apagar gameData/players do Firebase!
+            // Se a sync falhar, Firebase ainda terá os dados bons.
+            console.log('Cache local limpo! Iniciando sincronização (Firebase preservado como backup)...');
+
+            try {
+                await autoSyncPlayers(true);
+                // Se a sync foi boa, o autoSyncPlayers já salva no Firebase (se >= 700 jogadores)
+                if (state.players.length >= 700) {
+                    console.log(`✅ Sync completo: ${state.players.length} jogadores. Firebase atualizado.`);
+                    alert(`✅ Sincronização completa! ${state.players.length} jogadores carregados.`);
+                } else {
+                    console.warn(`⚠️ Sync incompleto: ${state.players.length} jogadores. Firebase NÃO atualizado.`);
+                    alert(`⚠️ Sync incompleto: apenas ${state.players.length} jogadores (esperado 700+).\nFirebase foi preservado. Tente novamente mais tarde.`);
+                }
+            } catch (e) {
+                console.error('❌ Sync falhou:', e.message);
+                alert('❌ Falha na sincronização: ' + e.message + '\nFirebase foi preservado.');
             }
-            
-            // Iniciar sincronização IMEDIATAMENTE (sem alert bloqueante)
-            console.log('Cache limpo! Iniciando sincronização...');
-            syncAllData();
+
+            render();
         };
         
         // ==================== DETALHES DE RODADA (HISTÓRICO) ====================
@@ -23529,8 +23541,13 @@ O usuário não poderá mais fazer login.
                         }
                     });
                     
-                    // SYNC MANUAL: salvar no Firebase para todos usuários
-                    savePlayers(true);
+                    // PROTEÇÃO: só salvar no Firebase se obteve dados suficientes
+                    // Evita sobrescrever dados bons com sync incompleto (rate limit da API)
+                    const shouldSaveToFirebase = allPlayers.length >= 700;
+                    if (!shouldSaveToFirebase) {
+                        console.warn(`⚠️ Sync incompleto: ${allPlayers.length} jogadores (mínimo 700 para salvar no Firebase). Salvando apenas cache local.`);
+                    }
+                    savePlayers(shouldSaveToFirebase);
                     
                     // Também atualizar data da última sync no Firebase
                     if (db) {
@@ -23656,7 +23673,8 @@ O usuário não poderá mais fazer login.
             console.log('🛡️ TEAM_LOGOS atualizado da API:', state.teams.length, 'times');
 
             const allPlayers = [];
-            
+            const failedTeams = [];
+
             for (let i = 0; i < state.teams.length; i++) {
                 const team = state.teams[i];
                 
@@ -23667,31 +23685,49 @@ O usuário não poderá mais fazer login.
                 }
                 console.log(`   [${i + 1}/${state.teams.length}] ${team.name}...`);
                 
-                try {
-                    let squadData = await apiCall(`/players/squads?team=${team.id}`);
-                    
-                    if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
-                        squadData.response[0].players.forEach(p => {
-                            allPlayers.push({
-                                id: p.id,
-                                name: p.name || '',
-                                photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
-                                position: translatePosition(p.position, p.number),
-                                team: team.name || '',
-                                teamId: team.id,
-                                teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
-                                number: p.number || 0  // Evitar undefined
+                let success = false;
+                for (let attempt = 0; attempt < 3 && !success; attempt++) {
+                    try {
+                        if (attempt > 0) {
+                            console.log(`   Tentativa ${attempt + 1}/3 para ${team.name}...`);
+                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                        }
+                        let squadData = await apiCall(`/players/squads?team=${team.id}`);
+
+                        if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
+                            squadData.response[0].players.forEach(p => {
+                                allPlayers.push({
+                                    id: p.id,
+                                    name: p.name || '',
+                                    photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
+                                    position: translatePosition(p.position, p.number),
+                                    team: team.name || '',
+                                    teamId: team.id,
+                                    teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
+                                    number: p.number || 0  // Evitar undefined
+                                });
                             });
-                        });
+                            success = true;
+                        } else {
+                            console.log(`   ⚠️ Sem jogadores na resposta para ${team.name}`);
+                        }
+
+                        await new Promise(r => setTimeout(r, 500));
+
+                    } catch (e) {
+                        console.log(`   Erro ${team.name} (tentativa ${attempt + 1}):`, e.message);
                     }
-                    
-                    await new Promise(r => setTimeout(r, 500));
-                    
-                } catch (e) {
-                    console.log(`   Erro: ${team.name}`);
+                }
+                if (!success) {
+                    console.warn(`   ❌ Falhou todas tentativas para ${team.name}`);
+                    failedTeams.push(team.name);
                 }
             }
-            
+
+            if (failedTeams.length > 0) {
+                console.warn(`⚠️ Times sem dados (${failedTeams.length}): ${failedTeams.join(', ')}`);
+            }
+
             if (allPlayers.length === 0) throw new Error('Nenhum jogador encontrado');
             return allPlayers;
         }
