@@ -6626,6 +6626,12 @@
                     }
                     // ========== FIM JOGOS ATRASADOS ==========
                     
+                    // Fallback: se API não retornou fixtures mas temos no state (já carregados na UI)
+                    if (fixtures.length === 0 && state.liveFixtures && state.liveFixtures.length > 0 && state.selectedRound === round) {
+                        console.log(`🔄 API sem fixtures, usando ${state.liveFixtures.length} fixtures do state`);
+                        fixtures = state.liveFixtures;
+                    }
+
                     if (fixtures.length === 0) {
                         console.log('Nenhum jogo encontrado para esta rodada');
                         state.isUpdatingScores = false;
@@ -6700,11 +6706,17 @@
                     });
                     
                     // SALVAR NO FIREBASE PARA OUTROS USUÁRIOS USAREM (usar SDK)
+                    // Marcar como "final" se todos os jogos terminaram (nenhum ao vivo, nenhum pendente)
+                    const allFinished = fixtures.length > 0 && fixtures.every(f => {
+                        const st = f.fixture?.status?.short;
+                        return ['FT', 'AET', 'PEN', 'PST', 'CANC', 'ABD', 'AWD', 'WO'].includes(st);
+                    });
                     try {
                         const scoreCacheData = {
                             playerStats: allPlayerStats,
                             teamsWithGames: Array.from(teamsWithGames),
                             hasLiveGames: hasLiveGames,
+                            isFinal: allFinished && statsPlayerCount > 0,
                             gamesToProcess: gamesToProcess,
                             timestamp: Date.now(),
                             savedBy: state.currentUser || 'anonymous'
@@ -6731,16 +6743,16 @@
                 window._cachedRound = round;
 
                 // Se usou cache e NÃO tem jogos ao vivo, verificar se já tem scores calculados
-                // Pular recálculo desnecessário para carregar mais rápido
-                if (useCache && !hasLiveGames) {
+                // Só pular se o cache tem flag "isFinal" (cálculo definitivo pós-rodada)
+                if (useCache && !hasLiveGames && cachedStats && cachedStats.isFinal) {
                     const allUsersHaveScores = confirmedUsers.every(([nick, u]) => {
                         return u.scores && u.scores[round] && u.scores[round].players &&
                                Object.keys(u.scores[round].players).length > 0;
                     });
                     if (allUsersHaveScores) {
-                        console.log('⚡ Scores já calculados, pulando recálculo (sem jogos ao vivo)');
+                        console.log('⚡ Scores FINAIS já calculados, pulando recálculo');
                         if (state.currentUser && state.users[state.currentUser]) {
-                            state.scores = state.users[state.currentUser].scores || {};
+                            state.scores = sanitizeScores(state.users[state.currentUser].scores || {});
                         }
                         state.isUpdatingScores = false;
                         state.liveScoresUpdating = false;
