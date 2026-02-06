@@ -7673,55 +7673,6 @@
                     }, 1000);
                 }
                 
-                // Timer da Escalação (atualiza countdown inline sem full render - corrige o "pulo")
-                if (state.screen === 'lineup') {
-                    if (window._lineupTimer) clearInterval(window._lineupTimer);
-                    window._lineupTimer = setInterval(() => {
-                        if (state.screen !== 'lineup') { clearInterval(window._lineupTimer); return; }
-                        const el = document.getElementById('lineupCountdownBoxes');
-                        if (el && el.dataset.target) {
-                            const diff = parseInt(el.dataset.target) - Date.now();
-                            if (diff > 0) {
-                                const d = Math.floor(diff / (24*60*60*1000));
-                                const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
-                                const m = Math.floor((diff % (60*60*1000)) / (60*1000));
-                                const s = Math.floor((diff % (60*1000)) / 1000);
-                                const pad = (n) => n.toString().padStart(2, '0');
-                                el.innerHTML = 
-                                    (d > 0 ? '<div class="text-center"><p class="text-2xl font-bold text-white">' + d + '</p><p class="text-[10px] text-zinc-500 uppercase">Dias</p></div><span class="text-zinc-600 text-xl">:</span>' : '') +
-                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(h) + '</p><p class="text-[10px] text-zinc-500 uppercase">Horas</p></div>' +
-                                    '<span class="text-zinc-600 text-xl">:</span>' +
-                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(m) + '</p><p class="text-[10px] text-zinc-500 uppercase">Min</p></div>' +
-                                    '<span class="text-zinc-600 text-xl">:</span>' +
-                                    '<div class="text-center"><p class="text-2xl font-bold text-amber-400">' + pad(s) + '</p><p class="text-[10px] text-zinc-500 uppercase">Seg</p></div>';
-                            } else {
-                                el.innerHTML = '<span class="text-emerald-400 font-bold">⚽ RODADA EM ANDAMENTO!</span>';
-                            }
-                        }
-                    }, 1000);
-                    // Atualizar imediatamente na primeira vez
-                    setTimeout(() => {
-                        const el = document.getElementById('lineupCountdownBoxes');
-                        if (el && el.dataset.target) {
-                            const diff = parseInt(el.dataset.target) - Date.now();
-                            if (diff > 0) {
-                                const d = Math.floor(diff / (24*60*60*1000));
-                                const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
-                                const m = Math.floor((diff % (60*60*1000)) / (60*1000));
-                                const s = Math.floor((diff % (60*1000)) / 1000);
-                                const pad = (n) => n.toString().padStart(2, '0');
-                                el.innerHTML = 
-                                    (d > 0 ? '<div class="text-center"><p class="text-2xl font-bold text-white">' + d + '</p><p class="text-[10px] text-zinc-500 uppercase">Dias</p></div><span class="text-zinc-600 text-xl">:</span>' : '') +
-                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(h) + '</p><p class="text-[10px] text-zinc-500 uppercase">Horas</p></div>' +
-                                    '<span class="text-zinc-600 text-xl">:</span>' +
-                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(m) + '</p><p class="text-[10px] text-zinc-500 uppercase">Min</p></div>' +
-                                    '<span class="text-zinc-600 text-xl">:</span>' +
-                                    '<div class="text-center"><p class="text-2xl font-bold text-amber-400">' + pad(s) + '</p><p class="text-[10px] text-zinc-500 uppercase">Seg</p></div>';
-                            }
-                        }
-                    }, 50);
-                }
-                
                 // Atualizar countdown após render
                 setTimeout(() => {
                     updateCountdownDisplay();
@@ -8548,22 +8499,6 @@
 
                     <!-- Main Content -->
                     <div class="max-w-7xl mx-auto px-3 sm:px-4 pb-24 sm:pb-4 pt-4">
-                        <!-- Countdown Timer -->
-                        ${state.nextRoundDate && new Date(state.nextRoundDate).getTime() > Date.now() ? `
-                            <div class="card rounded-xl p-4 mb-4 border border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-transparent">
-                                <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
-                                    <div class="flex items-center gap-3">
-                                        <span class="text-3xl"></span>
-                                        <div>
-                                            <h3 class="text-white font-bold">Rodada ${state.nextRoundNumber || (state.currentRound + 1)} começa em:</h3>
-                                            <p class="text-zinc-500 text-xs">${new Date(state.nextRoundDate).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>
-                                        </div>
-                                    </div>
-                                    <div id="lineupCountdownBoxes" data-target="${new Date(state.nextRoundDate).getTime()}" class="flex items-center gap-3">
-                                    </div>
-                                </div>
-                            </div>
-                        ` : ''}
                         
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <!-- Campo -->
