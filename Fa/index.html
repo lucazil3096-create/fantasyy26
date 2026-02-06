@@ -996,6 +996,9 @@
             currentRound: 1, // Rodada atual do campeonato (detectada automaticamente)
             nextRoundDate: null, // Data/hora do início da próxima rodada
             nextRoundNumber: null, // Número da próxima rodada
+            nextRoundFirstGameHome: '', // Time da casa do primeiro jogo da próxima rodada
+            nextRoundFirstGameAway: '', // Time visitante do primeiro jogo da próxima rodada
+            nextRoundFixtures: null, // Fixtures da próxima rodada (auto-detectados)
             firebaseSynced: false, // Se já sincronizou com Firebase
             
             // Sistema de Controle de Rodada (100% Online via Firebase)
@@ -4189,6 +4192,16 @@
                 // Jogos ao vivo - travar
                 newRoundStatus = 'live';
                 newSubstitutionsOpen = false;
+                // Limpar countdown automático quando a rodada começa
+                if (state.nextRoundDate && db) {
+                    const nextRoundTarget = new Date(state.nextRoundDate).getTime();
+                    if (now >= nextRoundTarget) {
+                        db.ref('nextRound').remove();
+                        state.nextRoundDate = null;
+                        state.nextRoundNumber = null;
+                        console.log('🗑️ Countdown removido - rodada começou');
+                    }
+                }
             } else if (!allGamesFinished) {
                 // Tem jogos não iniciados
                 if (hasFinishedGames) {
@@ -4235,6 +4248,8 @@
                 } else {
                     const hoursLeft = Math.ceil((nextMorning6am.getTime() - now) / (60 * 60 * 1000));
                     console.log(`⏳ Rodada encerrada. Próxima rodada abre às 6h (~${hoursLeft}h)`);
+                    // Auto-detectar próxima rodada para o countdown
+                    autoDetectNextRound();
                 }
             }
             
@@ -4263,6 +4278,10 @@
                         substitutionsOpen: true,
                         updatedAt: Date.now()
                     });
+                    // Limpar countdown da rodada anterior
+                    db.ref('nextRound').remove();
+                    state.nextRoundDate = null;
+                    state.nextRoundNumber = null;
                     console.log(`🔄 Avançando rodada ${roundAtStart} → ${newRound}`);
                     setTimeout(() => fetchLiveFixtures(true), 1000);
                 } else {
@@ -4274,6 +4293,101 @@
                         updatedAt: Date.now()
                     });
                 }
+            }
+        }
+        
+        // ==================== AUTO-DETECT PRÓXIMA RODADA ====================
+        let _fetchingNextRound = false;
+        async function autoDetectNextRound() {
+            if (_fetchingNextRound) return;
+            // Só buscar se a rodada acabou e não temos data da próxima
+            if (state.nextRoundDate) {
+                // Verificar se a data já passou
+                if (new Date(state.nextRoundDate).getTime() > Date.now()) return;
+            }
+            
+            const nextRound = state.currentRound + 1;
+            if (nextRound > 38) return;
+            
+            _fetchingNextRound = true;
+            console.log(`🔍 Auto-detectando data da rodada ${nextRound}...`);
+            
+            try {
+                // Tentar buscar fixtures da próxima rodada do cache Firebase primeiro
+                const cacheKey = `fixtures_round_${nextRound}`;
+                let fixtures = null;
+                
+                try {
+                    if (db) {
+                        const snap = await db.ref(`cache/${cacheKey}`).once('value');
+                        const cacheData = snap.val();
+                        if (cacheData && cacheData.fixtures && cacheData.fixtures.length > 0) {
+                            fixtures = cacheData.fixtures;
+                            console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos no cache`);
+                        }
+                    }
+                } catch(e) { console.log('Cache miss para próxima rodada'); }
+                
+                // Se não tem no cache, buscar da API
+                if (!fixtures) {
+                    try {
+                        const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${nextRound}`);
+                        if (res.response && res.response.length > 0) {
+                            fixtures = res.response;
+                            console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos da API`);
+                        }
+                    } catch(e) {
+                        console.log('Erro ao buscar próxima rodada da API:', e);
+                        // Tentar fallback season
+                        try {
+                            const res2 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}&round=Regular Season - ${nextRound}`);
+                            if (res2.response && res2.response.length > 0) {
+                                fixtures = res2.response;
+                            }
+                        } catch(e2) { console.log('Fallback também falhou'); }
+                    }
+                }
+                
+                if (fixtures && fixtures.length > 0) {
+                    // Encontrar o primeiro jogo NS (não iniciado) no futuro
+                    const futureGames = fixtures
+                        .filter(f => {
+                            const st = f.fixture?.status?.short || 'NS';
+                            return ['NS', 'TBD'].includes(st) && new Date(f.fixture?.date).getTime() > Date.now();
+                        })
+                        .sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+                    
+                    if (futureGames.length > 0) {
+                        const firstGame = futureGames[0];
+                        const nextDate = firstGame.fixture.date;
+                        
+                        // Atualizar estado local
+                        state.nextRoundDate = nextDate;
+                        state.nextRoundNumber = nextRound;
+                        
+                        // Guardar também os fixtures da próxima rodada para o countdown da Home
+                        state.nextRoundFixtures = futureGames;
+                        
+                        // Salvar no Firebase para todos os usuários verem
+                        if (db) {
+                            db.ref('nextRound').set({
+                                date: nextDate,
+                                round: nextRound,
+                                setBy: 'auto',
+                                setAt: Date.now(),
+                                firstGameHome: firstGame.teams?.home?.name || '',
+                                firstGameAway: firstGame.teams?.away?.name || ''
+                            });
+                        }
+                        
+                        console.log(`⏰ Próxima rodada ${nextRound} detectada: ${new Date(nextDate).toLocaleString('pt-BR')}`);
+                        startCountdownTimer();
+                    }
+                }
+            } catch(e) {
+                console.error('Erro ao auto-detectar próxima rodada:', e);
+            } finally {
+                _fetchingNextRound = false;
             }
         }
         
@@ -4897,6 +5011,11 @@
                 
                 // Escutar countdown da próxima rodada
                 try { listenToNextRound(); } catch(e) { console.error('Erro listenToNextRound:', e); }
+                
+                // Auto-detectar próxima rodada se estiver encerrada
+                if (state.roundStatus === 'finished') {
+                    setTimeout(() => autoDetectNextRound(), 2000);
+                }
                 
                 // Escutar mensagens privadas
                 try { listenToPrivateMessages(); } catch(e) { console.error('Erro listenToPrivateMessages:', e); }
@@ -5673,29 +5792,26 @@
                 // 6. Incrementar contador
                 apiKeyManager.incrementRequest();
                 
-                // 7. Salvar no cache do Firebase (SEMPRE - usar SDK)
+                // 7. Salvar no cache do Firebase (fire-and-forget para não bloquear)
                 if (useCache && data) {
                     const cacheKey = `cache/${endpoint.replace(/[^a-zA-Z0-9]/g, '_')}`;
-                    try {
-                        const apiCacheData = {
-                            data: data,
-                            timestamp: Date.now(),
-                            endpoint: endpoint,
-                            isFinished: isFinished,
-                            savedBy: state.currentUser || 'anonymous'
-                        };
-                        if (db) {
-                            await db.ref(cacheKey).set(apiCacheData);
-                        } else {
-                            await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
-                                method: 'PUT',
-                                body: JSON.stringify(apiCacheData)
-                            });
-                        }
-                        console.log(`💾 Cache salvo no Firebase (${Math.round(effectiveCacheDuration/60000)}min)`);
-                    } catch(e) {
-                        // Falha no cache não é crítica
-                    }
+                    const apiCacheData = {
+                        data: data,
+                        timestamp: Date.now(),
+                        endpoint: endpoint,
+                        isFinished: isFinished,
+                        savedBy: state.currentUser || 'anonymous'
+                    };
+                    // Non-blocking: don't await the cache write
+                    const cachePromise = db
+                        ? db.ref(cacheKey).set(apiCacheData)
+                        : fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                            method: 'PUT',
+                            body: JSON.stringify(apiCacheData)
+                        });
+                    cachePromise
+                        .then(() => console.log(`💾 Cache salvo (${Math.round(effectiveCacheDuration/60000)}min)`))
+                        .catch(() => { /* cache miss não é crítico */ });
                 }
                 
                 // Log status
@@ -5722,11 +5838,19 @@
             return status;
         };
 
+        let _addLogRenderPending = false;
         function addLog(message, type = 'info') {
             const time = new Date().toLocaleTimeString();
             state.syncLogs.unshift({ time, message, type });
             if (state.syncLogs.length > 50) state.syncLogs.pop();
-            render();
+            // Throttle render: only schedule one render per animation frame
+            if (!_addLogRenderPending) {
+                _addLogRenderPending = true;
+                requestAnimationFrame(() => {
+                    _addLogRenderPending = false;
+                    render();
+                });
+            }
         }
 
         async function syncAllData() {
@@ -5786,8 +5910,12 @@
                 // Mesclar jogadores manuais
                 mergeManualPlayers();
 
-                // SYNC MANUAL: salvar no Firebase para todos usuários
-                savePlayers(true);
+                // Só salvar no Firebase se sync foi completo (700+ jogadores)
+                const shouldSaveToFB = allPlayers.length >= 700;
+                if (!shouldSaveToFB) {
+                    addLog(`⚠️ Sync incompleto (${allPlayers.length} jogadores) - Firebase NÃO atualizado`, 'warning');
+                }
+                savePlayers(shouldSaveToFB);
                 
                 localStorage.setItem('fantasy_last_sync', new Date().toISOString());
                 localStorage.setItem('fantasy_api_source', 'api-football');
@@ -5846,63 +5974,79 @@
 
             addLog(`   ${state.teams.length} times encontrados! (temporada ${usedSeason})`, 'success');
 
-            // Buscar jogadores de cada time
+            // Buscar jogadores de cada time (com retry)
             const allPlayers = [];
-            
+            const failedTeams = [];
+
             for (let i = 0; i < state.teams.length; i++) {
                 const team = state.teams[i];
-                addLog(`📋 [${i + 1}/${state.teams.length}] Carregando ${team.name}...`, 'info');
-                
-                try {
-                    // Primeiro tentar buscar o squad atual
-                    let squadData = await apiCall(`/players/squads?team=${team.id}`);
-                    
-                    if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
-                        squadData.response[0].players.forEach(p => {
-                            allPlayers.push({
-                                id: p.id,
-                                name: p.name,
-                                photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
-                                position: translatePosition(p.position, p.number),
-                                team: team.name || '',
-                                teamId: team.id,
-                                teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
-                                number: p.number || 0  // Evitar undefined
-                            });
-                        });
-                        addLog(`   ✓ ${squadData.response[0].players.length} jogadores (squad)`, 'success');
-                    } else {
-                        // Se não encontrar squad, tentar players da temporada
-                        let playersData = await apiCall(`/players?team=${team.id}&season=${usedSeason}`);
-                        
-                        if (playersData.response && playersData.response.length > 0) {
-                            playersData.response.forEach(p => {
+                addLog(`📋 [${i + 1}/${state.teams.length}] ${team.name}...`, 'info');
+
+                let teamSuccess = false;
+                for (let attempt = 0; attempt < 3 && !teamSuccess; attempt++) {
+                    try {
+                        if (attempt > 0) {
+                            addLog(`   🔄 Tentativa ${attempt + 1}/3...`, 'warning');
+                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                        }
+
+                        let squadData = await apiCall(`/players/squads?team=${team.id}`);
+
+                        if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
+                            squadData.response[0].players.forEach(p => {
                                 allPlayers.push({
-                                    id: p.player.id,
-                                    name: p.player.name || '',
-                                    photo: p.player.photo || '',
-                                    position: translatePosition(p.statistics[0]?.games?.position),
+                                    id: p.id,
+                                    name: p.name,
+                                    photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
+                                    position: translatePosition(p.position, p.number),
                                     team: team.name || '',
                                     teamId: team.id,
                                     teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
-                                    age: p.player.age || 0,
-                                    nationality: p.player.nationality || ''
+                                    number: p.number || 0
                                 });
                             });
-                            addLog(`   ✓ ${playersData.response.length} jogadores (season)`, 'success');
+                            addLog(`   ✓ ${squadData.response[0].players.length} jogadores`, 'success');
+                            teamSuccess = true;
                         } else {
-                            addLog(`   ⚠ Nenhum jogador encontrado`, 'warning');
+                            let playersData = await apiCall(`/players?team=${team.id}&season=${usedSeason}`);
+
+                            if (playersData.response && playersData.response.length > 0) {
+                                playersData.response.forEach(p => {
+                                    allPlayers.push({
+                                        id: p.player.id,
+                                        name: p.player.name || '',
+                                        photo: p.player.photo || '',
+                                        position: translatePosition(p.statistics[0]?.games?.position),
+                                        team: team.name || '',
+                                        teamId: team.id,
+                                        teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
+                                        age: p.player.age || 0,
+                                        nationality: p.player.nationality || ''
+                                    });
+                                });
+                                addLog(`   ✓ ${playersData.response.length} jogadores (season)`, 'success');
+                                teamSuccess = true;
+                            }
+                        }
+
+                        // Delay para não exceder rate limit
+                        await new Promise(r => setTimeout(r, 400));
+
+                    } catch (e) {
+                        if (attempt === 2) {
+                            addLog(`   ❌ Falhou: ${e.message}`, 'error');
                         }
                     }
-                    
-                    // Delay para não exceder rate limit
-                    await new Promise(r => setTimeout(r, 400));
-                    
-                } catch (e) {
-                    addLog(`   ❌ Erro: ${e.message}`, 'error');
+                }
+                if (!teamSuccess) {
+                    failedTeams.push(team.name);
                 }
             }
-            
+
+            if (failedTeams.length > 0) {
+                addLog(`⚠️ Times sem dados (${failedTeams.length}): ${failedTeams.join(', ')}`, 'warning');
+            }
+
             return allPlayers;
         }
 
@@ -7379,9 +7523,9 @@
             const passwordValue = document.getElementById('password')?.value || '';
             const accessCodeValue = document.getElementById('accessCode')?.value || '';
             
-            // AUTO-CARREGAR jogos se estiver na lineup e não tiver dados
-            if (state.screen === 'lineup' && state.currentUser && 
-                (!state.liveFixtures || state.liveFixtures.length === 0) && 
+            // AUTO-CARREGAR jogos se estiver na home ou lineup e não tiver dados
+            if ((state.screen === 'lineup' || state.screen === 'home') && state.currentUser &&
+                (!state.liveFixtures || state.liveFixtures.length === 0) &&
                 !state.isLoadingFixtures && !autoLoadingFixtures) {
                 autoLoadingFixtures = true;
                 console.log('🔄 Auto-carregando jogos da rodada...');
@@ -7504,12 +7648,78 @@
                 // Timer ao vivo da home (atualiza countdown a cada segundo)
                 if (state.screen === 'home') {
                     if (window._homeTimer) clearInterval(window._homeTimer);
+                    // Atualizar countdown inline a cada segundo (sem full render)
                     window._homeTimer = setInterval(() => {
                         if (state.screen !== 'home') { clearInterval(window._homeTimer); return; }
-                        // Re-render só a home a cada 30s pra manter countdown atualizado
-                    }, 30000);
-                    // Atualizar countdown suave
-                    setTimeout(() => render(), 30000);
+                        const el = document.getElementById('homeCountdownBoxes');
+                        if (el && el.dataset.target) {
+                            const diff = parseInt(el.dataset.target) - Date.now();
+                            if (diff > 0) {
+                                const d = Math.floor(diff / (24*60*60*1000));
+                                const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
+                                const m = Math.floor((diff % (60*60*1000)) / (60*1000));
+                                const s = Math.floor((diff % (60*1000)) / 1000);
+                                const boxes = (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
+                                    '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
+                                    '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                                    '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                                    '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                                    '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div>';
+                                el.innerHTML = boxes;
+                            } else {
+                                el.innerHTML = '<span class="text-emerald-400 font-bold text-sm">Começando!</span>';
+                            }
+                        }
+                    }, 1000);
+                }
+                
+                // Timer da Escalação (atualiza countdown inline sem full render - corrige o "pulo")
+                if (state.screen === 'lineup') {
+                    if (window._lineupTimer) clearInterval(window._lineupTimer);
+                    window._lineupTimer = setInterval(() => {
+                        if (state.screen !== 'lineup') { clearInterval(window._lineupTimer); return; }
+                        const el = document.getElementById('lineupCountdownBoxes');
+                        if (el && el.dataset.target) {
+                            const diff = parseInt(el.dataset.target) - Date.now();
+                            if (diff > 0) {
+                                const d = Math.floor(diff / (24*60*60*1000));
+                                const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
+                                const m = Math.floor((diff % (60*60*1000)) / (60*1000));
+                                const s = Math.floor((diff % (60*1000)) / 1000);
+                                const pad = (n) => n.toString().padStart(2, '0');
+                                el.innerHTML = 
+                                    (d > 0 ? '<div class="text-center"><p class="text-2xl font-bold text-white">' + d + '</p><p class="text-[10px] text-zinc-500 uppercase">Dias</p></div><span class="text-zinc-600 text-xl">:</span>' : '') +
+                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(h) + '</p><p class="text-[10px] text-zinc-500 uppercase">Horas</p></div>' +
+                                    '<span class="text-zinc-600 text-xl">:</span>' +
+                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(m) + '</p><p class="text-[10px] text-zinc-500 uppercase">Min</p></div>' +
+                                    '<span class="text-zinc-600 text-xl">:</span>' +
+                                    '<div class="text-center"><p class="text-2xl font-bold text-amber-400">' + pad(s) + '</p><p class="text-[10px] text-zinc-500 uppercase">Seg</p></div>';
+                            } else {
+                                el.innerHTML = '<span class="text-emerald-400 font-bold">⚽ RODADA EM ANDAMENTO!</span>';
+                            }
+                        }
+                    }, 1000);
+                    // Atualizar imediatamente na primeira vez
+                    setTimeout(() => {
+                        const el = document.getElementById('lineupCountdownBoxes');
+                        if (el && el.dataset.target) {
+                            const diff = parseInt(el.dataset.target) - Date.now();
+                            if (diff > 0) {
+                                const d = Math.floor(diff / (24*60*60*1000));
+                                const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
+                                const m = Math.floor((diff % (60*60*1000)) / (60*1000));
+                                const s = Math.floor((diff % (60*1000)) / 1000);
+                                const pad = (n) => n.toString().padStart(2, '0');
+                                el.innerHTML = 
+                                    (d > 0 ? '<div class="text-center"><p class="text-2xl font-bold text-white">' + d + '</p><p class="text-[10px] text-zinc-500 uppercase">Dias</p></div><span class="text-zinc-600 text-xl">:</span>' : '') +
+                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(h) + '</p><p class="text-[10px] text-zinc-500 uppercase">Horas</p></div>' +
+                                    '<span class="text-zinc-600 text-xl">:</span>' +
+                                    '<div class="text-center"><p class="text-2xl font-bold text-white">' + pad(m) + '</p><p class="text-[10px] text-zinc-500 uppercase">Min</p></div>' +
+                                    '<span class="text-zinc-600 text-xl">:</span>' +
+                                    '<div class="text-center"><p class="text-2xl font-bold text-amber-400">' + pad(s) + '</p><p class="text-[10px] text-zinc-500 uppercase">Seg</p></div>';
+                            }
+                        }
+                    }, 50);
                 }
                 
                 // Atualizar countdown após render
@@ -7836,10 +8046,61 @@
             if (liveGames.length > 0) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">AO VIVO</span></div></div>';
             } else if (isRoundFinished) {
-                // Calcular countdown para próxima rodada (6h da manhã seguinte)
+                // Countdown: até o próximo jogo OU até a próxima rodada abrir
                 let nextRoundInfo = '';
-                if (state.roundEndedAt || allGamesFinished) {
-                    const refDate = state.roundEndedAt ? new Date(state.roundEndedAt) : new Date();
+                let countdownBoxes = '';
+                // Tentar pegar data do próximo jogo de várias fontes
+                let targetDate = null;
+                let targetHome = '';
+                let targetAway = '';
+                if (upcomingGames.length > 0) {
+                    targetDate = new Date(upcomingGames[0].fixture.date);
+                    targetHome = upcomingGames[0].teams?.home?.name || '';
+                    targetAway = upcomingGames[0].teams?.away?.name || '';
+                } else if (state.nextRoundDate) {
+                    targetDate = new Date(state.nextRoundDate);
+                    targetHome = state.nextRoundFirstGameHome || '';
+                    targetAway = state.nextRoundFirstGameAway || '';
+                } else {
+                    // Fallback: buscar de allFixtures qualquer jogo NS futuro
+                    const futureNS = allFixtures.filter(f => {
+                        const st = f.fixture?.status?.short || 'NS';
+                        return st === 'NS' && new Date(f.fixture?.date) > new Date();
+                    }).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+                    if (futureNS.length > 0) {
+                        targetDate = new Date(futureNS[0].fixture.date);
+                        targetHome = futureNS[0].teams?.home?.name || '';
+                        targetAway = futureNS[0].teams?.away?.name || '';
+                    }
+                }
+                if (targetDate) {
+                    const diff = targetDate.getTime() - now;
+                    if (diff > 0) {
+                        const d = Math.floor(diff / (24*60*60*1000));
+                        const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
+                        const m = Math.floor((diff % (60*60*1000)) / (60*1000));
+                        const s = Math.floor((diff % (60*1000)) / 1000);
+                        const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+                        const dayName = dayNames[targetDate.getDay()];
+                        const timeStr = String(targetDate.getHours()).padStart(2,'0') + ':' + String(targetDate.getMinutes()).padStart(2,'0');
+                        if (targetHome && targetAway) {
+                            const homeName = targetHome.split(' ').pop();
+                            const awayName = targetAway.split(' ').pop();
+                            nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-white font-bold">' + homeName + ' x ' + awayName + '</span> <span class="text-zinc-500">(' + dayName + ' ' + timeStr + ')</span></p>';
+                        } else {
+                            nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-zinc-500">' + dayName + ' ' + timeStr + '</span></p>';
+                        }
+                        countdownBoxes = '<div id="homeCountdownBoxes" data-target="' + targetDate.getTime() + '" class="flex justify-center gap-2 mt-3">' +
+                            (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
+                            '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
+                            '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                            '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                            '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                            '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>';
+                    }
+                } else if (state.roundEndedAt && state.roundEndedAt > 0) {
+                    // Se não tem próximo jogo, mostrar quando próxima rodada abre
+                    const refDate = new Date(state.roundEndedAt);
                     const next6am = new Date(refDate);
                     next6am.setDate(next6am.getDate() + 1);
                     next6am.setHours(6, 0, 0, 0);
@@ -7852,17 +8113,7 @@
                         nextRoundInfo = '<p class="text-emerald-400 text-xs mt-2 font-bold">Próxima rodada abrindo...</p>';
                     }
                 }
-                // Buscar data do próximo jogo para mostrar
-                let nextGameInfo = '';
-                if (upcomingGames.length > 0) {
-                    const nextGame = upcomingGames[0];
-                    const gameDate = new Date(nextGame.fixture.date);
-                    const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
-                    const dayName = dayNames[gameDate.getDay()];
-                    const timeStr = String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0');
-                    nextGameInfo = '<p class="text-zinc-500 text-[10px] mt-1">Próximo jogo: ' + dayName + ' ' + timeStr + '</p>';
-                }
-                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>' + nextRoundInfo + nextGameInfo + '</div>';
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>' + countdownBoxes + nextRoundInfo + '</div>';
             } else if (upcomingGames.length > 0) {
                 const nextDate = new Date(upcomingGames[0].fixture.date);
                 const diff = nextDate - now;
@@ -7870,11 +8121,45 @@
                     const d = Math.floor(diff / (24*60*60*1000));
                     const h = Math.floor((diff % (24*60*60*1000)) / (60*60*1000));
                     const m = Math.floor((diff % (60*60*1000)) / (60*1000));
-                    countdownHTML = '<div class="flex justify-center gap-2">' +
+                    const s = Math.floor((diff % (60*1000)) / 1000);
+                    countdownHTML = '<div id="homeCountdownBoxes" data-target="' + nextDate.getTime() + '" class="flex justify-center gap-2">' +
                         (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
                         '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
                         '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
-                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div></div>';
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                        '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>';
+                }
+            }
+            // Fallback: se não tem countdown mas tem nextRoundDate, mostrar
+            if (!countdownHTML && state.nextRoundDate) {
+                const nrDate = new Date(state.nextRoundDate);
+                const nrDiff = nrDate.getTime() - now;
+                if (nrDiff > 0) {
+                    const d = Math.floor(nrDiff / (24*60*60*1000));
+                    const h = Math.floor((nrDiff % (24*60*60*1000)) / (60*60*1000));
+                    const m = Math.floor((nrDiff % (60*60*1000)) / (60*1000));
+                    const s = Math.floor((nrDiff % (60*1000)) / 1000);
+                    const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+                    const dayName = dayNames[nrDate.getDay()];
+                    const timeStr = String(nrDate.getHours()).padStart(2,'0') + ':' + String(nrDate.getMinutes()).padStart(2,'0');
+                    let nrInfo = '';
+                    if (state.nextRoundFirstGameHome && state.nextRoundFirstGameAway) {
+                        const homeName = state.nextRoundFirstGameHome.split(' ').pop();
+                        const awayName = state.nextRoundFirstGameAway.split(' ').pop();
+                        nrInfo = '<p class="text-zinc-400 text-xs mt-3">Próximo jogo: <span class="text-white font-bold">' + homeName + ' x ' + awayName + '</span> <span class="text-zinc-500">(' + dayName + ' ' + timeStr + ')</span></p>';
+                    } else {
+                        nrInfo = '<p class="text-zinc-400 text-xs mt-3">Rodada ' + (state.nextRoundNumber || (state.currentRound + 1)) + ': <span class="text-zinc-500">' + dayName + ' ' + timeStr + '</span></p>';
+                    }
+                    countdownHTML = '<div class="text-center">' +
+                        '<div id="homeCountdownBoxes" data-target="' + nrDate.getTime() + '" class="flex justify-center gap-2">' +
+                        (d > 0 ? '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + d + '</span><span class="text-[9px] text-purple-400 ml-1">D</span></div>' : '') +
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(h).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">H</span></div>' +
+                        '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(m).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">M</span></div>' +
+                        '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
+                        '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>' +
+                        nrInfo + '</div>';
                 }
             }
 
@@ -8264,7 +8549,7 @@
                     <!-- Main Content -->
                     <div class="max-w-7xl mx-auto px-3 sm:px-4 pb-24 sm:pb-4 pt-4">
                         <!-- Countdown Timer -->
-                        ${state.nextRoundDate ? `
+                        ${state.nextRoundDate && new Date(state.nextRoundDate).getTime() > Date.now() ? `
                             <div class="card rounded-xl p-4 mb-4 border border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-transparent">
                                 <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
                                     <div class="flex items-center gap-3">
@@ -8274,8 +8559,7 @@
                                             <p class="text-zinc-500 text-xs">${new Date(state.nextRoundDate).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>
                                         </div>
                                     </div>
-                                    <div id="countdownTimer" class="text-center">
-                                        <span class="text-zinc-500">Carregando...</span>
+                                    <div id="lineupCountdownBoxes" data-target="${new Date(state.nextRoundDate).getTime()}" class="flex items-center gap-3">
                                     </div>
                                 </div>
                             </div>
@@ -13279,7 +13563,13 @@
                                         <p class="text-blue-400 font-medium text-sm">🔄 Sincronizar Jogadores da API</p>
                                         <p class="text-zinc-500 text-xs">Total: ${state.players.length} jogadores | Última sync: ${localStorage.getItem('fantasy_last_sync') ? new Date(localStorage.getItem('fantasy_last_sync')).toLocaleString('pt-BR') : 'nunca'}</p>
                                     </div>
-                                    <button onclick="autoSyncPlayers(true).then(() => { alert('✅ Sincronização completa! ' + state.players.length + ' jogadores'); render(); })"
+                                    <button id="btnForceSyncApi" onclick="(async()=>{
+                                        const btn=document.getElementById('btnForceSyncApi');
+                                        btn.disabled=true; btn.textContent='⏳ Sincronizando...'; btn.classList.add('opacity-50');
+                                        try { await autoSyncPlayers(true); alert('✅ Sincronização completa! ' + state.players.length + ' jogadores'); }
+                                        catch(e){ alert('❌ Erro: ' + e.message); }
+                                        finally { btn.disabled=false; btn.textContent='🔄 Forçar Sync API'; btn.classList.remove('opacity-50'); render(); }
+                                    })()"
                                         class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-sm">
                                         🔄 Forçar Sync API
                                     </button>
@@ -14653,11 +14943,21 @@
                                         </div>
                                     </div>
                                     <div class="flex flex-wrap gap-3">
-                                        <button onclick="syncAllData()" 
+                                        <button id="btnSyncNow" onclick="(async()=>{
+                                            const btn=document.getElementById('btnSyncNow');
+                                            btn.disabled=true; btn.innerHTML='⏳ Sincronizando...'; btn.classList.add('opacity-50');
+                                            try { await syncAllData(); } catch(e){}
+                                            finally { btn.disabled=false; btn.innerHTML='Sincronizar Agora'; btn.classList.remove('opacity-50'); }
+                                        })()"
                                             class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">
                                             Sincronizar Agora
                                         </button>
-                                        <button onclick="adminForceSync()" 
+                                        <button id="btnClearSync" onclick="(async()=>{
+                                            const btn=document.getElementById('btnClearSync');
+                                            btn.disabled=true; btn.innerHTML='⏳ Limpando + Sync...'; btn.classList.add('opacity-50');
+                                            try { await adminForceSync(); } catch(e){}
+                                            finally { btn.disabled=false; btn.innerHTML='Limpar Cache + Sync'; btn.classList.remove('opacity-50'); }
+                                        })()"
                                             class="px-4 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-lg font-medium">
                                             Limpar Cache + Sync
                                         </button>
@@ -18892,10 +19192,14 @@
                 if (data && data.date) {
                     state.nextRoundDate = data.date;
                     state.nextRoundNumber = data.round || (state.currentRound + 1);
+                    state.nextRoundFirstGameHome = data.firstGameHome || '';
+                    state.nextRoundFirstGameAway = data.firstGameAway || '';
                     startCountdownTimer();
                 } else {
                     state.nextRoundDate = null;
                     state.nextRoundNumber = null;
+                    state.nextRoundFirstGameHome = '';
+                    state.nextRoundFirstGameAway = '';
                     if (countdownInterval) {
                         clearInterval(countdownInterval);
                         countdownInterval = null;
@@ -21831,31 +22135,43 @@ O usuário não poderá mais fazer login.
         };
         
         // Forçar sincronização (limpa cache)
-        window.adminForceSync = function() {
-            if (!confirm('Isso vai LIMPAR o cache de jogadores da API e buscar TODOS os dados novamente.\n\nJogadores manuais serão PRESERVADOS.\n\nContinuar?')) {
+        window.adminForceSync = async function() {
+            if (!confirm('Isso vai buscar TODOS os jogadores novamente da API.\n\nJogadores manuais serão PRESERVADOS.\nO Firebase só será atualizado se a sync for completa (700+ jogadores).\n\nContinuar?')) {
                 return;
             }
-            
-            // Salvar jogadores manuais antes de limpar
+
+            // Salvar jogadores manuais e dados atuais como backup
             const manualPlayers = state.players.filter(p => p.manual || p.id < 0);
-            
-            // Limpar cache de jogadores
+            const backupPlayerCount = state.players.length;
+
+            // Limpar apenas cache LOCAL (NÃO Firebase! Só apagar Firebase depois de sync OK)
             localStorage.removeItem('fantasyPlayers2026');
             localStorage.removeItem('fantasy_last_sync');
-            
+
             // Limpar do state (mas manter manuais)
             state.players = [...manualPlayers];
             state.teams = [];
-            
-            // Limpar do Firebase (só gameData/players, NÃO manualPlayers!)
-            if (db) {
-                db.ref('gameData/players').remove();
-                console.log('☁️ Jogadores API removidos do Firebase (manuais preservados)');
+
+            // NÃO apagar gameData/players do Firebase!
+            // Se a sync falhar, Firebase ainda terá os dados bons.
+            console.log('Cache local limpo! Iniciando sincronização (Firebase preservado como backup)...');
+
+            try {
+                await autoSyncPlayers(true);
+                // Se a sync foi boa, o autoSyncPlayers já salva no Firebase (se >= 700 jogadores)
+                if (state.players.length >= 700) {
+                    console.log(`✅ Sync completo: ${state.players.length} jogadores. Firebase atualizado.`);
+                    alert(`✅ Sincronização completa! ${state.players.length} jogadores carregados.`);
+                } else {
+                    console.warn(`⚠️ Sync incompleto: ${state.players.length} jogadores. Firebase NÃO atualizado.`);
+                    alert(`⚠️ Sync incompleto: apenas ${state.players.length} jogadores (esperado 700+).\nFirebase foi preservado. Tente novamente mais tarde.`);
+                }
+            } catch (e) {
+                console.error('❌ Sync falhou:', e.message);
+                alert('❌ Falha na sincronização: ' + e.message + '\nFirebase foi preservado.');
             }
-            
-            // Iniciar sincronização IMEDIATAMENTE (sem alert bloqueante)
-            console.log('Cache limpo! Iniciando sincronização...');
-            syncAllData();
+
+            render();
         };
         
         // ==================== DETALHES DE RODADA (HISTÓRICO) ====================
@@ -23529,8 +23845,13 @@ O usuário não poderá mais fazer login.
                         }
                     });
                     
-                    // SYNC MANUAL: salvar no Firebase para todos usuários
-                    savePlayers(true);
+                    // PROTEÇÃO: só salvar no Firebase se obteve dados suficientes
+                    // Evita sobrescrever dados bons com sync incompleto (rate limit da API)
+                    const shouldSaveToFirebase = allPlayers.length >= 700;
+                    if (!shouldSaveToFirebase) {
+                        console.warn(`⚠️ Sync incompleto: ${allPlayers.length} jogadores (mínimo 700 para salvar no Firebase). Salvando apenas cache local.`);
+                    }
+                    savePlayers(shouldSaveToFirebase);
                     
                     // Também atualizar data da última sync no Firebase
                     if (db) {
@@ -23656,7 +23977,8 @@ O usuário não poderá mais fazer login.
             console.log('🛡️ TEAM_LOGOS atualizado da API:', state.teams.length, 'times');
 
             const allPlayers = [];
-            
+            const failedTeams = [];
+
             for (let i = 0; i < state.teams.length; i++) {
                 const team = state.teams[i];
                 
@@ -23667,31 +23989,49 @@ O usuário não poderá mais fazer login.
                 }
                 console.log(`   [${i + 1}/${state.teams.length}] ${team.name}...`);
                 
-                try {
-                    let squadData = await apiCall(`/players/squads?team=${team.id}`);
-                    
-                    if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
-                        squadData.response[0].players.forEach(p => {
-                            allPlayers.push({
-                                id: p.id,
-                                name: p.name || '',
-                                photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
-                                position: translatePosition(p.position, p.number),
-                                team: team.name || '',
-                                teamId: team.id,
-                                teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
-                                number: p.number || 0  // Evitar undefined
+                let success = false;
+                for (let attempt = 0; attempt < 3 && !success; attempt++) {
+                    try {
+                        if (attempt > 0) {
+                            console.log(`   Tentativa ${attempt + 1}/3 para ${team.name}...`);
+                            await new Promise(r => setTimeout(r, 2000 * attempt));
+                        }
+                        let squadData = await apiCall(`/players/squads?team=${team.id}`);
+
+                        if (squadData.response && squadData.response[0]?.players && squadData.response[0].players.length > 0) {
+                            squadData.response[0].players.forEach(p => {
+                                allPlayers.push({
+                                    id: p.id,
+                                    name: p.name || '',
+                                    photo: p.photo || `https://media.api-sports.io/football/players/${p.id}.png`,
+                                    position: translatePosition(p.position, p.number),
+                                    team: team.name || '',
+                                    teamId: team.id,
+                                    teamLogo: TEAM_LOGOS[team.name] || TEAM_LOGOS[capitalizeTeamName(team.name)] || team.logo || '',
+                                    number: p.number || 0  // Evitar undefined
+                                });
                             });
-                        });
+                            success = true;
+                        } else {
+                            console.log(`   ⚠️ Sem jogadores na resposta para ${team.name}`);
+                        }
+
+                        await new Promise(r => setTimeout(r, 500));
+
+                    } catch (e) {
+                        console.log(`   Erro ${team.name} (tentativa ${attempt + 1}):`, e.message);
                     }
-                    
-                    await new Promise(r => setTimeout(r, 500));
-                    
-                } catch (e) {
-                    console.log(`   Erro: ${team.name}`);
+                }
+                if (!success) {
+                    console.warn(`   ❌ Falhou todas tentativas para ${team.name}`);
+                    failedTeams.push(team.name);
                 }
             }
-            
+
+            if (failedTeams.length > 0) {
+                console.warn(`⚠️ Times sem dados (${failedTeams.length}): ${failedTeams.join(', ')}`);
+            }
+
             if (allPlayers.length === 0) throw new Error('Nenhum jogador encontrado');
             return allPlayers;
         }
