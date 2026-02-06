@@ -2132,6 +2132,25 @@
         
         // Sanitiza array para Firebase (converte undefined para null)
         function sanitizeArrayForFirebase(arr, length) {
+
+        // Sanitiza scores: Firebase converte {1: {...}, 2: {...}} em Array(3)
+        // Esta função converte de volta para Object com chaves numéricas corretas
+        function sanitizeScores(scores) {
+            if (!scores || typeof scores !== 'object') return {};
+            if (!Array.isArray(scores)) return scores; // Já é Object, OK
+
+            // Converter Array para Object: [undefined, {round1Data}, {round2Data}] → {1: {round1Data}, 2: {round2Data}}
+            const obj = {};
+            scores.forEach((val, idx) => {
+                if (val && typeof val === 'object') {
+                    obj[idx] = val;
+                }
+            });
+            console.log(`🔧 Scores convertido de Array(${scores.length}) para Object com chaves: [${Object.keys(obj).join(', ')}]`);
+            return obj;
+        }
+
+
             if (!arr) return Array(length).fill(null);
             
             const result = [];
@@ -2419,9 +2438,19 @@
             console.log('🔍 Verificando rodada...');
             
             try {
-                // 1. PRIMEIRO: Verificar se Firebase já tem dados recentes (< 24h)
-                const firebaseRes = await fetch(`${FIREBASE_URL}/gameState.json`);
-                const gameState = await firebaseRes.json();
+                // 1. PRIMEIRO: Verificar se Firebase já tem dados recentes (< 24h) - usar SDK
+                let gameState = null;
+                try {
+                    if (db) {
+                        const snap = await db.ref('gameState').once('value');
+                        gameState = snap.val();
+                    } else {
+                        const firebaseRes = await fetch(`${FIREBASE_URL}/gameState.json`);
+                        if (firebaseRes.ok) gameState = await firebaseRes.json();
+                    }
+                } catch(e) {
+                    console.log('Erro ao ler gameState:', e.message);
+                }
                 
                 if (gameState && gameState.currentRound && gameState.lastApiSync) {
                     const timeSinceSync = Date.now() - gameState.lastApiSync;
@@ -2432,7 +2461,7 @@
                         const roundNum = toRoundNumber(gameState.currentRound);
                         state.currentRound = roundNum;
                         state.selectedRound = roundNum;
-                        state.substitutionsOpen = gameState.substitutionsOpen !== false;
+                        state.substitutionsOpen = gameState.substitutionsOpen === true;
                         state.roundStatus = gameState.roundStatus || 'waiting';
                         state.captainEnabled = gameState.captainEnabled === true;
                         state.delayedGamesRounds = gameState.delayedGamesRounds || []; // Rodadas com jogos atrasados
@@ -2595,7 +2624,7 @@
                     const roundNum = toRoundNumber(gameState.currentRound);
                     state.currentRound = roundNum;
                     state.selectedRound = roundNum;
-                    state.substitutionsOpen = gameState.substitutionsOpen !== false;
+                    state.substitutionsOpen = gameState.substitutionsOpen === true;
                     state.delayedGamesRounds = gameState.delayedGamesRounds || [];
                     console.log(`⚠️ Usando cache antigo do Firebase: Rodada ${roundNum}`);
                     return;
@@ -2627,9 +2656,19 @@
             try {
                 // Se forçar refresh, pular cache
                 if (!forceRefresh) {
-                    // 1. Primeiro, tentar ler do Firebase (cache compartilhado)
-                    const cacheRes = await fetch(`${FIREBASE_URL}/cache/${cacheKey}.json`);
-                    const cacheData = await cacheRes.json();
+                    // 1. Primeiro, tentar ler do Firebase (cache compartilhado) - usar SDK
+                    let cacheData = null;
+                    try {
+                        if (db) {
+                            const snap = await db.ref(`cache/${cacheKey}`).once('value');
+                            cacheData = snap.val();
+                        } else {
+                            const cacheRes = await fetch(`${FIREBASE_URL}/cache/${cacheKey}.json`);
+                            if (cacheRes.ok) cacheData = await cacheRes.json();
+                        }
+                    } catch(e) {
+                        console.log('Erro ao ler cache fixtures:', e.message);
+                    }
                     
                     if (cacheData && cacheData.fixtures && cacheData.fixtures.length > 0 && cacheData.updatedAt) {
                         const cacheAge = Date.now() - cacheData.updatedAt;
@@ -2710,20 +2749,27 @@
                     }
                 }
                 
-                // 3. Salvar no Firebase para outros usuários usarem
+                // 3. Salvar no Firebase para outros usuários usarem (usar SDK)
                 if (fixtures.length > 0) {
                     const cachePayload = {
                         fixtures: fixtures,
                         updatedAt: Date.now(),
                         round: state.selectedRound
                     };
-                    
-                    await fetch(`${FIREBASE_URL}/cache/${cacheKey}.json`, {
-                        method: 'PUT',
-                        body: JSON.stringify(cachePayload)
-                    });
-                    
-                    console.log('💾 Cache salvo no Firebase');
+
+                    try {
+                        if (db) {
+                            await db.ref(`cache/${cacheKey}`).set(cachePayload);
+                        } else {
+                            await fetch(`${FIREBASE_URL}/cache/${cacheKey}.json`, {
+                                method: 'PUT',
+                                body: JSON.stringify(cachePayload)
+                            });
+                        }
+                        console.log('💾 Cache salvo no Firebase');
+                    } catch(e) {
+                        console.log('Erro ao salvar cache fixtures:', e.message);
+                    }
                 }
                 
                 // Filtrar fixtures válidos (todos os campos necessários)
@@ -2916,9 +2962,15 @@
                             if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) {
                                 statusText = 'AO VIVO';
                                 statusClass = 'text-red-400 animate-pulse';
-                            } else if (status === 'FT') {
+                            } else if (['FT', 'AET', 'PEN'].includes(status)) {
                                 statusText = 'FIM';
                                 statusClass = 'text-zinc-500';
+                            } else if (['PST'].includes(status)) {
+                                statusText = 'ADIADO';
+                                statusClass = 'text-orange-500';
+                            } else if (['CANC', 'ABD'].includes(status)) {
+                                statusText = 'CANC.';
+                                statusClass = 'text-red-500';
                             } else {
                                 const hoje = new Date();
                                 const ehHoje = date.toDateString() === hoje.toDateString();
@@ -3853,8 +3905,26 @@
                     state.substitutionsOpen = data.substitutionsOpen === true; // default false - só libera quando explicitamente true
                     state.captainEnabled = data.captainEnabled === true;
                     
-                    console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}`);
-                    
+                    console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'} | Status: ${state.roundStatus}`);
+
+                    // AUTO-AVANÇO: Se rodada está "finished" e já passou 1 hora, avançar
+                    if (state.roundStatus === 'finished' && state.roundEndedAt) {
+                        const timeSinceEnd = Date.now() - state.roundEndedAt;
+                        const oneHour = 60 * 60 * 1000;
+                        if (timeSinceEnd >= oneHour && state.currentRound < 38) {
+                            const newRound = state.currentRound + 1;
+                            console.log(`🔄 AUTO-AVANÇO: Rodada ${state.currentRound} acabou há ${Math.round(timeSinceEnd/60000)}min → avançando para ${newRound}`);
+                            db.ref('gameState').update({
+                                currentRound: Math.min(newRound, 38),
+                                roundStatus: 'waiting',
+                                substitutionsOpen: true,
+                                roundEndedAt: null,
+                                updatedAt: Date.now()
+                            });
+                            return; // O update vai triggerar o listener de novo
+                        }
+                    }
+
                     // Log de mudanças importantes
                     if (oldRound !== state.currentRound) {
                         console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
@@ -3924,12 +3994,18 @@
                     allGamesFinished = false;
                 }
 
-                // Jogos não iniciados
-                if (['NS', 'TBD', 'PST'].includes(status)) {
+                // Jogos não iniciados (apenas NS e TBD)
+                if (['NS', 'TBD'].includes(status)) {
                     allGamesFinished = false;
                     if (matchTime < firstUpcomingGameTime) {
                         firstUpcomingGameTime = matchTime;
                     }
+                }
+
+                // Jogos adiados/cancelados - NÃO contam para status da rodada
+                // Permitem que a rodada termine normalmente
+                if (['PST', 'CANC', 'ABD', 'AWD', 'WO'].includes(status)) {
+                    console.log(`⏭️ ${fixture.teams?.home?.name} x ${fixture.teams?.away?.name} - ${status} (ignorado)`);
                 }
 
                 // Jogos finalizados
@@ -4241,7 +4317,7 @@
                             reserves: ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7),
                             formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                             isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
-                            scores: cloudUsers[nick].scores || state.users[nick].scores || {},
+                            scores: sanitizeScores(cloudUsers[nick].scores || state.users[nick].scores || {}),
                             favoriteTeam: cloudUsers[nick].favoriteTeam || null,
                             userBio: cloudUsers[nick].userBio || '',
                             achievements: cloudUsers[nick].achievements || [],
@@ -4255,9 +4331,10 @@
                             seenNotifications: cloudUsers[nick].seenNotifications || []
                         };
                         
-                        // DEBUG: Log scores carregados
-                        if (cloudUsers[nick].scores) {
-                            console.log(`📥 LOAD DEBUG - ${nick} scores:`, cloudUsers[nick].scores);
+                        // Se scores estavam como Array (corrompidos pelo Firebase), re-salvar como Object
+                        if (cloudUsers[nick].scores && Array.isArray(cloudUsers[nick].scores) && db) {
+                            console.log(`🔧 Re-salvando scores de ${nick} no Firebase (Array→Object)`);
+                            db.ref('users/' + nick + '/scores').set(state.users[nick].scores);
                         }
                         
                         // Aplicar foto custom do técnico de cada usuário
@@ -4293,7 +4370,7 @@
                                 state.formation = cloudUsers[nick].formation;
                             }
                             if (cloudUsers[nick].scores) {
-                                state.scores = cloudUsers[nick].scores;
+                                state.scores = sanitizeScores(cloudUsers[nick].scores);
                             }
                             state.captain = cloudUsers[nick].captain || null;
                             state.isConfirmed = cloudUsers[nick].isConfirmed || false;
@@ -5297,25 +5374,29 @@
             // Calcular duração do cache
             const effectiveCacheDuration = cacheDuration || getCacheDuration(endpoint, isFinished);
             
-            // 1. Verificar cache no Firebase primeiro (se habilitado)
+            // 1. Verificar cache no Firebase primeiro (se habilitado) - usar SDK
             if (useCache && !forceRefresh) {
                 const cacheKey = `cache/${endpoint.replace(/[^a-zA-Z0-9]/g, '_')}`;
                 try {
-                    const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
-                    if (cacheRes.ok) {
-                        const cached = await cacheRes.json();
-                        if (cached && cached.data && cached.timestamp) {
-                            const age = Date.now() - cached.timestamp;
-                            
-                            // Se dados são de jogo finalizado, usar cache mais longo
-                            const maxAge = cached.isFinished ? CACHE_DURATIONS.stats_finished : effectiveCacheDuration;
-                            
-                            if (age < maxAge) {
-                                const minutos = Math.round(age/60000);
-                                const maxMin = Math.round(maxAge/60000);
-                                console.log(`📦 Cache hit: ${endpoint.slice(0,50)}... (${minutos}/${maxMin}min)`);
-                                return cached.data;
-                            }
+                    let cached = null;
+                    if (db) {
+                        const snap = await db.ref(cacheKey).once('value');
+                        cached = snap.val();
+                    } else {
+                        const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
+                        if (cacheRes.ok) cached = await cacheRes.json();
+                    }
+                    if (cached && cached.data && cached.timestamp) {
+                        const age = Date.now() - cached.timestamp;
+
+                        // Se dados são de jogo finalizado, usar cache mais longo
+                        const maxAge = cached.isFinished ? CACHE_DURATIONS.stats_finished : effectiveCacheDuration;
+
+                        if (age < maxAge) {
+                            const minutos = Math.round(age/60000);
+                            const maxMin = Math.round(maxAge/60000);
+                            console.log(`📦 Cache hit: ${endpoint.slice(0,50)}... (${minutos}/${maxMin}min)`);
+                            return cached.data;
                         }
                     }
                 } catch(e) {
@@ -5366,20 +5447,25 @@
                 // 6. Incrementar contador
                 apiKeyManager.incrementRequest();
                 
-                // 7. Salvar no cache do Firebase (SEMPRE - para outros usuários usarem!)
+                // 7. Salvar no cache do Firebase (SEMPRE - usar SDK)
                 if (useCache && data) {
                     const cacheKey = `cache/${endpoint.replace(/[^a-zA-Z0-9]/g, '_')}`;
                     try {
-                        await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
-                            method: 'PUT',
-                            body: JSON.stringify({
-                                data: data,
-                                timestamp: Date.now(),
-                                endpoint: endpoint,
-                                isFinished: isFinished,
-                                savedBy: state.currentUser || 'anonymous'
-                            })
-                        });
+                        const apiCacheData = {
+                            data: data,
+                            timestamp: Date.now(),
+                            endpoint: endpoint,
+                            isFinished: isFinished,
+                            savedBy: state.currentUser || 'anonymous'
+                        };
+                        if (db) {
+                            await db.ref(cacheKey).set(apiCacheData);
+                        } else {
+                            await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                                method: 'PUT',
+                                body: JSON.stringify(apiCacheData)
+                            });
+                        }
                         console.log(`💾 Cache salvo no Firebase (${Math.round(effectiveCacheDuration/60000)}min)`);
                     } catch(e) {
                         // Falha no cache não é crítica
@@ -5662,53 +5748,63 @@
         // Cache de estatísticas de jogadores no Firebase (10 minutos)
         async function getPlayerStats(fixtureId, isFinished = false) {
             try {
-                // Verificar cache no Firebase primeiro
+                // Verificar cache no Firebase primeiro (usando SDK para evitar 401)
                 const cacheKey = `statsCache_${fixtureId}`;
-                
+
                 try {
-                    const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
-                    if (cacheRes.ok) {
-                        const cache = await cacheRes.json();
-                        
-                        if (cache && cache.data && cache.updatedAt) {
-                            const cacheAge = Date.now() - cache.updatedAt;
-                            // Cache válido: 24 horas para jogos FINALIZADOS, 3 min para ao vivo
-                            const maxAge = (cache.isFinished || isFinished) 
-                                ? 24 * 60 * 60 * 1000  // 24 horas
-                                : 3 * 60 * 1000;       // 3 minutos
-                            
-                            if (cacheAge < maxAge) {
-                                const status = cache.isFinished ? 'FINALIZADO-24h' : 'ao vivo-3min';
-                                console.log(`📦 Stats jogo ${fixtureId} (cache ${status})`);
-                                return cache.data || [];
-                            }
+                    let cache = null;
+                    // Priorizar Firebase SDK (autenticado) sobre REST API
+                    if (db) {
+                        const snap = await db.ref(cacheKey).once('value');
+                        cache = snap.val();
+                    } else {
+                        const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
+                        if (cacheRes.ok) cache = await cacheRes.json();
+                    }
+
+                    if (cache && cache.data && cache.updatedAt) {
+                        const cacheAge = Date.now() - cache.updatedAt;
+                        // Cache válido: 24 horas para jogos FINALIZADOS, 3 min para ao vivo
+                        const maxAge = (cache.isFinished || isFinished)
+                            ? 24 * 60 * 60 * 1000  // 24 horas
+                            : 3 * 60 * 1000;       // 3 minutos
+
+                        if (cacheAge < maxAge) {
+                            const status = cache.isFinished ? 'FINALIZADO-24h' : 'ao vivo-3min';
+                            console.log(`📦 Stats jogo ${fixtureId} (cache ${status})`);
+                            return cache.data || [];
                         }
                     }
                 } catch(e) {
-                    // Cache miss
+                    console.log(`Cache miss para ${fixtureId}:`, e.message);
                 }
-                
+
                 // Buscar da API
                 console.log(`🌐 Buscando stats jogo ${fixtureId} (API)`);
-                const res = await apiCall(`/fixtures/players?fixture=${fixtureId}`, { 
+                const res = await apiCall(`/fixtures/players?fixture=${fixtureId}`, {
                     useCache: false, // Já verificamos cache acima
-                    isFinished: isFinished 
+                    isFinished: isFinished
                 });
                 const data = res.response || [];
-                
-                // Salvar no cache do Firebase (SEMPRE!)
+
+                // Salvar no cache do Firebase (SEMPRE!) - usar SDK
                 if (data.length > 0) {
                     try {
-                        await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
-                            method: 'PUT',
-                            body: JSON.stringify({
-                                data: data,
-                                updatedAt: Date.now(),
-                                isFinished: isFinished,
-                                fixtureId: fixtureId,
-                                savedBy: state.currentUser || 'anonymous'
-                            })
-                        });
+                        const cacheData = {
+                            data: data,
+                            updatedAt: Date.now(),
+                            isFinished: isFinished,
+                            fixtureId: fixtureId,
+                            savedBy: state.currentUser || 'anonymous'
+                        };
+                        if (db) {
+                            await db.ref(cacheKey).set(cacheData);
+                        } else {
+                            await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                                method: 'PUT',
+                                body: JSON.stringify(cacheData)
+                            });
+                        }
                         const cacheDur = isFinished ? '24h' : '3min';
                         console.log(`💾 Stats salvos Firebase (cache ${cacheDur})`);
                     } catch(e) {
@@ -6444,13 +6540,20 @@
                 let cachedStats = null;
                 
                 try {
-                    const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
-                    const cacheData = await cacheRes.json();
-                    
+                    // Usar Firebase SDK (evita 401) com fallback para REST API
+                    let cacheData = null;
+                    if (db) {
+                        const snap = await db.ref(cacheKey).once('value');
+                        cacheData = snap.val();
+                    } else {
+                        const cacheRes = await fetch(`${FIREBASE_URL}/${cacheKey}.json`);
+                        if (cacheRes.ok) cacheData = await cacheRes.json();
+                    }
+
                     if (cacheData && cacheData.playerStats && cacheData.timestamp) {
                         const cacheAge = Date.now() - cacheData.timestamp;
                         const hasLive = cacheData.hasLiveGames;
-                        
+
                         // Se tem jogos ao vivo: cache de 3 min
                         // Se não tem jogos ao vivo: cache de 1 hora
                         const maxCacheAge = hasLive ? CACHE_3MIN : (60 * 60 * 1000);
@@ -6598,19 +6701,24 @@
                         });
                     });
                     
-                    // SALVAR NO FIREBASE PARA OUTROS USUÁRIOS USAREM
+                    // SALVAR NO FIREBASE PARA OUTROS USUÁRIOS USAREM (usar SDK)
                     try {
-                        await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
-                            method: 'PUT',
-                            body: JSON.stringify({
-                                playerStats: allPlayerStats,
-                                teamsWithGames: Array.from(teamsWithGames),
-                                hasLiveGames: hasLiveGames,
-                                gamesToProcess: gamesToProcess,
-                                timestamp: Date.now(),
-                                savedBy: state.currentUser || 'anonymous'
-                            })
-                        });
+                        const scoreCacheData = {
+                            playerStats: allPlayerStats,
+                            teamsWithGames: Array.from(teamsWithGames),
+                            hasLiveGames: hasLiveGames,
+                            gamesToProcess: gamesToProcess,
+                            timestamp: Date.now(),
+                            savedBy: state.currentUser || 'anonymous'
+                        };
+                        if (db) {
+                            await db.ref(cacheKey).set(scoreCacheData);
+                        } else {
+                            await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                                method: 'PUT',
+                                body: JSON.stringify(scoreCacheData)
+                            });
+                        }
                         console.log(`💾 Stats salvas no Firebase para outros usuários`);
                     } catch (e) {
                         console.log('Erro ao salvar cache:', e);
@@ -6643,8 +6751,24 @@
                     }
                 }
 
-                console.log(`📈 Calculando pontos para ${confirmedUsers.length} usuários...`);
-                
+                // SAFEGUARD: Se não há stats de jogadores mas há jogos processados,
+                // algo deu errado (API esgotada ou cache Firebase 401)
+                // NÃO sobrescrever scores existentes com zeros!
+                const statsPlayerCount = Object.keys(allPlayerStats).length;
+                if (statsPlayerCount === 0 && gamesToProcess.length > 0) {
+                    console.log(`⚠️ PROTEÇÃO: 0 stats de jogadores mas ${gamesToProcess.length} jogos existem - NÃO sobrescrever scores`);
+                    console.log('   Possível causa: API esgotada ou Firebase cache indisponível');
+                    if (state.currentUser && state.users[state.currentUser]) {
+                        state.scores = state.users[state.currentUser].scores || {};
+                    }
+                    state.isUpdatingScores = false;
+                    state.liveScoresUpdating = false;
+                    render();
+                    return;
+                }
+
+                console.log(`📈 Calculando pontos para ${confirmedUsers.length} usuários (${statsPlayerCount} jogadores com stats)...`);
+
                 for (const [nick, user] of confirmedUsers) {
                     // Inicializar scores do usuário se não existir
                     if (!user.scores) user.scores = {};
@@ -8672,8 +8796,12 @@
         
         // Verificar se pode fazer palpite (30 min antes do jogo)
         function podeApostar(jogo) {
+            // Jogos adiados/cancelados não podem receber palpite
+            if (['PST', 'CANC', 'ABD', 'AWD', 'WO'].includes(jogo.status)) {
+                return false;
+            }
             // Se o jogo já começou ou terminou, não pode
-            const statusNaoComeçou = ['NS', 'TBD', 'PST'];
+            const statusNaoComeçou = ['NS', 'TBD'];
             if (!statusNaoComeçou.includes(jogo.status)) {
                 return false;
             }
@@ -8835,9 +8963,9 @@
             // Contar jogos disponíveis para palpite
             const jogosDisponiveis = jogos.filter(j => podeApostar(j)).length;
             // Status de jogos finalizados para verificação
-            const statusFin = ['FT', 'AET', 'PEN', 'AWD', 'WO', 'CANC', 'ABD'];
+            const statusFin = ['FT', 'AET', 'PEN', 'AWD', 'WO', 'CANC', 'ABD', 'PST'];
             const todosFinalizados = jogos.every(j => {
-                return statusFin.includes(j.status) || 
+                return statusFin.includes(j.status) ||
                     (j.timestamp && Date.now() > j.timestamp + (3 * 60 * 60 * 1000) && !['1H', '2H', 'HT', 'LIVE', 'ET', 'P', 'BT', 'NS', 'TBD'].includes(j.status));
             });
             
@@ -8890,7 +9018,13 @@
                 let statusClass = 'text-zinc-500';
                 let statusExtra = '';
                 
-                if (jogoFinalizado) {
+                if (jogo.status === 'PST') {
+                    statusExtra = ' · ADIADO';
+                    statusClass = 'text-orange-500';
+                } else if (['CANC', 'ABD'].includes(jogo.status)) {
+                    statusExtra = ' · Cancelado';
+                    statusClass = 'text-red-500';
+                } else if (jogoFinalizado) {
                     statusExtra = ' · Encerrado';
                     statusClass = 'text-emerald-400';
                 } else if (jogoAoVivo) {
@@ -15873,7 +16007,7 @@
             state.reserves = ensureArray(userData.reserves, 7);
             state.coach = userData.coach || null; if(state.coach && state.coach.id){var _ltc=TECNICOS_2026.find(function(c){return c.id===state.coach.id;});if(_ltc && _ltc.photo) state.coach.photo=_ltc.photo;}
             state.isConfirmed = userData.isConfirmed || false;
-            state.scores = userData.scores || {};
+            state.scores = sanitizeScores(userData.scores || {});
             state.favoriteTeam = userData.favoriteTeam || null;
             state.userBio = userData.userBio || '';
             
@@ -22718,7 +22852,7 @@ O usuário não poderá mais fazer login.
                         state.reserves = ensureArray(userData.reserves, 7);
                         state.coach = userData.coach || null; if(state.coach && state.coach.id){var _ltc=TECNICOS_2026.find(function(c){return c.id===state.coach.id;});if(_ltc && _ltc.photo) state.coach.photo=_ltc.photo;}
                         state.isConfirmed = userData.isConfirmed || false;
-                        state.scores = userData.scores || {};
+                        state.scores = sanitizeScores(userData.scores || {});
                         state.favoriteTeam = userData.favoriteTeam || null;
                         state.userBio = userData.userBio || '';
                         
@@ -22818,7 +22952,7 @@ O usuário não poderá mais fazer login.
                                 state.reserves = ensureArray(userData.reserves, 7);
                                 state.coach = userData.coach || null; if(state.coach && state.coach.id){var _ltc=TECNICOS_2026.find(function(c){return c.id===state.coach.id;});if(_ltc && _ltc.photo) state.coach.photo=_ltc.photo;}
                                 state.isConfirmed = userData.isConfirmed || false;
-                                state.scores = userData.scores || {};
+                                state.scores = sanitizeScores(userData.scores || {});
                                 state.favoriteTeam = userData.favoriteTeam || null;
                                 state.userBio = userData.userBio || '';
                                 
@@ -23326,12 +23460,39 @@ O usuário não poderá mais fazer login.
                 try {
                     var round = state.selectedRound || state.currentRound;
                     if (round) {
-                        await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                        if (db) {
+                            await db.ref(`scoresCache/round_${round}`).remove();
+                        } else {
+                            await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                        }
                         console.log('🗑️ Cache de scores limpo para migração');
                     }
                 } catch(e) {}
                 localStorage.setItem('scoreCalcVersion', 'v2_conceded_fix');
             }
+            // Detectar scores corrompidos (todos 0) e forçar recálculo
+            if (state.currentUser && state.users[state.currentUser]) {
+                const userData = state.users[state.currentUser];
+                const currentRound = state.selectedRound || state.currentRound;
+                const roundScores = userData.scores?.[currentRound]?.players || {};
+                const scoreValues = Object.values(roundScores);
+                const hasScores = scoreValues.length > 0;
+                const allZeros = hasScores && scoreValues.every(s => s === 0);
+                const hasFinished = (state.liveFixtures || []).some(f =>
+                    ['FT', 'AET', 'PEN'].includes(f.fixture?.status?.short)
+                );
+
+                if (allZeros && hasFinished) {
+                    console.log('⚠️ SCORES CORROMPIDOS DETECTADOS: todos 0 mas tem jogos finalizados');
+                    console.log('🔄 Forçando recálculo limpando cache...');
+                    try {
+                        if (db) {
+                            await db.ref(`scoresCache/round_${currentRound}`).remove();
+                        }
+                    } catch(e) {}
+                }
+            }
+
             // Sempre sincronizar pontuação e gerenciar updates (não depender de isConfirmed)
             if (state.currentUser) {
                 await syncRoundScores();
@@ -23350,12 +23511,16 @@ O usuário não poderá mais fazer login.
         window.forceRoundSync = async function() {
             console.log('🔄 Forçando re-sincronização com API (ignorando cache)...');
             
-            // Limpar cache do Firebase (stats + scores)
+            // Limpar cache do Firebase (stats + scores) - usar SDK
             try {
-                await fetch(`${FIREBASE_URL}/gameState/lastApiSync.json`, { method: 'DELETE' });
-                // Limpar cache de scores da rodada atual para forçar recálculo
                 const round = state.selectedRound || state.currentRound;
-                await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                if (db) {
+                    await db.ref('gameState/lastApiSync').remove();
+                    await db.ref(`scoresCache/round_${round}`).remove();
+                } else {
+                    await fetch(`${FIREBASE_URL}/gameState/lastApiSync.json`, { method: 'DELETE' });
+                    await fetch(`${FIREBASE_URL}/scoresCache/round_${round}.json`, { method: 'DELETE' });
+                }
                 console.log(`🗑️ Cache de scores da rodada ${round} removido`);
             } catch (e) {}
             
