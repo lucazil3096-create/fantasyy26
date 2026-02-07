@@ -996,6 +996,9 @@
             currentRound: 1, // Rodada atual do campeonato (detectada automaticamente)
             nextRoundDate: null, // Data/hora do início da próxima rodada
             nextRoundNumber: null, // Número da próxima rodada
+            nextRoundFirstGameHome: '', // Time da casa do primeiro jogo da próxima rodada
+            nextRoundFirstGameAway: '', // Time visitante do primeiro jogo da próxima rodada
+            nextRoundFixtures: null, // Fixtures da próxima rodada (auto-detectados)
             firebaseSynced: false, // Se já sincronizou com Firebase
             
             // Sistema de Controle de Rodada (100% Online via Firebase)
@@ -4189,6 +4192,16 @@
                 // Jogos ao vivo - travar
                 newRoundStatus = 'live';
                 newSubstitutionsOpen = false;
+                // Limpar countdown automático quando a rodada começa
+                if (state.nextRoundDate && db) {
+                    const nextRoundTarget = new Date(state.nextRoundDate).getTime();
+                    if (now >= nextRoundTarget) {
+                        db.ref('nextRound').remove();
+                        state.nextRoundDate = null;
+                        state.nextRoundNumber = null;
+                        console.log('🗑️ Countdown removido - rodada começou');
+                    }
+                }
             } else if (!allGamesFinished) {
                 // Tem jogos não iniciados
                 if (hasFinishedGames) {
@@ -4235,6 +4248,8 @@
                 } else {
                     const hoursLeft = Math.ceil((nextMorning6am.getTime() - now) / (60 * 60 * 1000));
                     console.log(`⏳ Rodada encerrada. Próxima rodada abre às 6h (~${hoursLeft}h)`);
+                    // Auto-detectar próxima rodada para o countdown
+                    autoDetectNextRound();
                 }
             }
             
@@ -4263,6 +4278,10 @@
                         substitutionsOpen: true,
                         updatedAt: Date.now()
                     });
+                    // Limpar countdown da rodada anterior
+                    db.ref('nextRound').remove();
+                    state.nextRoundDate = null;
+                    state.nextRoundNumber = null;
                     console.log(`🔄 Avançando rodada ${roundAtStart} → ${newRound}`);
                     setTimeout(() => fetchLiveFixtures(true), 1000);
                 } else {
@@ -4274,6 +4293,113 @@
                         updatedAt: Date.now()
                     });
                 }
+            }
+        }
+        
+        // ==================== AUTO-DETECT PRÓXIMA RODADA ====================
+        let _fetchingNextRound = false;
+        async function autoDetectNextRound() {
+            if (_fetchingNextRound) return;
+            // Só buscar se não temos data da próxima válida
+            if (state.nextRoundDate) {
+                if (new Date(state.nextRoundDate).getTime() > Date.now()) return;
+            }
+            
+            _fetchingNextRound = true;
+            
+            // Verificar se a rodada atual tem jogos não jogados (NS com datas passadas = adiados)
+            // Se sim, a "próxima rodada" é a ATUAL, não a seguinte
+            const currentRoundHasUnplayed = (state.liveFixtures || []).some(f => {
+                const st = f.fixture?.status?.short || 'NS';
+                return ['NS', 'TBD'].includes(st);
+            });
+            const currentRoundHasFinished = (state.liveFixtures || []).some(f => {
+                const st = f.fixture?.status?.short || 'NS';
+                return ['FT', 'AET', 'PEN'].includes(st);
+            });
+            
+            // Se tem jogos NS mas nenhum FT, a rodada atual não foi jogada
+            const nextRound = (currentRoundHasUnplayed && !currentRoundHasFinished) ? state.currentRound : state.currentRound + 1;
+            if (nextRound > 38) { _fetchingNextRound = false; return; }
+            
+            console.log(`🔍 Auto-detectando data da rodada ${nextRound}...`);
+            
+            try {
+                // Tentar buscar fixtures da próxima rodada do cache Firebase primeiro
+                const cacheKey = `fixtures_round_${nextRound}`;
+                let fixtures = null;
+                
+                try {
+                    if (db) {
+                        const snap = await db.ref(`cache/${cacheKey}`).once('value');
+                        const cacheData = snap.val();
+                        if (cacheData && cacheData.fixtures && cacheData.fixtures.length > 0) {
+                            fixtures = cacheData.fixtures;
+                            console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos no cache`);
+                        }
+                    }
+                } catch(e) { console.log('Cache miss para próxima rodada'); }
+                
+                // Se não tem no cache, buscar da API
+                if (!fixtures) {
+                    try {
+                        const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${nextRound}`);
+                        if (res.response && res.response.length > 0) {
+                            fixtures = res.response;
+                            console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos da API`);
+                        }
+                    } catch(e) {
+                        console.log('Erro ao buscar próxima rodada da API:', e);
+                        // Tentar fallback season
+                        try {
+                            const res2 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}&round=Regular Season - ${nextRound}`);
+                            if (res2.response && res2.response.length > 0) {
+                                fixtures = res2.response;
+                            }
+                        } catch(e2) { console.log('Fallback também falhou'); }
+                    }
+                }
+                
+                if (fixtures && fixtures.length > 0) {
+                    // Encontrar o primeiro jogo NS (não iniciado) no futuro
+                    const futureGames = fixtures
+                        .filter(f => {
+                            const st = f.fixture?.status?.short || 'NS';
+                            return ['NS', 'TBD'].includes(st) && new Date(f.fixture?.date).getTime() > Date.now();
+                        })
+                        .sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+                    
+                    if (futureGames.length > 0) {
+                        const firstGame = futureGames[0];
+                        const nextDate = firstGame.fixture.date;
+                        
+                        // Atualizar estado local
+                        state.nextRoundDate = nextDate;
+                        state.nextRoundNumber = nextRound;
+                        
+                        // Guardar também os fixtures da próxima rodada para o countdown da Home
+                        state.nextRoundFixtures = futureGames;
+                        
+                        // Salvar no Firebase para todos os usuários verem
+                        if (db) {
+                            db.ref('nextRound').set({
+                                date: nextDate,
+                                round: nextRound,
+                                setBy: 'auto',
+                                setAt: Date.now(),
+                                firstGameHome: firstGame.teams?.home?.name || '',
+                                firstGameAway: firstGame.teams?.away?.name || ''
+                            });
+                        }
+                        
+                        console.log(`⏰ Próxima rodada ${nextRound} detectada: ${new Date(nextDate).toLocaleString('pt-BR')}`);
+                        startCountdownTimer();
+                    }
+                }
+            } catch(e) {
+                console.error('Erro ao auto-detectar próxima rodada:', e);
+            } finally {
+                _fetchingNextRound = false;
             }
         }
         
@@ -4897,6 +5023,9 @@
                 
                 // Escutar countdown da próxima rodada
                 try { listenToNextRound(); } catch(e) { console.error('Erro listenToNextRound:', e); }
+                
+                // Auto-detectar próxima rodada (sempre tenta se não tem countdown configurado)
+                setTimeout(() => autoDetectNextRound(), 3000);
                 
                 // Escutar mensagens privadas
                 try { listenToPrivateMessages(); } catch(e) { console.error('Erro listenToPrivateMessages:', e); }
@@ -7849,8 +7978,8 @@
             });
             topPlayers.sort((a, b) => b.pts - a.pts);
             
-            // Próximos jogos
-            const upcomingGames = (state.liveFixtures || []).filter(f => ['NS','TBD'].includes(f.fixture?.status?.short || 'NS')).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+            // Próximos jogos (apenas com data futura)
+            const upcomingGames = (state.liveFixtures || []).filter(f => ['NS','TBD'].includes(f.fixture?.status?.short || 'NS') && new Date(f.fixture?.date).getTime() > Date.now()).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
             const liveGames = (state.liveFixtures || []).filter(f => ['1H','2H','HT','ET','P','LIVE'].includes(f.fixture?.status?.short || 'NS'));
             
             // Countdown
@@ -8336,23 +8465,6 @@
 
                     <!-- Main Content -->
                     <div class="max-w-7xl mx-auto px-3 sm:px-4 pb-24 sm:pb-4 pt-4">
-                        <!-- Countdown Timer -->
-                        ${state.nextRoundDate ? `
-                            <div class="card rounded-xl p-4 mb-4 border border-purple-500/30 bg-gradient-to-r from-purple-500/10 to-transparent">
-                                <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
-                                    <div class="flex items-center gap-3">
-                                        <span class="text-3xl"></span>
-                                        <div>
-                                            <h3 class="text-white font-bold">Rodada ${state.nextRoundNumber || (state.currentRound + 1)} começa em:</h3>
-                                            <p class="text-zinc-500 text-xs">${new Date(state.nextRoundDate).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>
-                                        </div>
-                                    </div>
-                                    <div id="countdownTimer" class="text-center">
-                                        <span class="text-zinc-500">Carregando...</span>
-                                    </div>
-                                </div>
-                            </div>
-                        ` : ''}
                         
                         <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <!-- Campo -->
@@ -18981,10 +19093,14 @@
                 if (data && data.date) {
                     state.nextRoundDate = data.date;
                     state.nextRoundNumber = data.round || (state.currentRound + 1);
+                    state.nextRoundFirstGameHome = data.firstGameHome || '';
+                    state.nextRoundFirstGameAway = data.firstGameAway || '';
                     startCountdownTimer();
                 } else {
                     state.nextRoundDate = null;
                     state.nextRoundNumber = null;
+                    state.nextRoundFirstGameHome = '';
+                    state.nextRoundFirstGameAway = '';
                     if (countdownInterval) {
                         clearInterval(countdownInterval);
                         countdownInterval = null;
