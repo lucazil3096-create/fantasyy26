@@ -8,6 +8,7 @@ import LineupScreen from '@/components/screens/LineupScreen';
 import DraftScreen from '@/components/screens/DraftScreen';
 import RankingScreen from '@/components/screens/RankingScreen';
 import TradesScreen from '@/components/screens/TradesScreen';
+import ChatScreen from '@/components/screens/ChatScreen';
 import AdminScreen from '@/components/screens/AdminScreen';
 import { useStore } from '@/store/useStore';
 
@@ -20,6 +21,7 @@ function AppContent() {
     draft: <DraftScreen />,
     ranking: <RankingScreen />,
     trades: <TradesScreen />,
+    chat: <ChatScreen />,
     admin: <AdminScreen />,
   };
 
