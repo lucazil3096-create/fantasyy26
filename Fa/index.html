@@ -7928,20 +7928,9 @@
                             '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
                             '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>';
                     }
-                } else if (state.roundEndedAt && state.roundEndedAt > 0) {
-                    // Se não tem próximo jogo, mostrar quando próxima rodada abre
-                    const refDate = new Date(state.roundEndedAt);
-                    const next6am = new Date(refDate);
-                    next6am.setDate(next6am.getDate() + 1);
-                    next6am.setHours(6, 0, 0, 0);
-                    const diffMs = next6am.getTime() - now;
-                    if (diffMs > 0) {
-                        const hLeft = Math.floor(diffMs / (60*60*1000));
-                        const mLeft = Math.floor((diffMs % (60*60*1000)) / (60*1000));
-                        nextRoundInfo = '<p class="text-zinc-400 text-xs mt-2">Rodada ' + (state.currentRound + 1) + ' abre em <span class="text-purple-400 font-bold">' + hLeft + 'h ' + String(mLeft).padStart(2,'0') + 'm</span></p>';
-                    } else {
-                        nextRoundInfo = '<p class="text-emerald-400 text-xs mt-2 font-bold">Próxima rodada abrindo...</p>';
-                    }
+                } else {
+                    // Sem data de próximo jogo - mostrar info da próxima rodada
+                    nextRoundInfo = '<p class="text-zinc-400 text-xs mt-3">Rodada ' + (state.currentRound + 1) + ' em breve</p>';
                 }
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>' + countdownBoxes + nextRoundInfo + '</div>';
             } else if (upcomingGames.length > 0) {
