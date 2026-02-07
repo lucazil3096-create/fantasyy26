@@ -9,7 +9,7 @@ import { DEFAULT_APPEARANCE } from '@/lib/appearance';
 import LoginScreen from '@/components/LoginScreen';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { setUser, setLoading, isLoading, isLoggedIn, setPlayers, setAppearance, setCurrentRound, setNextGameDate } = useStore();
+  const { setUser, setLoading, isLoading, isLoggedIn, setPlayers, setAppearance, setCurrentRound, setNextGameDate, setRoundStatus, setNextRoundNumber } = useStore();
   const [ready, setReady] = useState(false);
 
   // Auth listener
@@ -36,6 +36,8 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
               budget: userData.budget ?? 100,
               totalPoints: userData.totalPoints ?? 0,
               isAdmin,
+              confirmed: userData.confirmed ?? false,
+              captain: userData.captain ?? null,
             });
           } else {
             setUser(null);
@@ -85,10 +87,12 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
       if (data) {
         if (data.currentRound) setCurrentRound(data.currentRound);
         if (data.nextGameDate) setNextGameDate(data.nextGameDate);
+        if (data.roundStatus) setRoundStatus(data.roundStatus);
+        if (data.nextRoundNumber) setNextRoundNumber(data.nextRoundNumber);
       }
     });
     return () => unsub();
-  }, [setCurrentRound, setNextGameDate]);
+  }, [setCurrentRound, setNextGameDate, setRoundStatus, setNextRoundNumber]);
 
   if (!ready || isLoading) {
     return (

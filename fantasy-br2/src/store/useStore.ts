@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { DraftState, DraftPick } from '@/lib/draft';
 import { AppearanceConfig, DEFAULT_APPEARANCE } from '@/lib/appearance';
 
-export type Screen = 'home' | 'lineup' | 'draft' | 'ranking' | 'trades' | 'admin';
+export type Screen = 'home' | 'lineup' | 'draft' | 'ranking' | 'trades' | 'chat' | 'admin';
 
 export interface Player {
   id: number;
@@ -15,6 +15,23 @@ export interface Player {
   points: number;
 }
 
+export interface TradeOffer {
+  id: string;
+  from: string;
+  to: string;
+  offeredPlayers: Player[];
+  requestedPlayers: Player[];
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  from: string;
+  text: string;
+  timestamp: number;
+}
+
 export interface UserData {
   nickname: string;
   team: Player[];
@@ -22,6 +39,8 @@ export interface UserData {
   budget: number;
   totalPoints: number;
   isAdmin: boolean;
+  confirmed?: boolean;
+  captain?: number | null;
 }
 
 interface AppState {
@@ -40,13 +59,24 @@ interface AppState {
 
   // Game state
   currentRound: number;
-  isRoundActive: boolean;
+  roundStatus: 'waiting' | 'active' | 'finished';
   nextGameDate: string | null;
+  nextRoundNumber: number | null;
 
   // Draft
   draft: DraftState | null;
   setDraft: (draft: DraftState | null) => void;
   addDraftPick: (pick: DraftPick) => void;
+
+  // Trades
+  trades: TradeOffer[];
+  setTrades: (trades: TradeOffer[]) => void;
+
+  // Chat
+  messages: ChatMessage[];
+  setMessages: (messages: ChatMessage[]) => void;
+  unreadCount: number;
+  setUnreadCount: (count: number) => void;
 
   // Appearance
   appearance: AppearanceConfig;
@@ -58,8 +88,14 @@ interface AppState {
 
   // Game actions
   setCurrentRound: (round: number) => void;
-  setRoundActive: (active: boolean) => void;
+  setRoundStatus: (status: 'waiting' | 'active' | 'finished') => void;
   setNextGameDate: (date: string | null) => void;
+  setNextRoundNumber: (round: number | null) => void;
+
+  // Team actions
+  updateTeam: (team: Player[]) => void;
+  setCaptain: (playerId: number | null) => void;
+  setConfirmed: (confirmed: boolean) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -78,8 +114,9 @@ export const useStore = create<AppState>((set) => ({
 
   // Game state
   currentRound: 1,
-  isRoundActive: false,
+  roundStatus: 'waiting',
   nextGameDate: null,
+  nextRoundNumber: null,
 
   // Draft
   draft: null,
@@ -97,6 +134,16 @@ export const useStore = create<AppState>((set) => ({
       };
     }),
 
+  // Trades
+  trades: [],
+  setTrades: (trades) => set({ trades }),
+
+  // Chat
+  messages: [],
+  setMessages: (messages) => set({ messages }),
+  unreadCount: 0,
+  setUnreadCount: (unreadCount) => set({ unreadCount }),
+
   // Appearance
   appearance: DEFAULT_APPEARANCE,
   setAppearance: (appearance) => set({ appearance }),
@@ -107,6 +154,24 @@ export const useStore = create<AppState>((set) => ({
 
   // Game actions
   setCurrentRound: (currentRound) => set({ currentRound }),
-  setRoundActive: (isRoundActive) => set({ isRoundActive }),
+  setRoundStatus: (roundStatus) => set({ roundStatus }),
   setNextGameDate: (nextGameDate) => set({ nextGameDate }),
+  setNextRoundNumber: (nextRoundNumber) => set({ nextRoundNumber }),
+
+  // Team actions
+  updateTeam: (team) =>
+    set((s) => {
+      if (!s.user) return {};
+      return { user: { ...s.user, team } };
+    }),
+  setCaptain: (playerId) =>
+    set((s) => {
+      if (!s.user) return {};
+      return { user: { ...s.user, captain: playerId } };
+    }),
+  setConfirmed: (confirmed) =>
+    set((s) => {
+      if (!s.user) return {};
+      return { user: { ...s.user, confirmed } };
+    }),
 }));
