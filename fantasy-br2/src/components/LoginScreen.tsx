@@ -15,7 +15,7 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const email = `${nickname.toLowerCase().trim()}@fantasybr.app`;
+  const email = `${nickname.toLowerCase().trim()}@fbr2.app`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
