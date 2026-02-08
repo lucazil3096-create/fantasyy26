@@ -1,20 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { apiFootballFetch, getLeagueId, getCurrentSeason } from '@/lib/api-football';
 import { firebaseGet, firebaseSet } from '@/lib/firebase-admin';
-import { calculatePlayerPoints, PlayerMatchStats, DEFAULT_SCORING } from '@/lib/scoring';
+import { calculatePlayerPoints, PlayerMatchStats, ScoringRules, DEFAULT_SCORING } from '@/lib/scoring';
 
-// POST /api/scoring?round=1
+// GET /api/scoring?round=1&league=leagueId
 // Fetches match events and calculates points for all players in that round
+// If league is provided, also updates member totalPoints within that league
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const round = searchParams.get('round');
+  const leagueId = searchParams.get('league');
   const season = String(getCurrentSeason());
-  const leagueId = getLeagueId();
+  const leagueApiId = getLeagueId();
 
   try {
     // Get fixtures for the round
-    const params: Record<string, string> = { league: leagueId, season };
+    const params: Record<string, string> = { league: leagueApiId, season };
     if (round) params.round = `Regular Season - ${round}`;
 
     const fixturesData = await apiFootballFetch('/fixtures', params) as {
@@ -26,7 +28,6 @@ export async function GET(req: NextRequest) {
     };
     const fixtures = fixturesData?.response || [];
 
-    // Only process finished matches
     const finishedFixtures = fixtures.filter(
       (f) => f.fixture.status.short === 'FT'
     );
@@ -36,6 +37,19 @@ export async function GET(req: NextRequest) {
         message: 'Nenhum jogo finalizado nesta rodada',
         playersScored: 0,
       });
+    }
+
+    // Load custom scoring rules from the league if provided
+    let scoringRules: ScoringRules = DEFAULT_SCORING;
+    let captainMultiplier = 2;
+    if (leagueId) {
+      const settings = await firebaseGet(`leagues/${leagueId}/settings`);
+      if (settings?.scoringRules) {
+        scoringRules = { ...DEFAULT_SCORING, ...settings.scoringRules };
+      }
+      if (settings?.captainMultiplier) {
+        captainMultiplier = settings.captainMultiplier;
+      }
     }
 
     // Get player stats for each finished fixture
@@ -88,7 +102,7 @@ export async function GET(req: NextRequest) {
             position,
           };
 
-          const pts = calculatePlayerPoints(matchStats, DEFAULT_SCORING);
+          const pts = calculatePlayerPoints(matchStats, scoringRules);
 
           if (!playerPoints[playerData.player.id]) {
             playerPoints[playerData.player.id] = {
@@ -102,11 +116,10 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Small delay between fixture requests
       await new Promise((r) => setTimeout(r, 300));
     }
 
-    // Save round scores to Firebase
+    // Save round scores globally
     const roundKey = round || 'latest';
     await firebaseSet(`scores/round_${roundKey}`, {
       fixtures: finishedFixtures.length,
@@ -114,24 +127,31 @@ export async function GET(req: NextRequest) {
       calculatedAt: new Date().toISOString(),
     });
 
-    // Update user total points
-    const usersData = await firebaseGet('users');
-    if (usersData) {
-      for (const [nickname, userData] of Object.entries(usersData)) {
-        const user = userData as { team?: Array<{ id: number }>; totalPoints?: number };
-        if (!user.team) continue;
+    // If league provided, update member totalPoints within that league
+    if (leagueId) {
+      const membersData = await firebaseGet(`leagues/${leagueId}/members`);
+      if (membersData) {
+        for (const [memberNick, memberData] of Object.entries(membersData)) {
+          const member = memberData as { team?: Array<{ id: number }>; totalPoints?: number; captain?: number | null };
+          if (!member.team) continue;
 
-        let roundPoints = 0;
-        for (const player of user.team) {
-          if (playerPoints[player.id]) {
-            roundPoints += playerPoints[player.id].points;
+          let roundPoints = 0;
+          for (const player of member.team) {
+            if (playerPoints[player.id]) {
+              let pts = playerPoints[player.id].points;
+              // Apply captain multiplier
+              if (member.captain === player.id) {
+                pts *= captainMultiplier;
+              }
+              roundPoints += pts;
+            }
           }
-        }
 
-        if (roundPoints > 0) {
-          const newTotal = (user.totalPoints || 0) + roundPoints;
-          await firebaseSet(`users/${nickname}/totalPoints`, newTotal);
-          await firebaseSet(`users/${nickname}/roundPoints/round_${roundKey}`, roundPoints);
+          if (roundPoints !== 0) {
+            const newTotal = (member.totalPoints || 0) + roundPoints;
+            await firebaseSet(`leagues/${leagueId}/members/${memberNick}/totalPoints`, newTotal);
+            await firebaseSet(`leagues/${leagueId}/members/${memberNick}/roundPoints/round_${roundKey}`, roundPoints);
+          }
         }
       }
     }

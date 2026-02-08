@@ -1,20 +1,23 @@
 import { create } from 'zustand';
 import { DraftState, DraftPick } from '@/lib/draft';
 import { AppearanceConfig, DEFAULT_APPEARANCE } from '@/lib/appearance';
+import { ScoringRules, DEFAULT_SCORING } from '@/lib/scoring';
 
-export type Screen = 'home' | 'lineup' | 'draft' | 'ranking' | 'trades' | 'chat' | 'admin';
+// ── Screens ──
+export type Screen = 'home' | 'lineup' | 'draft' | 'ranking' | 'trades' | 'chat' | 'admin' | 'leagues';
 
+// ── Player ──
 export interface Player {
   id: number;
   name: string;
   photo: string;
-  position: string;
+  position: string; // G, D, M, A
   team: string;
   teamLogo: string;
-  price: number;
   points: number;
 }
 
+// ── Trade ──
 export interface TradeOffer {
   id: string;
   from: string;
@@ -25,6 +28,7 @@ export interface TradeOffer {
   createdAt: number;
 }
 
+// ── Chat ──
 export interface ChatMessage {
   id: string;
   from: string;
@@ -32,36 +36,76 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+// ── League ──
+export interface League {
+  id: string;
+  name: string;
+  logo: string;
+  accessCode: string;
+  adminUid: string;
+  adminNickname: string;
+  season: number;
+  maxMembers: number;
+  createdAt: string;
+}
+
+// ── User Data (within a league) ──
 export interface UserData {
   nickname: string;
   team: Player[];
   formation: string;
-  budget: number;
   totalPoints: number;
-  isAdmin: boolean;
-  confirmed?: boolean;
-  captain?: number | null;
+  confirmed: boolean;
+  captain: number | null;
 }
 
+// ── Round Config ──
+export interface RoundConfig {
+  number: number;
+  status: 'waiting' | 'active' | 'finished';
+  deadline: string | null;
+  nextGameDate: string | null;
+}
+
+// ── Admin Settings ──
+export interface LeagueSettings {
+  draftRounds: number;
+  draftTimerSeconds: number;
+  maxTradesPerMonth: number;
+  marketOpen: boolean;
+  captainMultiplier: number;
+  scoringRules: ScoringRules;
+}
+
+// ── App State ──
 interface AppState {
   // Auth
-  user: UserData | null;
+  uid: string | null;
+  nickname: string | null;
   isLoggedIn: boolean;
   isLoading: boolean;
+  isAdmin: boolean; // true if user is admin of current league
+
+  // League
+  currentLeague: League | null;
+  leagues: League[];
+  setCurrentLeague: (league: League | null) => void;
+  setLeagues: (leagues: League[]) => void;
+
+  // User (within league)
+  user: UserData | null;
 
   // Navigation
   screen: Screen;
   setScreen: (screen: Screen) => void;
 
-  // Players
+  // Players (shared - from API)
   players: Player[];
   setPlayers: (players: Player[]) => void;
 
-  // Game state
-  currentRound: number;
-  roundStatus: 'waiting' | 'active' | 'finished';
-  nextGameDate: string | null;
-  nextRoundNumber: number | null;
+  // Round state
+  round: RoundConfig;
+  setRound: (round: Partial<RoundConfig>) => void;
 
   // Draft
   draft: DraftState | null;
@@ -82,15 +126,14 @@ interface AppState {
   appearance: AppearanceConfig;
   setAppearance: (config: AppearanceConfig) => void;
 
+  // League settings
+  settings: LeagueSettings;
+  setSettings: (settings: Partial<LeagueSettings>) => void;
+
   // Auth actions
+  setAuth: (uid: string | null, nickname: string | null, isAdmin: boolean) => void;
   setUser: (user: UserData | null) => void;
   setLoading: (loading: boolean) => void;
-
-  // Game actions
-  setCurrentRound: (round: number) => void;
-  setRoundStatus: (status: 'waiting' | 'active' | 'finished') => void;
-  setNextGameDate: (date: string | null) => void;
-  setNextRoundNumber: (round: number | null) => void;
 
   // Team actions
   updateTeam: (team: Player[]) => void;
@@ -100,9 +143,20 @@ interface AppState {
 
 export const useStore = create<AppState>((set) => ({
   // Auth
-  user: null,
+  uid: null,
+  nickname: null,
   isLoggedIn: false,
   isLoading: true,
+  isAdmin: false,
+
+  // League
+  currentLeague: null,
+  leagues: [],
+  setCurrentLeague: (currentLeague) => set({ currentLeague }),
+  setLeagues: (leagues) => set({ leagues }),
+
+  // User
+  user: null,
 
   // Navigation
   screen: 'home',
@@ -112,11 +166,10 @@ export const useStore = create<AppState>((set) => ({
   players: [],
   setPlayers: (players) => set({ players }),
 
-  // Game state
-  currentRound: 1,
-  roundStatus: 'waiting',
-  nextGameDate: null,
-  nextRoundNumber: null,
+  // Round
+  round: { number: 1, status: 'waiting', deadline: null, nextGameDate: null },
+  setRound: (partial) =>
+    set((s) => ({ round: { ...s.round, ...partial } })),
 
   // Draft
   draft: null,
@@ -148,15 +201,23 @@ export const useStore = create<AppState>((set) => ({
   appearance: DEFAULT_APPEARANCE,
   setAppearance: (appearance) => set({ appearance }),
 
-  // Auth actions
-  setUser: (user) => set({ user, isLoggedIn: !!user }),
-  setLoading: (isLoading) => set({ isLoading }),
+  // League settings
+  settings: {
+    draftRounds: 16,
+    draftTimerSeconds: 90,
+    maxTradesPerMonth: 3,
+    marketOpen: false,
+    captainMultiplier: 2,
+    scoringRules: DEFAULT_SCORING,
+  },
+  setSettings: (partial) =>
+    set((s) => ({ settings: { ...s.settings, ...partial } })),
 
-  // Game actions
-  setCurrentRound: (currentRound) => set({ currentRound }),
-  setRoundStatus: (roundStatus) => set({ roundStatus }),
-  setNextGameDate: (nextGameDate) => set({ nextGameDate }),
-  setNextRoundNumber: (nextRoundNumber) => set({ nextRoundNumber }),
+  // Auth actions
+  setAuth: (uid, nickname, isAdmin) =>
+    set({ uid, nickname, isLoggedIn: !!uid, isAdmin }),
+  setUser: (user) => set({ user }),
+  setLoading: (isLoading) => set({ isLoading }),
 
   // Team actions
   updateTeam: (team) =>

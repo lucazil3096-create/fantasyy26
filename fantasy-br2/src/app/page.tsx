@@ -13,9 +13,9 @@ import AdminScreen from '@/components/screens/AdminScreen';
 import { useStore } from '@/store/useStore';
 
 function AppContent() {
-  const { screen } = useStore();
+  const { screen, isAdmin } = useStore();
 
-  const screens = {
+  const screens: Record<string, React.ReactNode> = {
     home: <HomeScreen />,
     lineup: <LineupScreen />,
     draft: <DraftScreen />,
@@ -25,11 +25,15 @@ function AppContent() {
     admin: <AdminScreen />,
   };
 
+  // Admin sees admin by default, players see home
+  const defaultScreen = isAdmin ? 'admin' : 'home';
+  const content = screens[screen] || screens[defaultScreen];
+
   return (
     <div className="min-h-screen bg-zinc-950">
       <Navbar />
       <main className="max-w-lg mx-auto pt-16 pb-20 px-4">
-        {screens[screen] || <HomeScreen />}
+        {content}
       </main>
       <BottomNav />
     </div>

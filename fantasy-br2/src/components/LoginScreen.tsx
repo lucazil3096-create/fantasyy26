@@ -7,8 +7,10 @@ import {
 } from 'firebase/auth';
 import { ref, set, get } from 'firebase/database';
 import { auth, db } from '@/lib/firebase';
+import { useStore } from '@/store/useStore';
 
 export default function LoginScreen() {
+  const { appearance } = useStore();
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
   const [isRegister, setIsRegister] = useState(false);
@@ -26,32 +28,35 @@ export default function LoginScreen() {
 
     try {
       if (isRegister) {
-        // Check if nickname is taken
-        const existingSnap = await get(ref(db, `nickToUid/${nickname.toLowerCase().trim()}`));
+        const nick = nickname.toLowerCase().trim();
+        if (nick.length < 3 || nick.length > 20) {
+          setError('Nickname deve ter entre 3 e 20 caracteres.');
+          setLoading(false);
+          return;
+        }
+        if (!/^[a-z0-9_]+$/.test(nick)) {
+          setError('Nickname so pode ter letras, numeros e _');
+          setLoading(false);
+          return;
+        }
+
+        const existingSnap = await get(ref(db, `nickToUid/${nick}`));
         if (existingSnap.exists()) {
           setError('Esse nickname ja esta em uso.');
           setLoading(false);
           return;
         }
 
-        // Create account
         const cred = await createUserWithEmailAndPassword(auth, email, password);
 
-        // Save mappings
-        await set(ref(db, `nickToUid/${nickname.toLowerCase().trim()}`), cred.user.uid);
-        await set(ref(db, `uidToNick/${cred.user.uid}`), nickname.toLowerCase().trim());
-
-        // Create initial user data
-        await set(ref(db, `users/${nickname.toLowerCase().trim()}`), {
-          nickname: nickname.toLowerCase().trim(),
-          team: [],
-          formation: '4-3-3',
-          budget: 100,
-          totalPoints: 0,
+        await set(ref(db, `nickToUid/${nick}`), cred.user.uid);
+        await set(ref(db, `uidToNick/${cred.user.uid}`), nick);
+        await set(ref(db, `accounts/${cred.user.uid}`), {
+          nickname: nick,
           createdAt: new Date().toISOString(),
+          leagues: {},
         });
       } else {
-        // Login
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err: unknown) {
@@ -75,14 +80,20 @@ export default function LoginScreen() {
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 rounded-2xl bg-emerald-500 flex items-center justify-center font-bold text-white text-2xl mb-3">
-            FB
-          </div>
-          <h1 className="text-2xl font-bold text-white">Fantasy BR</h1>
-          <p className="text-zinc-500 text-sm mt-1">Brasileirao 2026</p>
+          {appearance.logoUrl ? (
+            <img src={appearance.logoUrl} alt="Logo" className="w-20 h-20 rounded-2xl object-cover mb-3" />
+          ) : (
+            <div
+              className="w-20 h-20 rounded-2xl flex items-center justify-center font-bold text-white text-3xl mb-3"
+              style={{ backgroundColor: appearance.primaryColor }}
+            >
+              {appearance.logoText}
+            </div>
+          )}
+          <h1 className="text-2xl font-bold text-white">{appearance.siteName}</h1>
+          <p className="text-zinc-500 text-sm mt-1">{appearance.leagueName} {appearance.seasonYear}</p>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm text-zinc-400 mb-1.5">Nickname</label>
@@ -90,7 +101,7 @@ export default function LoginScreen() {
               type="text"
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
-              placeholder="Seu nickname"
+              placeholder="seu_nickname"
               className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-xl text-white placeholder-zinc-500 focus:outline-none focus:border-emerald-500 transition-colors"
               autoComplete="username"
             />
@@ -122,10 +133,7 @@ export default function LoginScreen() {
         </form>
 
         <button
-          onClick={() => {
-            setIsRegister(!isRegister);
-            setError('');
-          }}
+          onClick={() => { setIsRegister(!isRegister); setError(''); }}
           className="w-full mt-4 text-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           {isRegister ? 'Ja tem conta? Entrar' : 'Novo aqui? Criar conta'}
