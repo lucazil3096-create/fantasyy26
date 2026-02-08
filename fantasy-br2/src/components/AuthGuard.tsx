@@ -26,8 +26,10 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
             const userSnap = await get(ref(db, `users/${nickname}`));
             const userData = userSnap.val() || {};
 
+            // Check both paths for admin status
             const adminSnap = await get(ref(db, `adminUids/${firebaseUser.uid}`));
-            const isAdmin = adminSnap.val() === true;
+            const adminSnap2 = await get(ref(db, `gameData/adminList/${firebaseUser.uid}`));
+            const isAdmin = adminSnap.val() === true || adminSnap2.val() === true;
 
             setUser({
               nickname,
