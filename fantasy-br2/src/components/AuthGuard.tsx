@@ -6,96 +6,179 @@ import { ref, get, onValue } from 'firebase/database';
 import { auth, db } from '@/lib/firebase';
 import { useStore } from '@/store/useStore';
 import { DEFAULT_APPEARANCE } from '@/lib/appearance';
+import { DEFAULT_SCORING } from '@/lib/scoring';
 import LoginScreen from '@/components/LoginScreen';
+import LeagueSelector from '@/components/LeagueSelector';
 
 export default function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { setUser, setLoading, isLoading, isLoggedIn, setPlayers, setAppearance, setCurrentRound, setNextGameDate, setRoundStatus, setNextRoundNumber } = useStore();
+  const {
+    setAuth, setUser, setLoading, isLoading, isLoggedIn, uid, nickname,
+    currentLeague, setCurrentLeague, setPlayers, setAppearance,
+    setRound, setSettings, setMessages, setUnreadCount, setTrades, setDraft,
+  } = useStore();
   const [ready, setReady] = useState(false);
 
-  // Auth listener
+  // Firebase Auth listener
   useEffect(() => {
     if (!auth) return;
-
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
           const nickSnap = await get(ref(db, `uidToNick/${firebaseUser.uid}`));
-          const nickname = nickSnap.val();
-
-          if (nickname) {
-            const userSnap = await get(ref(db, `users/${nickname}`));
-            const userData = userSnap.val() || {};
-
-            // Check both paths for admin status
-            const adminSnap = await get(ref(db, `adminUids/${firebaseUser.uid}`));
-            const adminSnap2 = await get(ref(db, `gameData/adminList/${firebaseUser.uid}`));
-            const isAdmin = adminSnap.val() === true || adminSnap2.val() === true;
-
-            setUser({
-              nickname,
-              team: userData.team || [],
-              formation: userData.formation || '4-3-3',
-              budget: userData.budget ?? 100,
-              totalPoints: userData.totalPoints ?? 0,
-              isAdmin,
-              confirmed: userData.confirmed ?? false,
-              captain: userData.captain ?? null,
-            });
+          const nick = nickSnap.val();
+          if (nick) {
+            setAuth(firebaseUser.uid, nick, false);
           } else {
-            setUser(null);
+            setAuth(null, null, false);
           }
         } catch {
-          setUser(null);
+          setAuth(null, null, false);
         }
       } else {
+        setAuth(null, null, false);
+        setCurrentLeague(null);
         setUser(null);
       }
       setLoading(false);
       setReady(true);
     });
-
     return () => unsubscribe();
-  }, [setUser, setLoading]);
+  }, [setAuth, setLoading, setCurrentLeague, setUser]);
 
-  // Load players from Firebase (real-time)
+  // When entering a league, load all league data with real-time listeners
   useEffect(() => {
+    if (!currentLeague || !uid || !nickname) return;
+
+    const leagueId = currentLeague.id;
+    const isAdmin = currentLeague.adminUid === uid;
+
+    // Set admin status in store
+    setAuth(uid, nickname, isAdmin);
+
+    const unsubs: (() => void)[] = [];
+
+    // 1. Load players (shared globally)
     const playersRef = ref(db, 'gameData/players/players');
-    const unsub = onValue(playersRef, (snap) => {
+    const unsubPlayers = onValue(playersRef, (snap) => {
       const data = snap.val();
-      if (Array.isArray(data)) {
-        setPlayers(data);
-      }
+      if (Array.isArray(data)) setPlayers(data);
     });
-    return () => unsub();
-  }, [setPlayers]);
+    unsubs.push(unsubPlayers);
 
-  // Load appearance config
-  useEffect(() => {
-    const appearanceRef = ref(db, 'config/appearance');
-    const unsub = onValue(appearanceRef, (snap) => {
+    // 2. League appearance
+    const appearRef = ref(db, `leagues/${leagueId}/appearance`);
+    const unsubAppear = onValue(appearRef, (snap) => {
       const data = snap.val();
-      if (data) {
-        setAppearance({ ...DEFAULT_APPEARANCE, ...data });
-      }
+      setAppearance(data ? { ...DEFAULT_APPEARANCE, ...data } : DEFAULT_APPEARANCE);
     });
-    return () => unsub();
-  }, [setAppearance]);
+    unsubs.push(unsubAppear);
 
-  // Load game state
-  useEffect(() => {
-    const gameStateRef = ref(db, 'gameState');
-    const unsub = onValue(gameStateRef, (snap) => {
+    // 3. Round state
+    const roundRef = ref(db, `leagues/${leagueId}/round`);
+    const unsubRound = onValue(roundRef, (snap) => {
       const data = snap.val();
       if (data) {
-        if (data.currentRound) setCurrentRound(data.currentRound);
-        if (data.nextGameDate) setNextGameDate(data.nextGameDate);
-        if (data.roundStatus) setRoundStatus(data.roundStatus);
-        if (data.nextRoundNumber) setNextRoundNumber(data.nextRoundNumber);
+        setRound({
+          number: data.number || 1,
+          status: data.status || 'waiting',
+          deadline: data.deadline || null,
+          nextGameDate: data.nextGameDate || null,
+        });
       }
     });
-    return () => unsub();
-  }, [setCurrentRound, setNextGameDate, setRoundStatus, setNextRoundNumber]);
+    unsubs.push(unsubRound);
 
+    // 4. League settings
+    const settingsRef = ref(db, `leagues/${leagueId}/settings`);
+    const unsubSettings = onValue(settingsRef, (snap) => {
+      const data = snap.val();
+      if (data) {
+        setSettings({
+          draftRounds: data.draftRounds || 16,
+          draftTimerSeconds: data.draftTimerSeconds || 90,
+          maxTradesPerMonth: data.maxTradesPerMonth || 3,
+          marketOpen: data.marketOpen ?? false,
+          captainMultiplier: data.captainMultiplier || 2,
+          scoringRules: data.scoringRules || DEFAULT_SCORING,
+        });
+      }
+    });
+    unsubs.push(unsubSettings);
+
+    // 5. User data (members only, admin doesn't play)
+    if (!isAdmin) {
+      const userRef = ref(db, `leagues/${leagueId}/members/${nickname}`);
+      const unsubUser = onValue(userRef, (snap) => {
+        const data = snap.val();
+        if (data) {
+          setUser({
+            nickname: data.nickname || nickname,
+            team: data.team || [],
+            formation: data.formation || '4-3-3',
+            totalPoints: data.totalPoints ?? 0,
+            confirmed: data.confirmed ?? false,
+            captain: data.captain ?? null,
+          });
+        }
+      });
+      unsubs.push(unsubUser);
+    } else {
+      setUser(null);
+    }
+
+    // 6. Draft state
+    const draftRef = ref(db, `leagues/${leagueId}/draft`);
+    const unsubDraft = onValue(draftRef, (snap) => {
+      const data = snap.val();
+      if (data && data.status) {
+        setDraft({
+          status: data.status,
+          participants: data.participants || [],
+          currentPick: data.currentPick || 0,
+          totalRounds: data.totalRounds || 16,
+          pickTimerSeconds: data.pickTimerSeconds || 90,
+          pickStartedAt: data.pickStartedAt || 0,
+          picks: data.picks ? Object.values(data.picks) : [],
+          availablePlayers: data.availablePlayers || [],
+        });
+      } else {
+        setDraft(null);
+      }
+    });
+    unsubs.push(unsubDraft);
+
+    // 7. Trades
+    const tradesRef = ref(db, `leagues/${leagueId}/trades`);
+    const unsubTrades = onValue(tradesRef, (snap) => {
+      const data = snap.val();
+      if (!data) { setTrades([]); return; }
+      const all = Object.entries(data).map(([id, val]) => ({
+        ...(val as Record<string, unknown>),
+        id,
+      }));
+      setTrades(all as never[]);
+    });
+    unsubs.push(unsubTrades);
+
+    // 8. Chat
+    const chatRef = ref(db, `leagues/${leagueId}/chat`);
+    const unsubChat = onValue(chatRef, (snap) => {
+      const data = snap.val();
+      if (!data) { setMessages([]); return; }
+      const msgs = Object.entries(data).map(([id, val]) => ({
+        ...(val as Record<string, unknown>),
+        id,
+      }));
+      (msgs as { timestamp?: number }[]).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      setMessages(msgs as never[]);
+      setUnreadCount(0);
+    });
+    unsubs.push(unsubChat);
+
+    return () => unsubs.forEach((fn) => fn());
+  }, [currentLeague, uid, nickname, setAuth, setPlayers, setAppearance, setRound, setSettings, setUser, setDraft, setTrades, setMessages, setUnreadCount]);
+
+  // Loading
   if (!ready || isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-zinc-950">
@@ -109,8 +192,14 @@ export default function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
+  // Not logged in
   if (!isLoggedIn) {
     return <LoginScreen />;
+  }
+
+  // No league selected
+  if (!currentLeague) {
+    return <LeagueSelector />;
   }
 
   return <>{children}</>;
