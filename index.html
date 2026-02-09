@@ -7733,6 +7733,8 @@
                     // Atualizar countdown inline a cada segundo (sem full render)
                     window._homeTimer = setInterval(() => {
                         if (state.screen !== 'home') { clearInterval(window._homeTimer); return; }
+                        // Não atualizar countdown se rodada está em waiting (evita dados antigos)
+                        if (state.roundStatus === 'waiting') return;
                         const el = document.getElementById('homeCountdownBoxes');
                         if (el && el.dataset.target) {
                             const diff = parseInt(el.dataset.target) - Date.now();
@@ -8201,6 +8203,12 @@
                         '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>' +
                         nrInfo + '</div>';
                 }
+            }
+
+            // OVERRIDE FINAL: Se rodada está em 'waiting', SEMPRE mostrar "EM BREVE"
+            // Isso previne race conditions onde listenToNextRound carrega dados antigos antes do listenToGameState
+            if (state.roundStatus === 'waiting') {
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/15 border border-blue-500/30"><span class="text-blue-400 font-black text-sm tracking-wider">RODADA ' + state.currentRound + ' EM BREVE</span></div><p class="text-zinc-500 text-xs mt-2">Aguardando início dos jogos</p></div>';
             }
 
             return `
