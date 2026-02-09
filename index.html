@@ -2557,7 +2557,8 @@
                     const hoursOld = gameStateAge / (1000 * 60 * 60);
                     if (hoursOld > 12) {
                     try {
-                        for (const season of [SEASON, SEASON_FALLBACK]) {
+                        // SÓ usar temporada atual (não fallback 2025 que retorna dados antigos)
+                        for (const season of [SEASON]) {
                             const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
                             if (nextRes.response && nextRes.response.length > 0) {
                                 const roundStr = nextRes.response[0].league.round;
@@ -2611,8 +2612,8 @@
                 
                 // ========== PASSO 1: BUSCAR PRÓXIMO JOGO (DEFINE A RODADA DO FANTASY) ==========
                 // Esta é a rodada "oficial" do Fantasy - independente de jogos atrasados
-                // Tenta 2026 primeiro, se não achar tenta 2025
-                const seasonsToTry = [SEASON, SEASON_FALLBACK];
+                // SÓ usar temporada atual (fallback 2025 causa dados antigos)
+                const seasonsToTry = [SEASON];
                 
                 for (const season of seasonsToTry) {
                     if (foundRound) break;
@@ -2799,6 +2800,16 @@
                     }
                     
                     if (cacheData && cacheData.fixtures && cacheData.fixtures.length > 0 && cacheData.updatedAt) {
+                        // PROTEÇÃO: verificar se cache não é da temporada errada (2025)
+                        const sampleFixture = cacheData.fixtures[0];
+                        const fixtureSeason = sampleFixture?.league?.season;
+                        if (fixtureSeason && fixtureSeason !== SEASON) {
+                            console.log(`⚠️ Cache descartado: temporada ${fixtureSeason} != ${SEASON}`);
+                            // Limpar cache corrompido do Firebase
+                            try {
+                                if (db) db.ref(`cache/${cacheKey}`).remove();
+                            } catch(e) {}
+                        } else {
                         const cacheAge = Date.now() - cacheData.updatedAt;
                         
                         // Calcular tempo de cache ideal baseado nos jogos
@@ -2830,11 +2841,12 @@
                                 return;
                             }
                         }
+                        } // fecha else da verificação de temporada
                     }
                 } else {
                     console.log('🔄 Forçando busca da API (ignorando cache)...');
                 }
-                
+
                 // 2. Cache velho ou inexistente - buscar da API
                 console.log('🌐 Buscando da API-Football...');
                 let fixtures = [];
@@ -2850,20 +2862,10 @@
                     console.log('Erro ao buscar por rodada:', e);
                 }
                 
-                // Se não achou, tentar temporada fallback
-                if (fixtures.length === 0) {
-                    try {
-                        const res2 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}&round=Regular Season - ${state.selectedRound}`);
-                        if (res2.response && res2.response.length > 0) {
-                            fixtures = res2.response;
-                            console.log(` Encontrados ${fixtures.length} jogos (fallback 2025)`);
-                        }
-                    } catch (e) {
-                        console.log('Erro ao buscar fallback:', e);
-                    }
-                }
-                
-                // Se ainda não achou, buscar jogos de HOJE
+                // NÃO usar fallback para temporada anterior (2025) em fixtures
+                // Isso causava jogos antigos aparecendo como se fossem da rodada atual
+
+                // Se não achou por rodada, buscar jogos de HOJE
                 if (fixtures.length === 0) {
                     try {
                         const today = new Date().toISOString().split('T')[0];
@@ -4352,13 +4354,6 @@
                         }
                     } catch(e) {
                         console.log('Erro ao buscar próxima rodada da API:', e);
-                        // Tentar fallback season
-                        try {
-                            const res2 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}&round=Regular Season - ${nextRound}`);
-                            if (res2.response && res2.response.length > 0) {
-                                fixtures = res2.response;
-                            }
-                        } catch(e2) { console.log('Fallback também falhou'); }
                     }
                 }
                 
