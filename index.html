@@ -2903,6 +2903,7 @@
                 }
                 
                 // FALLBACK: Se API falhou e temos cache expirado, usar ele
+                // PROTEÇÃO: Verificar se cache não é de temporada errada (2025)
                 if (fixtures.length === 0 && !forceRefresh) {
                     let fallbackCache = null;
                     try {
@@ -2915,8 +2916,17 @@
                         }
                     } catch(e) {}
                     if (fallbackCache && fallbackCache.fixtures && fallbackCache.fixtures.length > 0) {
-                        fixtures = fallbackCache.fixtures;
-                        console.log(`🔄 API falhou, usando cache expirado (${fallbackCache.fixtures.length} jogos)`);
+                        // Verificar temporada do cache antes de usar
+                        const fbSample = fallbackCache.fixtures[0];
+                        const fbSeason = fbSample?.league?.season;
+                        if (fbSeason && fbSeason !== SEASON) {
+                            console.log(`⚠️ Cache expirado descartado: temporada ${fbSeason} != ${SEASON}`);
+                            // Limpar cache corrompido
+                            try { if (db) db.ref(`cache/${cacheKey}`).remove(); } catch(e) {}
+                        } else {
+                            fixtures = fallbackCache.fixtures;
+                            console.log(`🔄 API falhou, usando cache expirado (${fallbackCache.fixtures.length} jogos)`);
+                        }
                     }
                 }
 
@@ -4058,6 +4068,36 @@
                     
                     console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'} | Status: ${state.roundStatus}`);
 
+                    // Se rodada está 'waiting', limpar dados antigos que podem causar bugs
+                    if (state.roundStatus === 'waiting') {
+                        state.liveFixtures = [];
+                        state.nextRoundDate = null;
+                        state.nextRoundNumber = null;
+                        state.nextRoundFirstGameHome = '';
+                        state.nextRoundFirstGameAway = '';
+                        // Limpar cache de fixtures da rodada atual (pode ter dados de 2025)
+                        if (db) {
+                            const cacheKey = `cache/fixtures_round_${roundNum}`;
+                            db.ref(cacheKey).once('value').then(snap => {
+                                const cd = snap.val();
+                                if (cd && cd.fixtures && cd.fixtures.length > 0) {
+                                    const cs = cd.fixtures[0]?.league?.season;
+                                    if (cs && cs !== SEASON) {
+                                        console.log(`🗑️ Limpando cache corrompido da rodada ${roundNum} (temporada ${cs})`);
+                                        db.ref(cacheKey).remove();
+                                    }
+                                }
+                            }).catch(() => {});
+                            // Limpar nextRound se existir
+                            db.ref('nextRound').once('value').then(snap => {
+                                if (snap.val()) {
+                                    console.log('🗑️ Limpando nextRound (rodada está em waiting)');
+                                    db.ref('nextRound').remove();
+                                }
+                            }).catch(() => {});
+                        }
+                    }
+
                     // AUTO-AVANÇO: Se rodada está "finished", avançar às 6h do dia seguinte
                     if (state.roundStatus === 'finished' && state.roundEndedAt && state.currentRound < 38) {
                         const endDate = new Date(state.roundEndedAt);
@@ -4338,8 +4378,15 @@
                         const snap = await db.ref(`cache/${cacheKey}`).once('value');
                         const cacheData = snap.val();
                         if (cacheData && cacheData.fixtures && cacheData.fixtures.length > 0) {
-                            fixtures = cacheData.fixtures;
-                            console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos no cache`);
+                            // Validar temporada do cache
+                            const cacheSeason = cacheData.fixtures[0]?.league?.season;
+                            if (cacheSeason && cacheSeason !== SEASON) {
+                                console.log(`⚠️ Cache próxima rodada descartado: temporada ${cacheSeason} != ${SEASON}`);
+                                try { db.ref(`cache/${cacheKey}`).remove(); } catch(e) {}
+                            } else {
+                                fixtures = cacheData.fixtures;
+                                console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos no cache`);
+                            }
                         }
                     }
                 } catch(e) { console.log('Cache miss para próxima rodada'); }
@@ -4636,7 +4683,8 @@
                         };
                         
                         // Se scores estavam como Array (corrompidos pelo Firebase), re-salvar como Object
-                        if (cloudUsers[nick].scores && Array.isArray(cloudUsers[nick].scores) && db) {
+                        // IMPORTANTE: Só re-salvar se for o usuário atual (Firebase rules bloqueiam escrita em outros users)
+                        if (cloudUsers[nick].scores && Array.isArray(cloudUsers[nick].scores) && db && nick === state.currentUser) {
                             console.log(`🔧 Re-salvando scores de ${nick} no Firebase (Array→Object)`);
                             db.ref('users/' + nick + '/scores').set(state.users[nick].scores);
                         }
@@ -4658,8 +4706,8 @@
                                 });
                                 // Remover cravar_bonus do market
                                 userScores.market.purchases = userScores.market.purchases.filter(p => p.type !== 'cravar_bonus');
-                                // Salvar no Firebase
-                                if (db) {
+                                // Salvar no Firebase - só para o próprio usuário ou admin
+                                if (db && (nick === state.currentUser || state.isAdmin)) {
                                     db.ref('users/' + nick + '/scores/market/purchases').set(userScores.market.purchases);
                                     Object.keys(userScores).forEach(key => {
                                         if (key !== 'market' && userScores[key] && userScores[key].cravar) {
@@ -7320,14 +7368,18 @@
                     }
                     
                     // Salvar no Firebase - APENAS os scores calculados (não manuais)
-                    if (db && Object.keys(calculatedScores).length > 0) {
+                    // IMPORTANTE: Só salvar scores do PRÓPRIO usuário ou se for admin
+                    // Firebase rules bloqueiam escrita em paths de outros usuários
+                    if (db && Object.keys(calculatedScores).length > 0 && (nick === state.currentUser || state.isAdmin)) {
                         console.log(`    💾 Salvando ${Object.keys(calculatedScores).length} scores calculados para ${nick}`);
                         // Usar update() para NÃO sobrescrever scores manuais
-                        db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores);
+                        db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores).catch(e => {
+                            console.log(`    ⚠️ Erro ao salvar scores de ${nick}:`, e.message);
+                        });
                         db.ref('users/' + nick + '/scores/' + round).update({
                             coach: user.scores[round].coach,
                             live: user.scores[round].live
-                        });
+                        }).catch(e => {});
                     }
                 }
                 
@@ -8114,6 +8166,10 @@
                         '<span class="text-purple-500 self-center animate-pulse font-light">:</span>' +
                         '<div class="px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20"><span class="text-2xl font-black text-white">' + String(s).padStart(2,'0') + '</span><span class="text-[9px] text-purple-400 ml-1">S</span></div></div>';
                 }
+            }
+            // Se roundStatus é waiting e não tem countdown, mostrar mensagem clara
+            if (!countdownHTML && state.roundStatus === 'waiting') {
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/15 border border-blue-500/30"><span class="text-blue-400 font-black text-sm tracking-wider">RODADA ' + state.currentRound + ' EM BREVE</span></div><p class="text-zinc-500 text-xs mt-2">Aguardando início dos jogos</p></div>';
             }
             // Fallback: se não tem countdown mas tem nextRoundDate, mostrar
             if (!countdownHTML && state.nextRoundDate) {
@@ -9267,7 +9323,8 @@
                     userData.scores[rodada].cravar = (userData.scores[rodada].cravar || 0) + pontosGanhos;
 
                     // Salvar no Firebase com tratamento de erro
-                    if (db) {
+                    // IMPORTANTE: Só salvar no Firebase se for o próprio usuário ou admin
+                    if (db && (nick === state.currentUser || state.isAdmin)) {
                         db.ref('users/' + nick + '/scores/' + rodada + '/cravar').set(userData.scores[rodada].cravar)
                             .catch(err => console.error('❌ Erro ao salvar cravar score:', nick, err.message));
                         db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
@@ -9285,7 +9342,8 @@
                     }
                     needsRender = true;
                 } else if (novosJogosConferidos.length > 0) {
-                    if (db) {
+                    // Só salvar no Firebase se for o próprio usuário ou admin
+                    if (db && (nick === state.currentUser || state.isAdmin)) {
                         db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
                             .catch(err => console.error('❌ Erro ao salvar jogosConferidos:', nick, err.message));
                     }
@@ -19185,10 +19243,25 @@
         
         function listenToNextRound() {
             if (!db) return;
-            
+
             db.ref('nextRound').on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data && data.date) {
+                    // Se a rodada está em 'waiting', não faz sentido ter nextRound
+                    // (nextRound mostra countdown para a PRÓXIMA rodada, mas estamos esperando a ATUAL)
+                    if (state.roundStatus === 'waiting') {
+                        console.log('⚠️ nextRound ignorado: rodada atual está em waiting');
+                        db.ref('nextRound').remove();
+                        return;
+                    }
+                    // Validar se a data não é do passado distante (dados antigos de 2025)
+                    const nextDate = new Date(data.date);
+                    const sixMonthsAgo = Date.now() - (180 * 24 * 60 * 60 * 1000);
+                    if (nextDate.getTime() < sixMonthsAgo) {
+                        console.log(`⚠️ nextRound descartado: data antiga (${nextDate.toLocaleDateString('pt-BR')})`);
+                        db.ref('nextRound').remove();
+                        return;
+                    }
                     state.nextRoundDate = data.date;
                     state.nextRoundNumber = data.round || (state.currentRound + 1);
                     state.nextRoundFirstGameHome = data.firstGameHome || '';
@@ -23586,27 +23659,8 @@ O usuário não poderá mais fazer login.
                 state.isSyncingBackground = false;
                 state.syncProgress = '';
 
-                // LIMPEZA: remover cache de fixtures de temporada errada (2025)
-                // Isso corrige jogos antigos aparecendo na tela
-                try {
-                    if (db) {
-                        for (let r = 1; r <= 38; r++) {
-                            const snap = await db.ref(`cache/fixtures_round_${r}`).once('value');
-                            const cached = snap.val();
-                            if (cached && cached.fixtures && cached.fixtures.length > 0) {
-                                const season = cached.fixtures[0]?.league?.season;
-                                if (season && season !== SEASON) {
-                                    console.log(`🗑️ Limpando cache R${r}: temporada ${season} (esperado ${SEASON})`);
-                                    await db.ref(`cache/fixtures_round_${r}`).remove();
-                                }
-                            }
-                        }
-                    }
-                    // Limpar liveFixtures que podem ter dados antigos
-                    state.liveFixtures = [];
-                } catch(e) {
-                    console.log('⚠️ Erro na limpeza de cache:', e.message);
-                }
+                // Garantir que fixtures começa vazio (será preenchido pelo Firebase/API)
+                state.liveFixtures = [];
                 
                 loadState();
                 
