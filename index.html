@@ -992,8 +992,8 @@
             reserves: Array(7).fill(null),
             coach: null,
             isConfirmed: false,
-            selectedRound: 2,
-            currentRound: 1, // Rodada atual do campeonato (detectada automaticamente)
+            selectedRound: 0,
+            currentRound: 0, // Rodada atual do campeonato (detectada automaticamente)
             nextRoundDate: null, // Data/hora do início da próxima rodada
             nextRoundNumber: null, // Número da próxima rodada
             nextRoundFirstGameHome: '', // Time da casa do primeiro jogo da próxima rodada
@@ -2551,13 +2551,9 @@
                         }
                     }
 
-                    // VALIDAÇÃO: buscar rodada da API pra confirmar que não estamos à frente
-                    // SÓ validar se gameState é antigo (>12h) para não gastar API à toa
-                    const gameStateAge = gameState.updatedAt ? (Date.now() - gameState.updatedAt) : 999 * 60 * 60 * 1000;
-                    const hoursOld = gameStateAge / (1000 * 60 * 60);
-                    if (hoursOld > 12) {
+                    // VALIDAÇÃO: buscar rodada da API pra confirmar sincronização
+                    // Sempre validar no carregamento da página para garantir rodada correta
                     try {
-                        // SÓ usar temporada atual (não fallback 2025 que retorna dados antigos)
                         for (const season of [SEASON]) {
                             const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
                             if (nextRes.response && nextRes.response.length > 0) {
@@ -2565,8 +2561,8 @@
                                 const match = roundStr.match(/Regular Season - (\d+)/);
                                 if (match) {
                                     const apiRound = parseInt(match[1]);
-                                    if (roundNum > apiRound) {
-                                        console.log(`⚠️ CORREÇÃO: Rodada ${roundNum} > API ${apiRound}. Auto-corrigindo.`);
+                                    if (roundNum !== apiRound && roundStatus !== 'live') {
+                                        console.log(`⚠️ CORREÇÃO: Firebase rodada ${roundNum} ≠ API rodada ${apiRound}. Sincronizando.`);
                                         roundNum = apiRound;
                                         roundStatus = 'waiting';
                                         subsOpen = true;
@@ -2586,9 +2582,6 @@
                         }
                     } catch (e) {
                         console.log('⚠️ Não foi possível validar contra API:', e.message);
-                    }
-                    } else {
-                        console.log(`✓ gameState recente (${Math.round(hoursOld)}h), pulando validação API`);
                     }
 
                     state.currentRound = roundNum;
@@ -2777,6 +2770,11 @@
         
         // Buscar jogos da rodada - COM CACHE NO FIREBASE
         async function fetchLiveFixtures(forceRefresh = false) {
+            // Não buscar se rodada ainda não foi detectada
+            if (!state.selectedRound || state.selectedRound <= 0) {
+                console.log('⏳ Aguardando detecção da rodada antes de buscar fixtures...');
+                return;
+            }
             // Não verificar isLoadingFixtures aqui - deixar o caller controlar
             state.isLoadingFixtures = true;
             
@@ -4068,14 +4066,13 @@
                     
                     console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'} | Status: ${state.roundStatus}`);
 
-                    // Se rodada está 'waiting', limpar dados antigos que podem causar bugs
+                    // Se rodada está 'waiting', buscar fixtures agendados (para mostrar jogos)
+                    // Mas limpar dados que podem estar corrompidos de temporada errada
                     if (state.roundStatus === 'waiting') {
-                        state.liveFixtures = [];
-                        state.nextRoundDate = null;
-                        state.nextRoundNumber = null;
-                        state.nextRoundFirstGameHome = '';
-                        state.nextRoundFirstGameAway = '';
-                        // Limpar cache de fixtures da rodada atual (pode ter dados de 2025)
+                        // NÃO limpar liveFixtures - queremos mostrar os jogos agendados
+                        // NÃO limpar nextRound - queremos mostrar o countdown
+                        
+                        // Limpar cache de fixtures da rodada atual SE for de temporada errada
                         if (db) {
                             const cacheKey = `cache/fixtures_round_${roundNum}`;
                             db.ref(cacheKey).once('value').then(snap => {
@@ -4088,14 +4085,15 @@
                                     }
                                 }
                             }).catch(() => {});
-                            // Limpar nextRound se existir
-                            db.ref('nextRound').once('value').then(snap => {
-                                if (snap.val()) {
-                                    console.log('🗑️ Limpando nextRound (rodada está em waiting)');
-                                    db.ref('nextRound').remove();
-                                }
-                            }).catch(() => {});
                         }
+                        
+                        // Buscar fixtures da rodada atual para mostrar jogos agendados
+                        if (!state.liveFixtures || state.liveFixtures.length === 0) {
+                            fetchLiveFixtures();
+                        }
+                        
+                        // Detectar countdown para o primeiro jogo da rodada
+                        autoDetectNextRound(true);
                     }
 
                     // AUTO-CORREÇÃO: Se roundStatus é 'finished' mas não tem fixtures válidas
@@ -4145,10 +4143,8 @@
                     // Log de mudanças importantes
                     if (oldRound !== state.currentRound) {
                         console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
-                        // Recarregar jogos da nova rodada - SÓ se não está em 'waiting'
-                        if (state.roundStatus !== 'waiting') {
-                            fetchLiveFixtures(true);
-                        }
+                        // Recarregar jogos da nova rodada (inclusive em 'waiting' para mostrar agendados)
+                        fetchLiveFixtures(true);
                     }
                     if (oldSubsOpen !== state.substitutionsOpen) {
                         console.log(`${state.substitutionsOpen ? '🔓 SUBSTITUIÇÕES LIBERADAS' : '🔒 ESCALAÇÃO TRAVADA'}`);
@@ -4372,28 +4368,35 @@
         
         // ==================== AUTO-DETECT PRÓXIMA RODADA ====================
         let _fetchingNextRound = false;
-        async function autoDetectNextRound() {
+        async function autoDetectNextRound(forceForCurrentRound = false) {
             if (_fetchingNextRound) return;
-            // Não buscar se a rodada atual ainda está em 'waiting' (não começou)
-            if (state.roundStatus === 'waiting') {
+            
+            // Determinar qual rodada buscar
+            let targetRound;
+            if (forceForCurrentRound && state.roundStatus === 'waiting') {
+                // Quando em 'waiting', buscar countdown para a rodada ATUAL
+                targetRound = state.currentRound;
+            } else if (state.roundStatus === 'waiting' && !forceForCurrentRound) {
                 console.log(`✓ Rodada ${state.currentRound} em waiting, pulando detecção da próxima`);
                 return;
+            } else {
+                targetRound = state.currentRound + 1;
             }
+            
             // Só buscar se a rodada acabou e não temos data da próxima
             if (state.nextRoundDate) {
                 // Verificar se a data já passou
                 if (new Date(state.nextRoundDate).getTime() > Date.now()) return;
             }
 
-            const nextRound = state.currentRound + 1;
-            if (nextRound > 38) return;
+            if (targetRound > 38) return;
 
             _fetchingNextRound = true;
-            console.log(`🔍 Auto-detectando data da rodada ${nextRound}...`);
+            console.log(`🔍 Auto-detectando data da rodada ${targetRound}...`);
             
             try {
-                // Tentar buscar fixtures da próxima rodada do cache Firebase primeiro
-                const cacheKey = `fixtures_round_${nextRound}`;
+                // Tentar buscar fixtures da rodada do cache Firebase primeiro
+                const cacheKey = `fixtures_round_${targetRound}`;
                 let fixtures = null;
                 
                 try {
@@ -4408,22 +4411,22 @@
                                 try { db.ref(`cache/${cacheKey}`).remove(); } catch(e) {}
                             } else {
                                 fixtures = cacheData.fixtures;
-                                console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos no cache`);
+                                console.log(`✅ Rodada ${targetRound}: encontrados ${fixtures.length} jogos no cache`);
                             }
                         }
                     }
-                } catch(e) { console.log('Cache miss para próxima rodada'); }
+                } catch(e) { console.log('Cache miss para rodada'); }
                 
                 // Se não tem no cache, buscar da API
                 if (!fixtures) {
                     try {
-                        const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${nextRound}`);
+                        const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${targetRound}`);
                         if (res.response && res.response.length > 0) {
                             fixtures = res.response;
-                            console.log(`✅ Próxima rodada: encontrados ${fixtures.length} jogos da API`);
+                            console.log(`✅ Rodada ${targetRound}: encontrados ${fixtures.length} jogos da API`);
                         }
                     } catch(e) {
-                        console.log('Erro ao buscar próxima rodada da API:', e);
+                        console.log('Erro ao buscar rodada da API:', e);
                     }
                 }
                 
@@ -4442,16 +4445,16 @@
                         
                         // Atualizar estado local
                         state.nextRoundDate = nextDate;
-                        state.nextRoundNumber = nextRound;
+                        state.nextRoundNumber = targetRound;
                         
-                        // Guardar também os fixtures da próxima rodada para o countdown da Home
+                        // Guardar também os fixtures para o countdown da Home
                         state.nextRoundFixtures = futureGames;
                         
                         // Salvar no Firebase para todos os usuários verem
                         if (db) {
                             db.ref('nextRound').set({
                                 date: nextDate,
-                                round: nextRound,
+                                round: targetRound,
                                 setBy: 'auto',
                                 setAt: Date.now(),
                                 firstGameHome: firstGame.teams?.home?.name || '',
@@ -4459,7 +4462,7 @@
                             });
                         }
                         
-                        console.log(`⏰ Próxima rodada ${nextRound} detectada: ${new Date(nextDate).toLocaleString('pt-BR')}`);
+                        console.log(`⏰ Rodada ${targetRound} detectada: ${new Date(nextDate).toLocaleString('pt-BR')}`);
                         startCountdownTimer();
                     }
                 }
@@ -5092,9 +5095,11 @@
                 // Escutar countdown da próxima rodada
                 try { listenToNextRound(); } catch(e) { console.error('Erro listenToNextRound:', e); }
                 
-                // Auto-detectar próxima rodada se estiver encerrada
+                // Auto-detectar próxima rodada / countdown da rodada atual
                 if (state.roundStatus === 'finished') {
                     setTimeout(() => autoDetectNextRound(), 2000);
+                } else if (state.roundStatus === 'waiting') {
+                    setTimeout(() => autoDetectNextRound(true), 2000);
                 }
                 
                 // Escutar mensagens privadas
@@ -7622,11 +7627,9 @@
             const accessCodeValue = document.getElementById('accessCode')?.value || '';
             
             // AUTO-CARREGAR jogos se estiver na home ou lineup e não tiver dados
-            // NÃO carregar se a rodada está em 'waiting' (não começou) - evita API calls inúteis
             if ((state.screen === 'lineup' || state.screen === 'home') && state.currentUser &&
                 (!state.liveFixtures || state.liveFixtures.length === 0) &&
-                !state.isLoadingFixtures && !autoLoadingFixtures &&
-                state.roundStatus !== 'waiting') {
+                !state.isLoadingFixtures && !autoLoadingFixtures) {
                 autoLoadingFixtures = true;
                 console.log('🔄 Auto-carregando jogos da rodada...');
                 fetchLiveFixtures().then(() => {
@@ -7751,8 +7754,6 @@
                     // Atualizar countdown inline a cada segundo (sem full render)
                     window._homeTimer = setInterval(() => {
                         if (state.screen !== 'home') { clearInterval(window._homeTimer); return; }
-                        // Não atualizar countdown se rodada está em waiting (evita dados antigos)
-                        if (state.roundStatus === 'waiting') return;
                         const el = document.getElementById('homeCountdownBoxes');
                         if (el && el.dataset.target) {
                             const diff = parseInt(el.dataset.target) - Date.now();
@@ -8071,8 +8072,7 @@
             topPlayers.sort((a, b) => b.pts - a.pts);
             
             // Próximos jogos (apenas com data futura)
-            // PROTEÇÃO: Se roundStatus é 'waiting', ignorar fixtures (podem ser dados antigos de 2025)
-            const _safeFixtures = state.roundStatus === 'waiting' ? [] : (state.liveFixtures || []);
+            const _safeFixtures = state.liveFixtures || [];
             const upcomingGames = _safeFixtures.filter(f => ['NS','TBD'].includes(f.fixture?.status?.short || 'NS') && new Date(f.fixture?.date).getTime() > Date.now()).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
             const liveGames = _safeFixtures.filter(f => ['1H','2H','HT','ET','P','LIVE'].includes(f.fixture?.status?.short || 'NS'));
             
@@ -8081,7 +8081,7 @@
             let countdownHTML = '';
             // Verificar se a rodada acabou
             // PROTEÇÃO: Se roundStatus é 'waiting', ignorar fixtures (podem ser dados antigos)
-            const allFixtures = state.roundStatus === 'waiting' ? [] : (state.liveFixtures || []);
+            const allFixtures = state.liveFixtures || [];
             const finishedStatuses = ['FT', 'AET', 'PEN', 'PST', 'CANC', 'ABD', 'AWD', 'WO'];
             const allGamesFinished = allFixtures.length > 0 && allFixtures.every(f => finishedStatuses.includes(f.fixture?.status?.short));
             // Considerar rodada encerrada se:
@@ -8226,10 +8226,12 @@
                 }
             }
 
-            // OVERRIDE FINAL: Forçar mensagem correta quando não há dados válidos
-            // Caso 1: roundStatus é 'waiting' → rodada não começou
-            // Caso 2: roundStatus é 'finished' mas não tem fixtures → dados de 2025 foram descartados
-            if (state.roundStatus === 'waiting' || (state.roundStatus === 'finished' && allFixtures.length === 0)) {
+            // OVERRIDE FINAL: Forçar mensagem quando não há dados válidos
+            // Só mostrar "EM BREVE" se não temos fixtures E não temos countdown
+            if (state.roundStatus === 'waiting' && allFixtures.length === 0 && !countdownHTML) {
+                countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/15 border border-blue-500/30"><span class="text-blue-400 font-black text-sm tracking-wider">RODADA ' + state.currentRound + ' EM BREVE</span></div><p class="text-zinc-500 text-xs mt-2">Aguardando início dos jogos</p></div>';
+            }
+            if (state.roundStatus === 'finished' && allFixtures.length === 0 && !countdownHTML) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/15 border border-blue-500/30"><span class="text-blue-400 font-black text-sm tracking-wider">RODADA ' + state.currentRound + ' EM BREVE</span></div><p class="text-zinc-500 text-xs mt-2">Aguardando início dos jogos</p></div>';
             }
 
@@ -16741,10 +16743,13 @@
             if (state.screen === 'home') {
                 setTimeout(async () => {
                     await detectCurrentRound();
-                    // Só buscar fixtures se a rodada está em andamento ou já tem fixtures
-                    // Se está em 'waiting' (rodada não começou), não gastar API
-                    if (state.roundStatus !== 'waiting' && (!state.liveFixtures || state.liveFixtures.length === 0)) {
+                    // Buscar fixtures se ainda não tem (inclusive em 'waiting' para mostrar agendados)
+                    if (!state.liveFixtures || state.liveFixtures.length === 0) {
                         await fetchLiveFixtures();
+                    }
+                    // Detectar countdown
+                    if (state.roundStatus === 'waiting') {
+                        await autoDetectNextRound(true);
                     }
                     render();
                 }, 500);
@@ -19277,13 +19282,6 @@
             db.ref('nextRound').on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data && data.date) {
-                    // Se a rodada está em 'waiting', não faz sentido ter nextRound
-                    // (nextRound mostra countdown para a PRÓXIMA rodada, mas estamos esperando a ATUAL)
-                    if (state.roundStatus === 'waiting') {
-                        console.log('⚠️ nextRound ignorado: rodada atual está em waiting');
-                        db.ref('nextRound').remove();
-                        return;
-                    }
                     // Validar se a data não é do passado distante (dados antigos de 2025)
                     const nextDate = new Date(data.date);
                     const sixMonthsAgo = Date.now() - (180 * 24 * 60 * 60 * 1000);
@@ -24313,15 +24311,13 @@ O usuário não poderá mais fazer login.
             }
         }, 3000);
 
-        // Detectar rodada atual ao iniciar - SÓ se listenToGameState não já setou
+        // Detectar rodada atual ao iniciar - SEMPRE validar com a API
         setTimeout(async () => {
-            // Se o listener do gameState já definiu a rodada, não precisa chamar API
-            if (state.currentRound && state.currentRound > 0) {
-                console.log(`✓ Rodada ${state.currentRound} já carregada via listenToGameState, pulando detectCurrentRound`);
-                render();
-                return;
-            }
             await detectCurrentRound();
+            // Buscar fixtures da rodada (inclusive se status é 'waiting' para mostrar jogos agendados)
+            await fetchLiveFixtures();
+            // Detectar countdown da rodada atual
+            await autoDetectNextRound(true);
             render();
         }, 1500);
 
