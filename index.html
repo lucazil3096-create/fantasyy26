@@ -4080,8 +4080,10 @@
                     // Log de mudanças importantes
                     if (oldRound !== state.currentRound) {
                         console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
-                        // Recarregar jogos da nova rodada
-                        fetchLiveFixtures(true);
+                        // Recarregar jogos da nova rodada - SÓ se não está em 'waiting'
+                        if (state.roundStatus !== 'waiting') {
+                            fetchLiveFixtures(true);
+                        }
                     }
                     if (oldSubsOpen !== state.substitutionsOpen) {
                         console.log(`${state.substitutionsOpen ? '🔓 SUBSTITUIÇÕES LIBERADAS' : '🔒 ESCALAÇÃO TRAVADA'}`);
@@ -4307,15 +4309,20 @@
         let _fetchingNextRound = false;
         async function autoDetectNextRound() {
             if (_fetchingNextRound) return;
+            // Não buscar se a rodada atual ainda está em 'waiting' (não começou)
+            if (state.roundStatus === 'waiting') {
+                console.log(`✓ Rodada ${state.currentRound} em waiting, pulando detecção da próxima`);
+                return;
+            }
             // Só buscar se a rodada acabou e não temos data da próxima
             if (state.nextRoundDate) {
                 // Verificar se a data já passou
                 if (new Date(state.nextRoundDate).getTime() > Date.now()) return;
             }
-            
+
             const nextRound = state.currentRound + 1;
             if (nextRound > 38) return;
-            
+
             _fetchingNextRound = true;
             console.log(`🔍 Auto-detectando data da rodada ${nextRound}...`);
             
@@ -6915,7 +6922,13 @@
         // Inclui jogos atrasados de rodadas anteriores na pontuação
         async function syncRoundScores() {
             if (state.isUpdatingScores) return;
-            
+
+            // Não sincronizar se a rodada ainda não começou (waiting)
+            if (state.roundStatus === 'waiting') {
+                console.log(`✓ Rodada ${state.selectedRound} ainda não começou, pulando syncScores`);
+                return;
+            }
+
             const round = state.selectedRound;
             state.isUpdatingScores = true;
             state.liveScoresUpdating = true;
@@ -7544,9 +7557,11 @@
             const accessCodeValue = document.getElementById('accessCode')?.value || '';
             
             // AUTO-CARREGAR jogos se estiver na home ou lineup e não tiver dados
+            // NÃO carregar se a rodada está em 'waiting' (não começou) - evita API calls inúteis
             if ((state.screen === 'lineup' || state.screen === 'home') && state.currentUser &&
                 (!state.liveFixtures || state.liveFixtures.length === 0) &&
-                !state.isLoadingFixtures && !autoLoadingFixtures) {
+                !state.isLoadingFixtures && !autoLoadingFixtures &&
+                state.roundStatus !== 'waiting') {
                 autoLoadingFixtures = true;
                 console.log('🔄 Auto-carregando jogos da rodada...');
                 fetchLiveFixtures().then(() => {
