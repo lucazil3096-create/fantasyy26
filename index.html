@@ -7999,14 +7999,17 @@
             topPlayers.sort((a, b) => b.pts - a.pts);
             
             // Próximos jogos (apenas com data futura)
-            const upcomingGames = (state.liveFixtures || []).filter(f => ['NS','TBD'].includes(f.fixture?.status?.short || 'NS') && new Date(f.fixture?.date).getTime() > Date.now()).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
-            const liveGames = (state.liveFixtures || []).filter(f => ['1H','2H','HT','ET','P','LIVE'].includes(f.fixture?.status?.short || 'NS'));
+            // PROTEÇÃO: Se roundStatus é 'waiting', ignorar fixtures (podem ser dados antigos de 2025)
+            const _safeFixtures = state.roundStatus === 'waiting' ? [] : (state.liveFixtures || []);
+            const upcomingGames = _safeFixtures.filter(f => ['NS','TBD'].includes(f.fixture?.status?.short || 'NS') && new Date(f.fixture?.date).getTime() > Date.now()).sort((a, b) => new Date(a.fixture.date) - new Date(b.fixture.date));
+            const liveGames = _safeFixtures.filter(f => ['1H','2H','HT','ET','P','LIVE'].includes(f.fixture?.status?.short || 'NS'));
             
             // Countdown
             const now = Date.now();
             let countdownHTML = '';
             // Verificar se a rodada acabou
-            const allFixtures = state.liveFixtures || [];
+            // PROTEÇÃO: Se roundStatus é 'waiting', ignorar fixtures (podem ser dados antigos)
+            const allFixtures = state.roundStatus === 'waiting' ? [] : (state.liveFixtures || []);
             const finishedStatuses = ['FT', 'AET', 'PEN', 'PST', 'CANC', 'ABD', 'AWD', 'WO'];
             const allGamesFinished = allFixtures.length > 0 && allFixtures.every(f => finishedStatuses.includes(f.fixture?.status?.short));
             // Considerar rodada encerrada se:
@@ -8293,10 +8296,10 @@
                                 <div class="rounded-2xl p-4 border border-zinc-800 bg-zinc-900/50">
                                     <div class="flex items-center justify-between mb-3">
                                         <h3 class="text-white font-bold text-sm">⚽ Jogos da Rodada ${state.selectedRound}</h3>
-                                        <span class="text-zinc-600 text-xs">${(state.liveFixtures || []).length} jogos</span>
+                                        <span class="text-zinc-600 text-xs">${allFixtures.length} jogos</span>
                                     </div>
                                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1" style="scrollbar-width:thin;scrollbar-color:#333 transparent">
-                                        ${(state.liveFixtures || []).sort((a,b) => {
+                                        ${allFixtures.sort((a,b) => {
                                             const stA = a.fixture?.status?.short || 'NS';
                                             const stB = b.fixture?.status?.short || 'NS';
                                             const live = ['1H','2H','HT','ET','P','LIVE'];
@@ -8327,7 +8330,7 @@
                                                 '<span class="text-[11px] text-zinc-300 truncate flex-1">' + aName + '</span>' +
                                                 (awayLogo ? '<img src="' + awayLogo + '" class="w-5 h-5 object-contain flex-shrink-0">' : '') + '</div>';
                                         }).join('')}
-                                        ${(state.liveFixtures || []).length === 0 ? '<p class="text-zinc-600 text-sm text-center py-4 col-span-2">' + (state.roundStatus === 'waiting' ? 'Jogos da rodada ainda não disponíveis' : 'Carregando jogos...') + '</p>' : ''}
+                                        ${allFixtures.length === 0 ? '<p class="text-zinc-600 text-sm text-center py-4 col-span-2">' + (state.roundStatus === 'waiting' ? 'Jogos da rodada ainda não disponíveis' : 'Carregando jogos...') + '</p>' : ''}
                                     </div>
                                 </div>
                             </div>
@@ -23582,6 +23585,28 @@ O usuário não poderá mais fazer login.
                 // Limpar flags de sync que podem ter ficado presas
                 state.isSyncingBackground = false;
                 state.syncProgress = '';
+
+                // LIMPEZA: remover cache de fixtures de temporada errada (2025)
+                // Isso corrige jogos antigos aparecendo na tela
+                try {
+                    if (db) {
+                        for (let r = 1; r <= 38; r++) {
+                            const snap = await db.ref(`cache/fixtures_round_${r}`).once('value');
+                            const cached = snap.val();
+                            if (cached && cached.fixtures && cached.fixtures.length > 0) {
+                                const season = cached.fixtures[0]?.league?.season;
+                                if (season && season !== SEASON) {
+                                    console.log(`🗑️ Limpando cache R${r}: temporada ${season} (esperado ${SEASON})`);
+                                    await db.ref(`cache/fixtures_round_${r}`).remove();
+                                }
+                            }
+                        }
+                    }
+                    // Limpar liveFixtures que podem ter dados antigos
+                    state.liveFixtures = [];
+                } catch(e) {
+                    console.log('⚠️ Erro na limpeza de cache:', e.message);
+                }
                 
                 loadState();
                 
