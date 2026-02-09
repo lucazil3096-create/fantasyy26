@@ -2552,6 +2552,10 @@
                     }
 
                     // VALIDAÇÃO: buscar rodada da API pra confirmar que não estamos à frente
+                    // SÓ validar se gameState é antigo (>12h) para não gastar API à toa
+                    const gameStateAge = gameState.updatedAt ? (Date.now() - gameState.updatedAt) : 999 * 60 * 60 * 1000;
+                    const hoursOld = gameStateAge / (1000 * 60 * 60);
+                    if (hoursOld > 12) {
                     try {
                         for (const season of [SEASON, SEASON_FALLBACK]) {
                             const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
@@ -2581,6 +2585,9 @@
                         }
                     } catch (e) {
                         console.log('⚠️ Não foi possível validar contra API:', e.message);
+                    }
+                    } else {
+                        console.log(`✓ gameState recente (${Math.round(hoursOld)}h), pulando validação API`);
                     }
 
                     state.currentRound = roundNum;
@@ -8270,7 +8277,7 @@
                             <div class="lg:col-span-2 space-y-4">
                                 <div class="rounded-2xl p-5 border border-purple-500/20 bg-gradient-to-br from-purple-900/15 via-zinc-900 to-blue-900/10">
                                     <p class="text-purple-400 text-[10px] font-bold tracking-[0.2em] mb-3">⏱️ RODADA ${state.selectedRound}</p>
-                                    ${countdownHTML || '<p class="text-zinc-500 text-sm text-center">Aguardando jogos...</p>'}
+                                    ${countdownHTML || '<p class="text-zinc-500 text-sm text-center">' + (state.roundStatus === 'waiting' ? 'Rodada ' + state.currentRound + ' em breve' : 'Aguardando jogos...') + '</p>'}
                                 </div>
                                 
                                 <div class="rounded-2xl p-4 border border-zinc-800 bg-zinc-900/50">
@@ -8310,7 +8317,7 @@
                                                 '<span class="text-[11px] text-zinc-300 truncate flex-1">' + aName + '</span>' +
                                                 (awayLogo ? '<img src="' + awayLogo + '" class="w-5 h-5 object-contain flex-shrink-0">' : '') + '</div>';
                                         }).join('')}
-                                        ${(state.liveFixtures || []).length === 0 ? '<p class="text-zinc-600 text-sm text-center py-4 col-span-2">Carregando jogos...</p>' : ''}
+                                        ${(state.liveFixtures || []).length === 0 ? '<p class="text-zinc-600 text-sm text-center py-4 col-span-2">' + (state.roundStatus === 'waiting' ? 'Jogos da rodada ainda não disponíveis' : 'Carregando jogos...') + '</p>' : ''}
                                     </div>
                                 </div>
                             </div>
@@ -16633,7 +16640,9 @@
             if (state.screen === 'home') {
                 setTimeout(async () => {
                     await detectCurrentRound();
-                    if (!state.liveFixtures || state.liveFixtures.length === 0) {
+                    // Só buscar fixtures se a rodada está em andamento ou já tem fixtures
+                    // Se está em 'waiting' (rodada não começou), não gastar API
+                    if (state.roundStatus !== 'waiting' && (!state.liveFixtures || state.liveFixtures.length === 0)) {
                         await fetchLiveFixtures();
                     }
                     render();
@@ -24185,8 +24194,14 @@ O usuário não poderá mais fazer login.
             }
         }, 3000);
 
-        // Detectar rodada atual ao iniciar (usa cache de 24h)
+        // Detectar rodada atual ao iniciar - SÓ se listenToGameState não já setou
         setTimeout(async () => {
+            // Se o listener do gameState já definiu a rodada, não precisa chamar API
+            if (state.currentRound && state.currentRound > 0) {
+                console.log(`✓ Rodada ${state.currentRound} já carregada via listenToGameState, pulando detectCurrentRound`);
+                render();
+                return;
+            }
             await detectCurrentRound();
             render();
         }, 1500);
