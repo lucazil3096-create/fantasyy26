@@ -4098,6 +4098,29 @@
                         }
                     }
 
+                    // AUTO-CORREÇÃO: Se roundStatus é 'finished' mas não tem fixtures válidas
+                    // (pode ser que os dados de 2025 tenham setado 'finished' erroneamente)
+                    if (state.roundStatus === 'finished' && (!state.liveFixtures || state.liveFixtures.length === 0) && db) {
+                        const cacheKey = `cache/fixtures_round_${roundNum}`;
+                        db.ref(cacheKey).once('value').then(snap => {
+                            const cd = snap.val();
+                            if (!cd || !cd.fixtures || cd.fixtures.length === 0) {
+                                // Sem cache = rodada não começou
+                                console.log('🔧 AUTO-CORREÇÃO: roundStatus=finished mas sem fixtures → mudando para waiting');
+                                db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, roundEndedAt: null, updatedAt: Date.now() });
+                            } else {
+                                const cs = cd.fixtures[0]?.league?.season;
+                                if (cs && cs !== SEASON) {
+                                    // Cache é de 2025 = dados errados
+                                    console.log(`🔧 AUTO-CORREÇÃO: cache tem temporada ${cs} → limpando e mudando para waiting`);
+                                    db.ref(cacheKey).remove();
+                                    db.ref('nextRound').remove();
+                                    db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, roundEndedAt: null, updatedAt: Date.now() });
+                                }
+                            }
+                        }).catch(() => {});
+                    }
+
                     // AUTO-AVANÇO: Se rodada está "finished", avançar às 6h do dia seguinte
                     if (state.roundStatus === 'finished' && state.roundEndedAt && state.currentRound < 38) {
                         const endDate = new Date(state.roundEndedAt);
@@ -6172,11 +6195,6 @@
         async function getFixturesForRound(round) {
             try {
                 const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${round}`);
-                if (!res.response || res.response.length === 0) {
-                    // Tentar temporada anterior
-                    const res2 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON_FALLBACK}&round=Regular Season - ${round}`);
-                    return res2.response || [];
-                }
                 return res.response || [];
             } catch (e) {
                 console.error('Erro ao buscar fixtures:', e);
@@ -8078,7 +8096,10 @@
                 const gameDate = new Date(f.fixture?.date).getTime();
                 return (now - gameDate > 3 * 60 * 60 * 1000) || (gameDate - now > fortyEightHours);
             });
-            const isRoundFinished = state.roundStatus === 'finished' || allGamesFinished ||
+            // PROTEÇÃO: Não considerar 'finished' se não tem fixtures carregadas
+            // (pode significar que os dados são de 2025 e foram descartados)
+            const hasValidFixtures = allFixtures.length > 0;
+            const isRoundFinished = (state.roundStatus === 'finished' && hasValidFixtures) || allGamesFinished ||
                 (liveGames.length === 0 && finishedCount > 0 && (nsGames.length === 0 || nsAllPostponed));
 
             if (liveGames.length > 0) {
@@ -8205,9 +8226,10 @@
                 }
             }
 
-            // OVERRIDE FINAL: Se rodada está em 'waiting', SEMPRE mostrar "EM BREVE"
-            // Isso previne race conditions onde listenToNextRound carrega dados antigos antes do listenToGameState
-            if (state.roundStatus === 'waiting') {
+            // OVERRIDE FINAL: Forçar mensagem correta quando não há dados válidos
+            // Caso 1: roundStatus é 'waiting' → rodada não começou
+            // Caso 2: roundStatus é 'finished' mas não tem fixtures → dados de 2025 foram descartados
+            if (state.roundStatus === 'waiting' || (state.roundStatus === 'finished' && allFixtures.length === 0)) {
                 countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-500/15 border border-blue-500/30"><span class="text-blue-400 font-black text-sm tracking-wider">RODADA ' + state.currentRound + ' EM BREVE</span></div><p class="text-zinc-500 text-xs mt-2">Aguardando início dos jogos</p></div>';
             }
 
