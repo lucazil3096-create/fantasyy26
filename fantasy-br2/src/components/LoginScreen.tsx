@@ -40,15 +40,10 @@ export default function LoginScreen() {
           return;
         }
 
-        const existingSnap = await get(ref(db, `nickToUid/${nick}`));
-        if (existingSnap.exists()) {
-          setError('Esse nickname ja esta em uso.');
-          setLoading(false);
-          return;
-        }
-
+        // Create auth first (email = nick@fbr2.app, so nick uniqueness = email uniqueness)
         const cred = await createUserWithEmailAndPassword(auth, email, password);
 
+        // Now we're authenticated, safe to write to DB
         await set(ref(db, `nickToUid/${nick}`), cred.user.uid);
         await set(ref(db, `uidToNick/${cred.user.uid}`), nick);
         await set(ref(db, `accounts/${cred.user.uid}`), {
@@ -60,15 +55,16 @@ export default function LoginScreen() {
         await signInWithEmailAndPassword(auth, email, password);
       }
     } catch (err: unknown) {
-      const firebaseErr = err as { code?: string };
+      const firebaseErr = err as { code?: string; message?: string };
+      console.error('Auth error:', firebaseErr.code, firebaseErr.message);
       if (firebaseErr.code === 'auth/user-not-found' || firebaseErr.code === 'auth/invalid-credential') {
-        setError('Nickname ou senha incorretos.');
+        setError('Nickname ou senha incorretos. Se e novo, clique em "Criar conta".');
       } else if (firebaseErr.code === 'auth/email-already-in-use') {
-        setError('Esse nickname ja esta em uso.');
+        setError('Esse nickname ja esta em uso. Tente fazer login.');
       } else if (firebaseErr.code === 'auth/weak-password') {
         setError('Senha deve ter pelo menos 6 caracteres.');
       } else {
-        setError('Erro ao entrar. Tente novamente.');
+        setError(`Erro: ${firebaseErr.code || 'desconhecido'}. Tente novamente.`);
       }
     } finally {
       setLoading(false);

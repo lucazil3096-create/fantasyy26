@@ -578,6 +578,7 @@ export default function AdminScreen() {
     const [loadingMembers, setLoadingMembers] = useState(true);
     const [viewingTeam, setViewingTeam] = useState<string | null>(null);
     const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+    const [confirmDeleteAccount, setConfirmDeleteAccount] = useState<string | null>(null);
 
     const loadMembers = useCallback(async () => {
       setLoadingMembers(true);
@@ -638,6 +639,33 @@ export default function AdminScreen() {
         setMsg(`${nick} removido da liga.`);
       } catch {
         setMsg(`Erro ao remover ${nick}.`);
+      } finally {
+        setLoading('');
+      }
+    }
+
+    async function deleteAccount(nick: string) {
+      setLoading(`delete-${nick}`);
+      try {
+        const res = await fetch('/api/auth/delete-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nickname: nick,
+            adminUid: league.adminUid,
+            leagueId,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setMsg(`Erro: ${data.error}`);
+        } else {
+          setMembers((prev) => prev.filter((m) => m.nickname !== nick));
+          setConfirmDeleteAccount(null);
+          setMsg(data.message);
+        }
+      } catch {
+        setMsg(`Erro ao excluir conta de ${nick}.`);
       } finally {
         setLoading('');
       }
@@ -811,6 +839,34 @@ export default function AdminScreen() {
                         className="flex-1 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 rounded-lg text-xs font-medium transition-colors"
                       >
                         Remover
+                      </button>
+                    )}
+                  </div>
+                  {/* Excluir Conta */}
+                  <div className="mt-2 border-t border-zinc-700/50 pt-2">
+                    {confirmDeleteAccount === m.nickname ? (
+                      <div className="flex items-center gap-2">
+                        <p className="text-red-400 text-[10px] flex-1">Excluir conta permanentemente?</p>
+                        <button
+                          onClick={() => deleteAccount(m.nickname)}
+                          disabled={loading === `delete-${m.nickname}`}
+                          className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-[10px] font-bold transition-colors disabled:opacity-50"
+                        >
+                          {loading === `delete-${m.nickname}` ? '...' : 'Confirmar'}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteAccount(null)}
+                          className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-lg text-[10px] transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDeleteAccount(m.nickname)}
+                        className="w-full py-1.5 bg-red-900/20 hover:bg-red-900/30 text-red-500 rounded-lg text-[10px] font-medium transition-colors"
+                      >
+                        Excluir Conta
                       </button>
                     )}
                   </div>
