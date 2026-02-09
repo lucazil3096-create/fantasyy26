@@ -5131,24 +5131,26 @@
             }
         }
         
-        // Escutar mudanças nos jogadores (Firebase) - FONTE DE VERDADE
+        // Carregar jogadores do Firebase UMA VEZ (não fica escutando mudanças)
+        let _playersAlreadyLoaded = false;
         function listenToPlayers() {
             if (!db) return;
-            
-            db.ref('gameData/players').on('value', async (snapshot) => {
+            if (_playersAlreadyLoaded) return; // Já carregou, não carregar de novo
+            _playersAlreadyLoaded = true;
+
+            db.ref('gameData/players').once('value').then(async (snapshot) => {
                 const data = snapshot.val();
-                
+
                 if (data && data.players && data.players.length > 0) {
                     // PROTEÇÃO: Se Firebase tem poucos jogadores, dados estão corrompidos
-                    // Forçar re-sync da API
                     if (data.players.length < 100) {
                         console.warn(`⚠️ Firebase tem apenas ${data.players.length} jogadores - DADOS CORROMPIDOS! Forçando sync...`);
                         if (!state.isSyncingBackground) {
                             setTimeout(() => autoSyncPlayers(true), 2000);
                         }
-                        return; // Não usar esses dados
+                        return;
                     }
-                    
+
                     // Preservar jogadores escalados que não estejam nos novos dados
                     const rosteredIds = new Set();
                     Object.values(state.users).forEach(u => {
@@ -5159,18 +5161,17 @@
                     [...(state.starters || []), ...(state.reserves || [])].forEach(p => {
                         if (p && p.id) rosteredIds.add(p.id);
                     });
-                    
+
                     const newIds = new Set(data.players.map(p => p.id));
-                    const playersToPreserve = (state.players || []).filter(p => 
+                    const playersToPreserve = (state.players || []).filter(p =>
                         p && p.id && rosteredIds.has(p.id) && !newIds.has(p.id)
                     );
-                    
-                    // Sempre usar dados do Firebase + preservar escalados
+
+                    // Usar dados do Firebase + preservar escalados
                     state.players = [...data.players, ...playersToPreserve];
                     state.teams = data.teams || [];
-                    
+
                     // ATUALIZAR TEAM_LOGOS com dados do Firebase
-                    // Garante escudos corretos em TODAS plataformas (mobile incluso)
                     if (state.teams && state.teams.length > 0) {
                         state.teams.forEach(t => {
                             if (t.name && t.logo) {
@@ -5180,19 +5181,19 @@
                             }
                         });
                     }
-                    
+
                     // Mesclar jogadores manuais
                     mergeManualPlayers();
-                    
+
                     // Verificar se algum jogador escalado saiu do Brasileirão
                     checkPlayersLeftBrasileirao();
-                    
+
                     // Atualizar cache local para uso offline
                     localStorage.setItem('fantasyPlayers2026', JSON.stringify(data));
                     localStorage.setItem('fantasy_players_sync', data.lastSync || new Date().toISOString());
-                    
-                    console.log('✓ Jogadores do Firebase:', state.players.length);
-                    
+
+                    console.log('✓ Jogadores carregados do Firebase (1x):', state.players.length);
+
                     // Corrigir escudos de TODOS os jogadores baseado no TEAM_LOGOS
                     state.players.forEach(p => {
                         if (p && p.team) {
@@ -5200,27 +5201,26 @@
                             if (correctLogo) p.teamLogo = correctLogo;
                         }
                     });
-                    
+
                     // Verificar se precisa atualizar (>24h desde última sync)
-                    const lastSync = data.lastSync ? new Date(data.lastSync) : null;
-                    const now = new Date();
-                    const hoursSinceSync = lastSync ? (now - lastSync) / (1000 * 60 * 60) : 999;
-                    
-                    if (hoursSinceSync > 24) {
-                        console.log(`⏰ Dados desatualizados (${Math.round(hoursSinceSync)}h), atualizando...`);
-                        // Primeiro usuário do dia atualiza para todos via Firebase
-                        setTimeout(() => autoSyncPlayers(true), 2000);
+                    // USA shouldAutoSync() que verifica corretamente no Firebase e localStorage
+                    const needsUpdate = await shouldAutoSync();
+                    if (needsUpdate) {
+                        const lastSync = data.lastSync ? new Date(data.lastSync) : null;
+                        const hoursSinceSync = lastSync ? (Date.now() - lastSync) / (1000 * 60 * 60) : 999;
+                        console.log(`⏰ Dados desatualizados (${Math.round(hoursSinceSync)}h), atualizando 1x...`);
+                        // NÃO usar forceSync=true para respeitar shouldAutoSync()
+                        setTimeout(() => autoSyncPlayers(false), 2000);
                     }
-                    
+
                     // Re-renderizar se estiver na tela certa e não estiver digitando
                     if (!isUserTyping && (state.screen === 'draft' || state.screen === 'lineup' || state.screen === 'market' || state.screen === 'admin')) {
                         render();
                     }
                 } else {
-                    // Firebase vazio - precisa sincronizar
+                    // Firebase vazio - verificar cache local
                     console.log('⚠️ Firebase vazio - verificando cache local...');
-                    
-                    // Tentar carregar do cache local primeiro
+
                     const cachedPlayers = localStorage.getItem('fantasyPlayers2026');
                     if (cachedPlayers) {
                         try {
@@ -5228,8 +5228,7 @@
                             if (parsed.players && parsed.players.length >= 100) {
                                 state.players = parsed.players;
                                 state.teams = parsed.teams || [];
-                                
-                                // Atualizar TEAM_LOGOS do cache
+
                                 if (state.teams.length > 0) {
                                     state.teams.forEach(t => {
                                         if (t.name && t.logo) {
@@ -5239,14 +5238,12 @@
                                         }
                                     });
                                 }
-                                
+
                                 mergeManualPlayers();
                                 console.log('📦 Usando cache local:', state.players.length, 'jogadores');
 
-                                // Só atualizar cache local (Firebase já tem os dados)
                                 savePlayers();
-                                
-                                // Só render se não estiver digitando
+
                                 if (!isUserTyping) {
                                     render();
                                 }
@@ -5254,12 +5251,28 @@
                             }
                         } catch(e) {}
                     }
-                    
+
                     // Sem cache - precisa buscar da API (só se não está sincronizando)
                     if (!state.isSyncingBackground) {
                         console.log('🔄 Iniciando sincronização da API...');
                         setTimeout(() => autoSyncPlayers(true), 1000);
                     }
+                }
+            }).catch(err => {
+                console.error('❌ Erro ao carregar jogadores do Firebase:', err.message);
+                // Fallback: tentar cache local
+                const cachedPlayers = localStorage.getItem('fantasyPlayers2026');
+                if (cachedPlayers) {
+                    try {
+                        const parsed = JSON.parse(cachedPlayers);
+                        if (parsed.players && parsed.players.length >= 100) {
+                            state.players = parsed.players;
+                            state.teams = parsed.teams || [];
+                            mergeManualPlayers();
+                            console.log('📦 Fallback cache local:', state.players.length, 'jogadores');
+                            if (!isUserTyping) render();
+                        }
+                    } catch(e) {}
                 }
             });
         }
@@ -9233,10 +9246,12 @@
                     // Somar ao cravar existente (pode ter acertos parciais de antes)
                     userData.scores[rodada].cravar = (userData.scores[rodada].cravar || 0) + pontosGanhos;
 
-                    // Salvar no Firebase
+                    // Salvar no Firebase com tratamento de erro
                     if (db) {
-                        db.ref('users/' + nick + '/scores/' + rodada + '/cravar').set(userData.scores[rodada].cravar);
-                        db.ref('users/' + nick + '/jogosConferidos').set(userData.jogosConferidos);
+                        db.ref('users/' + nick + '/scores/' + rodada + '/cravar').set(userData.scores[rodada].cravar)
+                            .catch(err => console.error('❌ Erro ao salvar cravar score:', nick, err.message));
+                        db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
+                            .catch(err => console.error('❌ Erro ao salvar jogosConferidos:', nick, err.message));
                     }
 
                     // Se é o usuário atual, atualizar state e notificar
@@ -9251,7 +9266,8 @@
                     needsRender = true;
                 } else if (novosJogosConferidos.length > 0) {
                     if (db) {
-                        db.ref('users/' + nick + '/jogosConferidos').set(userData.jogosConferidos);
+                        db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
+                            .catch(err => console.error('❌ Erro ao salvar jogosConferidos:', nick, err.message));
                     }
                 }
             }
@@ -9400,18 +9416,44 @@
             
             // Salvar palpites cravados
             if (!userData.palpitesCravados) userData.palpitesCravados = {};
+
+            // Limpar valores undefined/NaN dos palpites (Firebase não aceita)
+            const palpitesLimpos = {};
+            Object.keys(palpitesValidos).forEach(key => {
+                const p = palpitesValidos[key];
+                if (p && p.casa !== undefined && p.fora !== undefined) {
+                    palpitesLimpos[key] = {
+                        casa: (p.casa === '' || p.casa === null || isNaN(p.casa)) ? 0 : Number(p.casa),
+                        fora: (p.fora === '' || p.fora === null || isNaN(p.fora)) ? 0 : Number(p.fora)
+                    };
+                }
+            });
+
             userData.palpitesCravados[rodada] = {
-                ...palpitesValidos,
+                ...palpitesLimpos,
                 cravadoEm: Date.now()
             };
-            
-            // Salvar no Firebase
+
+            // Salvar no Firebase com tratamento de erro
             if (db) {
-                db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(userData.palpitesCravados[rodada]);
+                const dataToSave = cleanUndefined(userData.palpitesCravados[rodada]);
+                db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(dataToSave)
+                    .then(() => {
+                        console.log('✅ Palpites cravados salvos no Firebase:', state.currentUser, 'R' + rodada);
+                    })
+                    .catch(err => {
+                        console.error('❌ Erro ao salvar palpites no Firebase:', err.message, err.code);
+                        alert('❌ Erro ao salvar palpites no servidor!\n\nCódigo: ' + (err.code || err.message) + '\n\nTente fazer logout e login novamente.');
+                    });
+            } else {
+                console.warn('⚠️ Firebase DB não disponível para salvar palpites');
             }
-            
+
+            // Persistir dados localmente também via saveState
+            saveState();
+
             alert(`${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
-            
+
             closeModalDirect();
         };
         
