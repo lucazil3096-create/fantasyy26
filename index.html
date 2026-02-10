@@ -550,6 +550,98 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     */
 
     // ╔══════════════════════════════════════════════════════════════╗
+    // ║  [SAFE] SISTEMA DE PROTEÇÃO CONTRA ERROS
+    // ╚══════════════════════════════════════════════════════════════╝
+
+    // Captura erros globais não tratados - evita tela branca
+    window.onerror = function(msg, src, line, col, error) {
+        console.error('❌ ERRO GLOBAL:', msg, 'Linha:', line, 'Col:', col);
+        console.error('Stack:', error?.stack);
+        // Tenta re-renderizar se a tela ficou branca
+        try {
+            const root = document.getElementById('root');
+            if (root && (!root.innerHTML || root.innerHTML.trim() === '')) {
+                console.log('🔄 Tela vazia detectada - tentando recuperar...');
+                setTimeout(() => {
+                    try { render(); } catch(e) {
+                        root.innerHTML = '<div style="color:#fff;text-align:center;padding:50px;"><h2>⚠️ Erro temporário</h2><p>Recarregue a página (F5)</p><button onclick="location.reload()" style="margin-top:20px;padding:10px 30px;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:16px;">Recarregar</button></div>';
+                    }
+                }, 500);
+            }
+        } catch(e) {}
+        return false;
+    };
+
+    // Captura promises rejeitadas não tratadas
+    window.onunhandledrejection = function(event) {
+        console.error('❌ PROMISE REJEITADA:', event.reason);
+        // Não deixa crashar o app
+        event.preventDefault();
+    };
+
+    // Função segura para executar código - se falhar, não quebra o resto
+    function safeExecute(fn, fallback, context) {
+        try {
+            return fn();
+        } catch(e) {
+            console.error(`❌ Erro em ${context || 'desconhecido'}:`, e.message);
+            return typeof fallback === 'function' ? fallback() : fallback;
+        }
+    }
+
+    // Lock system para evitar operações simultâneas (race conditions)
+    const _locks = {};
+    function acquireLock(name, timeoutMs = 10000) {
+        if (_locks[name] && Date.now() - _locks[name] < timeoutMs) {
+            console.log(`🔒 Lock "${name}" ativo - operação ignorada`);
+            return false;
+        }
+        _locks[name] = Date.now();
+        return true;
+    }
+    function releaseLock(name) {
+        delete _locks[name];
+    }
+
+    // Validação de dados antes de salvar no Firebase
+    function validateUserData(data) {
+        if (!data || typeof data !== 'object') return false;
+        // Starters deve ter exatamente 11 slots
+        if (data.starters && Array.isArray(data.starters) && data.starters.length !== 11) {
+            console.warn('⚠️ Starters inválido:', data.starters.length, 'slots (esperado 11)');
+            data.starters = ensureArray(data.starters, 11);
+        }
+        // Reserves deve ter exatamente 7 slots
+        if (data.reserves && Array.isArray(data.reserves) && data.reserves.length !== 7) {
+            console.warn('⚠️ Reserves inválido:', data.reserves.length, 'slots (esperado 7)');
+            data.reserves = ensureArray(data.reserves, 7);
+        }
+        // Scores não pode ser Array
+        if (Array.isArray(data.scores)) {
+            console.warn('⚠️ Scores é Array - convertendo para Object');
+            data.scores = sanitizeScores(data.scores);
+        }
+        // Rodada não pode ser 0 ou NaN
+        if (data.currentRound !== undefined) {
+            data.currentRound = Math.max(1, Math.min(38, parseInt(data.currentRound) || 1));
+        }
+        return true;
+    }
+
+    // Retry automático para operações Firebase
+    async function firebaseRetry(operation, maxRetries = 3, context = '') {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return await operation();
+            } catch(e) {
+                console.warn(`⚠️ Tentativa ${attempt}/${maxRetries} falhou (${context}):`, e.message);
+                if (attempt === maxRetries) throw e;
+                await new Promise(r => setTimeout(r, 1000 * attempt)); // Espera progressiva
+            }
+        }
+    }
+
+    // ╔══════════════════════════════════════════════════════════════╗
     // ║  [MOD-01] CONFIG - Firebase, API, Chaves, Dados base
     // ╚══════════════════════════════════════════════════════════════╝
 
@@ -4108,6 +4200,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         if (!db) return;
         
         db.ref('gameState').on('value', (snapshot) => {
+            try {
             const data = snapshot.val();
             if (data) {
                 const oldRound = state.currentRound;
@@ -4115,6 +4208,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 // Usar helper para garantir número
                 const roundNum = toRoundNumber(data.currentRound);
+                
+                // VALIDAÇÃO: Rodada deve ser entre 1 e 38
+                if (roundNum < 1 || roundNum > 38) {
+                    console.error('❌ Rodada inválida do Firebase:', data.currentRound, '→', roundNum);
+                    return;
+                }
     
                 state.currentRound = roundNum;
                 // Só atualizar selectedRound se admin não estiver na aba pontuação (onde ele pode estar vendo outra rodada)
@@ -4189,6 +4288,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     next6am.setHours(6, 0, 0, 0);
     
                     if (Date.now() >= next6am.getTime()) {
+                        // LOCK: Previne múltiplos avanços simultâneos
+                        if (!acquireLock('roundAdvance', 30000)) {
+                            console.log('🔒 Auto-avanço já em andamento, ignorando...');
+                            return;
+                        }
                         const newRound = state.currentRound + 1;
                         console.log(`🔄 AUTO-AVANÇO: Passou das 6h → Rodada ${state.currentRound} → ${newRound}`);
                         db.ref('gameState').update({
@@ -4197,6 +4301,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             substitutionsOpen: true,
                             roundEndedAt: null,
                             updatedAt: Date.now()
+                        }).then(() => {
+                            releaseLock('roundAdvance');
+                        }).catch((e) => {
+                            console.error('❌ Erro no auto-avanço:', e);
+                            releaseLock('roundAdvance');
                         });
                         return;
                     }
@@ -4221,6 +4330,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 if (oldRound !== state.currentRound || oldSubsOpen !== state.substitutionsOpen) {
                     render();
                 }
+            }
+            } catch(e) {
+                console.error('❌ Erro no listener gameState:', e);
+                // Não crashar - o app continua funcionando com o estado atual
             }
         });
         
@@ -4248,7 +4361,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
     // Atualizar estado do jogo no Firebase (chamado periodicamente)
     async function updateGameState() {
-        if (!state.liveFixtures || state.liveFixtures.length === 0) return;
+        // LOCK: Evitar execuções simultâneas (causa principal de bugs de rodada)
+        if (!acquireLock('updateGameState', 15000)) return;
+        try {
+        if (!state.liveFixtures || state.liveFixtures.length === 0) { releaseLock('updateGameState'); return; }
     
         // SEGURANÇA: Verificar se as fixtures são da rodada atual
         // Se as fixtures são de outra rodada (ex: rodada anterior após avanço), ignorar
@@ -4401,6 +4517,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             console.log('📤 Atualizando gameState no Firebase...');
     
             if (shouldAdvanceRound) {
+                // LOCK: Previne múltiplos avanços simultâneos
+                if (!acquireLock('roundAdvance', 30000)) {
+                    console.log('🔒 Avanço de rodada já em andamento');
+                    return;
+                }
                 // Usar roundAtStart (capturado no início) para evitar race condition
                 const newRound = Math.min(roundAtStart + 1, 38);
                 await db.ref('gameState').update({
@@ -4415,6 +4536,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.nextRoundDate = null;
                 state.nextRoundNumber = null;
                 console.log(`🔄 Avançando rodada ${roundAtStart} → ${newRound}`);
+                releaseLock('roundAdvance');
                 setTimeout(() => fetchLiveFixtures(true), 1000);
             } else {
                 await db.ref('gameState').update({
@@ -4425,6 +4547,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     updatedAt: Date.now()
                 });
             }
+        }
+        } catch(e) {
+            console.error('❌ Erro em updateGameState:', e);
+        } finally {
+            releaseLock('updateGameState');
         }
     }
     
@@ -4675,15 +4802,24 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
     // Salvar usuário na nuvem
     function saveUserToCloud(nickname, userData) {
-        if (!db) return;
+        if (!db || !nickname) return;
         try {
+            // VALIDAÇÃO: Não salvar dados vazios/corrompidos
+            if (!userData || typeof userData !== 'object') {
+                console.error('❌ saveUserToCloud BLOQUEADO: userData inválido para', nickname);
+                return;
+            }
+            
+            // PROTEÇÃO: Garantir que scores não é Array (Firebase corrompe)
+            const safeScores = sanitizeScores(userData.scores || {});
+            
             const dataToSave = {
                 password: userData.password || null,
                 teamName: userData.teamName || '',
                 teamLogo: userData.teamLogo || null,
                 formation: userData.formation || '4-3-3',
                 isConfirmed: userData.isConfirmed || false,
-                scores: userData.scores || {},
+                scores: safeScores,
                 favoriteTeam: userData.favoriteTeam || null,
                 userBio: userData.userBio || '',
                 titles: userData.titles || [],
@@ -4724,6 +4860,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     function listenToUsers() {
         if (!db) return;
         db.ref('users').on('value', (snapshot) => {
+            try {
             const cloudUsers = snapshot.val();
             if (cloudUsers) {
                 // Cache de fotos em sessionStorage (persiste na sessão, rápido)
@@ -4882,6 +5019,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         render();
                     }, 500); // Aguarda 500ms para evitar re-render em sequência
                 }
+            }
+            } catch(e) {
+                console.error('❌ Erro no listener users:', e);
+                // Não crashar - continua com dados que já tem
             }
         });
     }
@@ -5198,21 +5339,40 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     function saveState() {
         try {
             if (state.currentUser) {
+                // VALIDAÇÃO: Não salvar se dados parecem corrompidos
+                const startersValid = state.starters && Array.isArray(state.starters);
+                const reservesValid = state.reserves && Array.isArray(state.reserves);
+                
+                if (!startersValid || !reservesValid) {
+                    console.error('❌ saveState BLOQUEADO: starters ou reserves inválidos');
+                    return;
+                }
+                
+                // PROTEÇÃO: Garantir arrays com tamanho correto
+                const safeStarters = ensureArray(state.starters, 11);
+                const safeReserves = ensureArray(state.reserves, 7);
+                const safeScores = sanitizeScores(state.scores);
+                
                 // Atualizar dados no state
                 state.users[state.currentUser] = {
                     ...state.users[state.currentUser],
                     teamName: state.teamName,
                     teamLogo: state.teamLogo,
                     formation: state.formation,
-                    starters: state.starters,
-                    reserves: state.reserves,
+                    starters: safeStarters,
+                    reserves: safeReserves,
                     coach: state.coach,
                     isConfirmed: state.isConfirmed,
-                    scores: state.scores,
+                    scores: safeScores,
                     favoriteTeam: state.favoriteTeam,
                     userBio: state.userBio,
                     lastUpdate: new Date().toISOString()
                 };
+                
+                // Manter state principal sincronizado
+                state.starters = safeStarters;
+                state.reserves = safeReserves;
+                state.scores = safeScores;
                 
                 // SALVAR TUDO NO FIREBASE - fonte única de verdade
                 saveUserToCloud(state.currentUser, state.users[state.currentUser]);
@@ -7934,8 +8094,29 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
             });
         } catch(e) {
-            console.error('Erro no render (' + state.screen + '):', e);
-            root.innerHTML = '<div style="color:white;padding:20px;"><h1>Erro ao renderizar</h1><p>Tela: ' + state.screen + '</p><p>' + e.message + '</p><button onclick="localStorage.clear();location.reload()">Limpar dados e recarregar</button></div>';
+            console.error('❌ Erro no render (' + state.screen + '):', e);
+            // Tentar recuperar sem perder dados
+            const errorScreen = state.screen;
+            try {
+                // Se deu erro em uma tela específica, volta pra home
+                if (errorScreen !== 'auth' && errorScreen !== 'home') {
+                    console.log('🔄 Tentando recuperar voltando pra home...');
+                    state.screen = 'home';
+                    state.modal = null;
+                    state.viewingPlayer = null;
+                    root.innerHTML = renderHome();
+                    return;
+                }
+            } catch(e2) {}
+            // Último recurso - tela de erro com opções
+            root.innerHTML = '<div style="color:white;padding:20px;text-align:center;font-family:sans-serif;">' +
+                '<h2 style="color:#f59e0b;">⚠️ Erro temporário</h2>' +
+                '<p style="color:#999;margin:15px 0;">Tela: ' + errorScreen + '</p>' +
+                '<p style="color:#666;font-size:12px;margin:10px 0;">' + (e.message || '') + '</p>' +
+                '<div style="display:flex;gap:10px;justify-content:center;margin-top:20px;">' +
+                '<button onclick="state.screen=\'home\';state.modal=null;render()" style="padding:10px 25px;background:#10b981;color:#fff;border:none;border-radius:8px;cursor:pointer;">Voltar ao Início</button>' +
+                '<button onclick="location.reload()" style="padding:10px 25px;background:#333;color:#fff;border:none;border-radius:8px;cursor:pointer;">Recarregar Página</button>' +
+                '</div></div>';
         }
     }
     
@@ -16574,9 +16755,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     function calculateUserScore(user) {
+        try {
+        if (!user || !user.scores) return 0;
         let total = 0;
         const userCaptain = user.captain;
         Object.entries(user.scores || {}).forEach(([key, round]) => {
+            if (!round || typeof round !== 'object') return; // PROTEÇÃO contra dados corrompidos
             if (key === 'market') {
                 // Market: contar apenas compras/vendas, NÃO cravar_bonus (já contado na rodada)
                 if (round && round.purchases) {
@@ -16600,6 +16784,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             }
         });
         return Math.round(total * 10) / 10;
+        } catch(e) {
+            console.error('❌ Erro ao calcular score:', e);
+            return 0;
+        }
     }
     
     
