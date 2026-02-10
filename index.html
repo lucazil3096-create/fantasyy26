@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fantasy Brasileirão 2026</title>
+    
+    <!-- Bibliotecas externas -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
+    
+    <!-- Estilos -->
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="min-h-screen">
+    <div id="root"></div>
+
+    <!--
+    ============================================================
+    Fantasy Brasileirão 2026 - Módulos JavaScript
+    ============================================================
+    Ordem de carregamento (NÃO alterar):
+    
+    01. config.js          → Firebase, API, chaves, dados base
+    02. state.js           → Variáveis globais do app
+    03. helpers.js         → Funções auxiliares, conquistas, desafios
+    04. pricing.js         → Sistema de preços (estilo Cartola)
+    05. fixtures.js        → Jogos ao vivo, cache, detecção de rodada
+    06. market.js          → Trocas, mercado, controle de rodada
+    07. storage.js         → Persistência Firebase
+    08. chat.js            → Sistema de chat
+    09. api.js             → Chamadas API (SofaScore, FotMob, API-Football)
+    10. scoring.js         → Pontuação e animação de gol
+    11. render.js          → Renderização principal e telas
+    12. draft.js           → Sistema de draft (usuário)
+    13. admin-panel.js     → Painel administrativo (renderização)
+    14. positions.js       → Sistema de posições dos jogadores
+    15. events.js          → Event handlers, configurações, perfil, drag & drop
+    16. draft-extras.js    → Funções extras do draft, chat, countdown
+    17. admin-functions.js → Funções administrativas avançadas
+    18. app.js             → Inicialização, auto-sync (SEMPRE POR ÚLTIMO)
+    ============================================================
+    -->
+
+    <!-- Módulos do app (carregar nesta ordem) -->
+    <script src="js/01-config.js"></script>
+    <script src="js/02-state.js"></script>
+    <script src="js/03-helpers.js"></script>
+    <script src="js/04-pricing.js"></script>
+    <script src="js/05-fixtures.js"></script>
+    <script src="js/06-market.js"></script>
+    <script src="js/07-storage.js"></script>
+    <script src="js/08-chat.js"></script>
+    <script src="js/09-api.js"></script>
+    <script src="js/10-scoring.js"></script>
+    <script src="js/11-render.js"></script>
+    <script src="js/12-draft.js"></script>
+    <script src="js/13-admin-panel.js"></script>
+    <script src="js/14-positions.js"></script>
+    <script src="js/15-events.js"></script>
+    <script src="js/16-draft-extras.js"></script>
+    <script src="js/17-admin-functions.js"></script>
+    <script src="js/18-app.js"></script>
+</body>
+</html>
