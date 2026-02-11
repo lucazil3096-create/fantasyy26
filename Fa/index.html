@@ -3727,6 +3727,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         
         _sharedScoresRound = round;
         db.ref('sharedScores/round_' + round).on('value', (snapshot) => {
+            // NÃO sobrescrever se scores acabaram de ser calculados
+            if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000)) return;
+            
             const sharedData = snapshot.val();
             if (!sharedData) return;
             
@@ -5132,11 +5135,15 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                         isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
                         scores: (function() {
+                            // PROTEÇÃO: Se scores acabaram de ser calculados, manter local intocado
+                            var recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000);
+                            if (recentCalc) {
+                                return sanitizeScores(state.users[nick].scores || {});
+                            }
                             // Mergear scores: NUNCA perder scores calculados localmente
                             var cloud = sanitizeScores(cloudUsers[nick].scores || {});
                             var local = sanitizeScores(state.users[nick].scores || {});
                             var merged = {};
-                            // Coletar todas as rodadas de ambos
                             var allRounds = new Set(Object.keys(local).concat(Object.keys(cloud)));
                             allRounds.forEach(function(rd) {
                                 var l = local[rd];
@@ -5332,8 +5339,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
                 
                 // Suplementar scores de outros usuários com sharedScores
-                // (quando syncRoundScores salvou lá mas Firebase rules bloquearam escrita no path do user)
-                if (db && state.selectedRound) {
+                // MAS NÃO se scores acabaram de ser calculados (evita flicker)
+                var _recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000);
+                if (db && state.selectedRound && !_recentCalc) {
                     db.ref('sharedScores/round_' + state.selectedRound).once('value').then(snap => {
                         const sharedData = snap.val();
                         if (sharedData) {
@@ -5400,7 +5408,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
                 
                 // Atualizar tela COM DEBOUNCE (evita re-render excessivo durante digitação)
-                if (!isUserTyping && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
+                // NÃO re-renderizar se scores acabaram de ser calculados (evita flicker no ranking)
+                var _recentCalc2 = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000);
+                if (!isUserTyping && !_recentCalc2 && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
                     if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
                     renderDebounceTimer = setTimeout(() => {
                         render();
@@ -8143,6 +8153,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             if (state.currentUser && state.users[state.currentUser]) {
                 state.scores = state.users[state.currentUser].scores || {};
             }
+            
+            // PROTEÇÃO: Marcar que scores acabaram de ser calculados
+            // listenToUsers NÃO vai sobrescrever scores por 15 segundos
+            state._scoresCalculatedAt = Date.now();
             
             saveState();
             console.log(` Pontuação da Rodada ${round} calculada para todos!`);
