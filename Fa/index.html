@@ -2351,7 +2351,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 obj[idx] = val;
             }
         });
-        console.log(`🔧 Scores convertido de Array(${scores.length}) para Object com chaves: [${Object.keys(obj).join(', ')}]`);
+        // Silencioso - conversão Array→Object é normal no Firebase
         return obj;
     }
     
@@ -5132,21 +5132,23 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                         isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
                         scores: (function() {
-                            // Mergear scores: para cada rodada, manter a versão que tem mais dados
+                            // Mergear scores: NUNCA perder scores calculados localmente
                             var cloud = sanitizeScores(cloudUsers[nick].scores || {});
                             var local = sanitizeScores(state.users[nick].scores || {});
-                            var merged = Object.assign({}, local);
-                            Object.keys(cloud).forEach(function(rd) {
-                                if (!merged[rd]) {
-                                    merged[rd] = cloud[rd];
-                                } else {
-                                    // Manter a versão com mais jogadores pontuados
-                                    var cloudPlayers = cloud[rd].players ? Object.keys(cloud[rd].players).length : 0;
-                                    var localPlayers = merged[rd].players ? Object.keys(merged[rd].players).length : 0;
-                                    if (cloudPlayers > localPlayers) {
-                                        merged[rd] = cloud[rd];
-                                    }
-                                }
+                            var merged = {};
+                            // Coletar todas as rodadas de ambos
+                            var allRounds = new Set(Object.keys(local).concat(Object.keys(cloud)));
+                            allRounds.forEach(function(rd) {
+                                var l = local[rd];
+                                var c = cloud[rd];
+                                if (!l && c) { merged[rd] = c; return; }
+                                if (l && !c) { merged[rd] = l; return; }
+                                if (!l && !c) return;
+                                // Ambos existem: manter o que tem mais dados reais (não-zero)
+                                var lCount = 0, cCount = 0;
+                                if (l.players) Object.values(l.players).forEach(function(v){ if (v !== 0 && v !== undefined) lCount++; });
+                                if (c.players) Object.values(c.players).forEach(function(v){ if (v !== 0 && v !== undefined) cCount++; });
+                                merged[rd] = (lCount >= cCount) ? l : c;
                             });
                             return merged;
                         })(),
@@ -5163,12 +5165,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         seenNotifications: cloudUsers[nick].seenNotifications || []
                     };
                     
-                    // Se scores estavam como Array (corrompidos pelo Firebase), re-salvar como Object
-                    // IMPORTANTE: Só re-salvar se for o usuário atual (Firebase rules bloqueiam escrita em outros users)
-                    if (cloudUsers[nick].scores && Array.isArray(cloudUsers[nick].scores) && db && nick === state.currentUser) {
-                        console.log(`🔧 Re-salvando scores de ${nick} no Firebase (Array→Object)`);
-                        db.ref('users/' + nick + '/scores').set(state.users[nick].scores);
-                    }
+                    // Scores Array→Object: apenas converter localmente, NÃO re-salvar no Firebase
+                    // (re-salvar causa loop infinito: save→listener→detecta Array→save→listener...)
+                    // A conversão já foi feita pelo sanitizeScores acima
     
                     // MIGRAÇÃO: Mover cravar_bonus do market para a rodada correta
                     const userScores = state.users[nick].scores;
@@ -5187,12 +5186,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             });
                             // Remover cravar_bonus do market
                             userScores.market.purchases = userScores.market.purchases.filter(p => p.type !== 'cravar_bonus');
-                            // Salvar no Firebase - só para o próprio usuário ou admin
-                            if (db && (nick === state.currentUser || state.isAdmin)) {
-                                db.ref('users/' + nick + '/scores/market/purchases').set(userScores.market.purchases);
+                            // Salvar no Firebase - APENAS para o próprio usuário
+                            if (db && nick === state.currentUser) {
+                                db.ref('users/' + nick + '/scores/market/purchases').set(userScores.market.purchases).catch(e => {});
                                 Object.keys(userScores).forEach(key => {
                                     if (key !== 'market' && userScores[key] && userScores[key].cravar) {
-                                        db.ref('users/' + nick + '/scores/' + key + '/cravar').set(userScores[key].cravar);
+                                        db.ref('users/' + nick + '/scores/' + key + '/cravar').set(userScores[key].cravar).catch(e => {});
                                     }
                                 });
                             }
@@ -5275,8 +5274,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         .catch(function() {});
                 }
                 
-                // Recuperar escalações salvas via fallback (lineupBackup/)
-                if (FIREBASE_URL) {
+                // Recuperar escalações salvas via fallback (lineupBackup/) - APENAS UMA VEZ
+                if (FIREBASE_URL && !window._lineupBackupRecovered) {
+                    window._lineupBackupRecovered = true;
                     fetch(FIREBASE_URL + '/lineupBackup.json')
                         .then(function(res) { return res.ok ? res.json() : null; })
                         .then(function(data) {
@@ -5288,29 +5288,29 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 var user = state.users[nick];
                                 if (!user) return;
                                 
+                                // Só recuperar para o current user
+                                if (nick !== state.currentUser) return;
+                                
                                 // Comparar timestamps: backup mais recente que Firebase?
                                 var fbTime = user.lastUpdate ? new Date(user.lastUpdate).getTime() : 0;
                                 var bkTime = backup.savedAt || 0;
                                 
                                 if (bkTime > fbTime) {
-                                    console.log('🔄 Escalação recuperada de lineupBackup/' + nick + ' (backup ' + Math.round((bkTime - fbTime)/1000) + 's mais recente)');
+                                    console.log('🔄 Escalação recuperada de lineupBackup/' + nick);
                                     user.starters = ensureArray(backup.starters, 11);
                                     user.reserves = ensureArray(backup.reserves, 7);
                                     if (backup.coach) user.coach = backup.coach;
                                     if (backup.formation) user.formation = backup.formation;
                                     if (backup.isConfirmed !== undefined) user.isConfirmed = backup.isConfirmed;
                                     
-                                    // Atualizar state principal se é o user logado
-                                    if (nick === state.currentUser) {
-                                        state.starters = user.starters;
-                                        state.reserves = user.reserves;
-                                        state.coach = user.coach;
-                                        state.formation = user.formation;
-                                    }
+                                    state.starters = user.starters;
+                                    state.reserves = user.reserves;
+                                    state.coach = user.coach;
+                                    state.formation = user.formation;
                                     updated = true;
                                     
-                                    // Se auth OK, migrar de volta para users/ e limpar backup
-                                    if (nick === state.currentUser && fbAuth && fbAuth.currentUser) {
+                                    // Migrar de volta para users/ e limpar backup
+                                    if (fbAuth && fbAuth.currentUser) {
                                         db.ref('users/' + nick).update(cleanUndefined({
                                             starters: user.starters,
                                             reserves: user.reserves,
@@ -8124,21 +8124,18 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     };
                     db.ref('sharedScores/round_' + round + '/' + nick).update(sharedScoreData).catch(e => {});
                     
-                    // 2. Salvar no path do usuário para TODOS (não só current user)
-                    // Se Firebase rules bloquearem, o .catch() silencia o erro
-                    console.log(`    💾 Salvando ${Object.keys(calculatedScores).length} scores para ${nick}`);
-                    db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores).catch(e => {
-                        if (nick !== state.currentUser) {
-                            // Esperado falhar para outros usuários se Firebase rules restringem
-                            // Os dados ficam disponíveis via sharedScores
-                        } else {
+                    // 2. Salvar no path do usuário APENAS para o current user
+                    // Para outros, os dados ficam em sharedScores (qualquer um pode ler)
+                    if (nick === state.currentUser) {
+                        console.log(`    💾 Salvando ${Object.keys(calculatedScores).length} scores para ${nick}`);
+                        db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores).catch(e => {
                             console.log(`    ⚠️ Erro ao salvar scores de ${nick}:`, e.message);
-                        }
-                    });
-                    db.ref('users/' + nick + '/scores/' + round).update({
-                        coach: user.scores[round].coach,
-                        live: user.scores[round].live
-                    }).catch(e => {});
+                        });
+                        db.ref('users/' + nick + '/scores/' + round).update({
+                            coach: user.scores[round].coach,
+                            live: user.scores[round].live
+                        }).catch(e => {});
+                    }
                 }
             }
             
