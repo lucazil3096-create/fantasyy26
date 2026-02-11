@@ -2709,39 +2709,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     }
                 }
     
-                // VALIDAÇÃO: buscar rodada da API pra confirmar sincronização
-                // Sempre validar no carregamento da página para garantir rodada correta
-                try {
-                    for (const season of [SEASON]) {
-                        const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
-                        if (nextRes.response && nextRes.response.length > 0) {
-                            const roundStr = nextRes.response[0].league.round;
-                            const match = roundStr.match(/Regular Season - (\d+)/);
-                            if (match) {
-                                const apiRound = parseInt(match[1]);
-                                if (roundNum !== apiRound && roundStatus !== 'live') {
-                                    console.log(`⚠️ CORREÇÃO: Firebase rodada ${roundNum} ≠ API rodada ${apiRound}. Sincronizando.`);
-                                    roundNum = apiRound;
-                                    roundStatus = 'waiting';
-                                    subsOpen = true;
-                                    if (db) {
-                                        await db.ref('gameState').update({
-                                            currentRound: apiRound,
-                                            roundStatus: 'waiting',
-                                            substitutionsOpen: true,
-                                            roundEndedAt: null,
-                                            updatedAt: Date.now()
-                                        });
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.log('⚠️ Não foi possível validar contra API:', e.message);
-                }
-    
+                // Aplicar gameState do Firebase IMEDIATAMENTE (sem esperar API)
                 state.currentRound = roundNum;
                 state.selectedRound = roundNum;
                 state.substitutionsOpen = subsOpen;
@@ -2749,6 +2717,43 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.captainEnabled = gameState.captainEnabled === true;
                 state.delayedGamesRounds = gameState.delayedGamesRounds || [];
                 console.log(`✅ gameState: Rodada ${roundNum} | Status: ${roundStatus} | Subs: ${subsOpen ? 'Abertas' : 'Travadas'}`);
+
+                // VALIDAÇÃO: confirmar contra API em segundo plano (NÃO bloqueia)
+                (async function() {
+                    try {
+                        for (const season of [SEASON]) {
+                            const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
+                            if (nextRes.response && nextRes.response.length > 0) {
+                                const roundStr = nextRes.response[0].league.round;
+                                const match = roundStr.match(/Regular Season - (\d+)/);
+                                if (match) {
+                                    const apiRound = parseInt(match[1]);
+                                    if (state.currentRound !== apiRound && state.roundStatus !== 'live') {
+                                        console.log(`⚠️ CORREÇÃO: Firebase rodada ${state.currentRound} ≠ API rodada ${apiRound}. Sincronizando.`);
+                                        state.currentRound = apiRound;
+                                        state.selectedRound = apiRound;
+                                        state.roundStatus = 'waiting';
+                                        state.substitutionsOpen = true;
+                                        if (db) {
+                                            db.ref('gameState').update({
+                                                currentRound: apiRound,
+                                                roundStatus: 'waiting',
+                                                substitutionsOpen: true,
+                                                roundEndedAt: null,
+                                                updatedAt: Date.now()
+                                            });
+                                        }
+                                        fetchLiveFixtures(true).then(() => render());
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.log('⚠️ Não foi possível validar contra API:', e.message);
+                    }
+                })();
+
                 return;
             }
             
@@ -17554,7 +17559,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     await autoDetectNextRound(true);
                 }
                 render();
-            }, 500);
+            }, 50);
         }
         
         // Escutar chat do draft
@@ -17611,7 +17616,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         setTimeout(async () => {
             await detectCurrentRound();
             render();
-        }, 500);
+        }, 50);
     };
     
     window.openPlayerModal = function(index, type) {
