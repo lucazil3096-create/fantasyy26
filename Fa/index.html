@@ -3007,9 +3007,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             console.log('🌐 Buscando da API-Football...');
             let fixtures = [];
             
-            // Tentar buscar por rodada
+            // Tentar buscar por rodada (pular cache do apiCall se forceRefresh)
             try {
-                const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${state.selectedRound}`);
+                const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${state.selectedRound}`, { useCache: !forceRefresh });
                 if (res.response && res.response.length > 0) {
                     fixtures = res.response;
                     console.log(` Encontrados ${fixtures.length} jogos da rodada ${state.selectedRound}`);
@@ -3025,7 +3025,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             if (fixtures.length === 0) {
                 try {
                     const today = new Date().toISOString().split('T')[0];
-                    const res3 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`);
+                    const res3 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`, { useCache: !forceRefresh });
                     if (res3.response && res3.response.length > 0) {
                         fixtures = res3.response;
                         console.log(` Encontrados ${fixtures.length} jogos de hoje`);
@@ -25091,8 +25091,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
     // Iniciar gerenciador após carregar fixtures
     const originalFetchLiveFixtures = fetchLiveFixtures;
-    fetchLiveFixtures = async function() {
-        await originalFetchLiveFixtures();
+    fetchLiveFixtures = async function(forceRefresh) {
+        await originalFetchLiveFixtures(forceRefresh);
         manageUpdateInterval();
     };
     
