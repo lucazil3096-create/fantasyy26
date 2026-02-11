@@ -4652,10 +4652,21 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
         
         // Atualizar Firebase se houver mudanças
-        // RESPEITAR OVERRIDE DO ADMIN: se admin liberou manualmente, NÃO mexer
+        // RESPEITAR OVERRIDE DO ADMIN: se admin liberou manualmente, NÃO mexer em substitutionsOpen
         if (state.adminSubsOverride && !shouldAdvanceRound) {
-            newSubstitutionsOpen = state.substitutionsOpen; // Manter exatamente como o admin definiu
-            console.log('🔐 Admin override ativo - subs mantidas ' + (newSubstitutionsOpen ? 'ABERTAS' : 'TRAVADAS'));
+            // Override ativo: não mudar substitutionsOpen, só atualizar roundStatus se mudou
+            if (newRoundStatus !== state.roundStatus) {
+                console.log('🔐 Admin override ativo - só atualizando roundStatus, subs intocadas');
+                if (db) {
+                    await db.ref('gameState').update({
+                        roundStatus: newRoundStatus,
+                        roundEndedAt: allGamesFinished ? lastGameEndTime : null,
+                        updatedAt: Date.now()
+                    });
+                }
+            }
+            releaseLock('updateGameState');
+            return;
         }
         
         const stateChanged =
@@ -5002,8 +5013,45 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 dataToSave.coach = userData.coach;
             }
             
-            db.ref('users/' + nickname).update(dataToSave);
-            console.log(' Salvo na nuvem:', nickname);
+            // Tentar salvar via SDK (requer auth)
+            db.ref('users/' + nickname).update(dataToSave)
+                .then(() => {
+                    console.log('☁️ Salvo na nuvem:', nickname);
+                    // Limpar backup se existir (dados já estão no path correto)
+                    if (FIREBASE_URL) {
+                        fetch(FIREBASE_URL + '/lineupBackup/' + encodeURIComponent(nickname) + '.json', { method: 'DELETE' }).catch(() => {});
+                    }
+                })
+                .catch((err) => {
+                    console.error('❌ SDK falhou ao salvar:', err.code || err.message);
+                    
+                    // FALLBACK: Salvar escalação em lineupBackup/ (rule: .write: true)
+                    // Só salva dados essenciais para pontuação
+                    if (FIREBASE_URL && dataToSave.starters) {
+                        const lineupData = cleanUndefined({
+                            starters: dataToSave.starters,
+                            reserves: dataToSave.reserves,
+                            coach: dataToSave.coach,
+                            formation: dataToSave.formation,
+                            isConfirmed: dataToSave.isConfirmed,
+                            teamName: dataToSave.teamName,
+                            savedAt: Date.now()
+                        });
+                        fetch(FIREBASE_URL + '/lineupBackup/' + encodeURIComponent(nickname) + '.json', {
+                            method: 'PUT',
+                            body: JSON.stringify(lineupData),
+                            headers: { 'Content-Type': 'application/json' }
+                        })
+                        .then(r => {
+                            if (r.ok) {
+                                console.log('✅ Escalação salva em lineupBackup/' + nickname);
+                            } else {
+                                console.error('❌ lineupBackup falhou:', r.status);
+                            }
+                        })
+                        .catch(e => console.error('❌ lineupBackup error:', e.message));
+                    }
+                });
         } catch (e) {
             console.error('Erro ao salvar na nuvem:', e);
         }
@@ -5052,11 +5100,56 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         teamName: cloudUsers[nick].teamName || state.users[nick].teamName,
                         teamLogo: fotoParaUsar,
                         coach: cloudUsers[nick].coach || state.users[nick].coach,
-                        starters: ensureArray(cloudUsers[nick].starters || state.users[nick].starters, 11),
-                        reserves: ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7),
+                        starters: (function() {
+                            // Para o usuário atual: se backup local é mais recente, manter local
+                            if (isCurrentUser) {
+                                try {
+                                    var bk = JSON.parse(localStorage.getItem('fantasy_lineup_backup') || '{}');
+                                    if (bk.nickname === nick && bk.savedAt) {
+                                        var fbTime = cloudUsers[nick].lastUpdate ? new Date(cloudUsers[nick].lastUpdate).getTime() : 0;
+                                        if (bk.savedAt > fbTime && bk.starters) {
+                                            return ensureArray(bk.starters, 11);
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                            return ensureArray(cloudUsers[nick].starters || state.users[nick].starters, 11);
+                        })(),
+                        reserves: (function() {
+                            if (isCurrentUser) {
+                                try {
+                                    var bk = JSON.parse(localStorage.getItem('fantasy_lineup_backup') || '{}');
+                                    if (bk.nickname === nick && bk.savedAt) {
+                                        var fbTime = cloudUsers[nick].lastUpdate ? new Date(cloudUsers[nick].lastUpdate).getTime() : 0;
+                                        if (bk.savedAt > fbTime && bk.reserves) {
+                                            return ensureArray(bk.reserves, 7);
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                            return ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7);
+                        })(),
                         formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                         isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
-                        scores: sanitizeScores(cloudUsers[nick].scores || state.users[nick].scores || {}),
+                        scores: (function() {
+                            // Mergear scores: para cada rodada, manter a versão que tem mais dados
+                            var cloud = sanitizeScores(cloudUsers[nick].scores || {});
+                            var local = sanitizeScores(state.users[nick].scores || {});
+                            var merged = Object.assign({}, local);
+                            Object.keys(cloud).forEach(function(rd) {
+                                if (!merged[rd]) {
+                                    merged[rd] = cloud[rd];
+                                } else {
+                                    // Manter a versão com mais jogadores pontuados
+                                    var cloudPlayers = cloud[rd].players ? Object.keys(cloud[rd].players).length : 0;
+                                    var localPlayers = merged[rd].players ? Object.keys(merged[rd].players).length : 0;
+                                    if (cloudPlayers > localPlayers) {
+                                        merged[rd] = cloud[rd];
+                                    }
+                                }
+                            });
+                            return merged;
+                        })(),
                         favoriteTeam: cloudUsers[nick].favoriteTeam || null,
                         userBio: cloudUsers[nick].userBio || '',
                         achievements: cloudUsers[nick].achievements || [],
@@ -5121,15 +5214,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (cloudUsers[nick].teamName && cloudUsers[nick].teamName.trim()) {
                             state.teamName = cloudUsers[nick].teamName;
                         }
-                        if (cloudUsers[nick].starters) {
-                            state.starters = ensureArray(cloudUsers[nick].starters, 11);
-                        }
-                        if (cloudUsers[nick].reserves) {
-                            state.reserves = ensureArray(cloudUsers[nick].reserves, 7);
-                        }
-                        if (cloudUsers[nick].coach) {
-                            state.coach = cloudUsers[nick].coach;
-                        }
+                        // Starters/reserves: usar dados mergeados de state.users[nick]
+                        // (que já foram processados acima com merge local+cloud)
+                        state.starters = ensureArray(state.users[nick].starters, 11);
+                        state.reserves = ensureArray(state.users[nick].reserves, 7);
+                        state.coach = state.users[nick].coach || state.coach;
                         // Aplicar foto custom do técnico
                         if (state.coach && state.coach.id) {
                             var _tc = TECNICOS_2026.find(function(c){return c.id === state.coach.id;});
@@ -5138,9 +5227,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (cloudUsers[nick].formation) {
                             state.formation = cloudUsers[nick].formation;
                         }
-                        if (cloudUsers[nick].scores) {
-                            state.scores = sanitizeScores(cloudUsers[nick].scores);
-                        }
+                        // Usar scores MERGEADOS (já calculados acima em state.users[nick])
+                        state.scores = state.users[nick].scores || {};
                         state.captain = cloudUsers[nick].captain || null;
                         state.isConfirmed = cloudUsers[nick].isConfirmed || false;
                     }
@@ -5183,6 +5271,62 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 }
                             });
                             render();
+                        })
+                        .catch(function() {});
+                }
+                
+                // Recuperar escalações salvas via fallback (lineupBackup/)
+                if (FIREBASE_URL) {
+                    fetch(FIREBASE_URL + '/lineupBackup.json')
+                        .then(function(res) { return res.ok ? res.json() : null; })
+                        .then(function(data) {
+                            if (!data) return;
+                            var updated = false;
+                            Object.keys(data).forEach(function(nick) {
+                                var backup = data[nick];
+                                if (!backup || !backup.starters) return;
+                                var user = state.users[nick];
+                                if (!user) return;
+                                
+                                // Comparar timestamps: backup mais recente que Firebase?
+                                var fbTime = user.lastUpdate ? new Date(user.lastUpdate).getTime() : 0;
+                                var bkTime = backup.savedAt || 0;
+                                
+                                if (bkTime > fbTime) {
+                                    console.log('🔄 Escalação recuperada de lineupBackup/' + nick + ' (backup ' + Math.round((bkTime - fbTime)/1000) + 's mais recente)');
+                                    user.starters = ensureArray(backup.starters, 11);
+                                    user.reserves = ensureArray(backup.reserves, 7);
+                                    if (backup.coach) user.coach = backup.coach;
+                                    if (backup.formation) user.formation = backup.formation;
+                                    if (backup.isConfirmed !== undefined) user.isConfirmed = backup.isConfirmed;
+                                    
+                                    // Atualizar state principal se é o user logado
+                                    if (nick === state.currentUser) {
+                                        state.starters = user.starters;
+                                        state.reserves = user.reserves;
+                                        state.coach = user.coach;
+                                        state.formation = user.formation;
+                                    }
+                                    updated = true;
+                                    
+                                    // Se auth OK, migrar de volta para users/ e limpar backup
+                                    if (nick === state.currentUser && fbAuth && fbAuth.currentUser) {
+                                        db.ref('users/' + nick).update(cleanUndefined({
+                                            starters: user.starters,
+                                            reserves: user.reserves,
+                                            coach: user.coach,
+                                            formation: user.formation,
+                                            lastUpdate: new Date().toISOString()
+                                        }))
+                                        .then(function() {
+                                            fetch(FIREBASE_URL + '/lineupBackup/' + encodeURIComponent(nick) + '.json', { method: 'DELETE' }).catch(function(){});
+                                            console.log('✅ Escalação migrada para users/' + nick);
+                                        })
+                                        .catch(function() {});
+                                    }
+                                }
+                            });
+                            if (updated) render();
                         })
                         .catch(function() {});
                 }
@@ -5582,6 +5726,43 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
     }
     
+    // Restaurar backup da escalação se mais recente que Firebase
+    function restoreLineupBackupIfNewer(nickname, firebaseLastUpdate) {
+        try {
+            const raw = localStorage.getItem('fantasy_lineup_backup');
+            if (!raw) return false;
+            const backup = JSON.parse(raw);
+            if (backup.nickname !== nickname) return false;
+            
+            // Comparar timestamps
+            const fbTime = firebaseLastUpdate ? new Date(firebaseLastUpdate).getTime() : 0;
+            const backupTime = backup.savedAt || 0;
+            
+            if (backupTime > fbTime && backup.starters) {
+                console.log('🔄 Backup local mais recente que Firebase (' + Math.round((backupTime - fbTime)/1000) + 's) - restaurando escalação');
+                state.starters = ensureArray(backup.starters, 11);
+                state.reserves = ensureArray(backup.reserves, 7);
+                if (backup.coach) state.coach = backup.coach;
+                if (backup.formation) state.formation = backup.formation;
+                
+                // Atualizar users[] também
+                if (state.users[nickname]) {
+                    state.users[nickname].starters = state.starters;
+                    state.users[nickname].reserves = state.reserves;
+                    state.users[nickname].coach = state.coach;
+                    state.users[nickname].formation = state.formation;
+                }
+                
+                // Tentar salvar no Firebase de novo
+                saveUserToCloud(nickname, state.users[nickname]);
+                return true;
+            }
+        } catch(e) {
+            console.log('Erro ao restaurar backup:', e.message);
+        }
+        return false;
+    }
+    
     function saveState() {
         try {
             if (state.currentUser) {
@@ -5624,10 +5805,26 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 saveUserToCloud(state.currentUser, state.users[state.currentUser]);
             }
             
-            // localStorage: APENAS para lembrar qual usuário está logado
+            // localStorage: salvar dados essenciais como backup (protege contra falha do Firebase)
             localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
                 currentUser: state.currentUser
             }));
+            
+            // Backup da escalação no localStorage (protege substituições contra F5)
+            if (state.currentUser) {
+                try {
+                    localStorage.setItem('fantasy_lineup_backup', JSON.stringify({
+                        nickname: state.currentUser,
+                        starters: state.starters,
+                        reserves: state.reserves,
+                        coach: state.coach,
+                        formation: state.formation,
+                        teamName: state.teamName,
+                        isConfirmed: state.isConfirmed,
+                        savedAt: Date.now()
+                    }));
+                } catch(e) {}
+            }
         } catch (e) {
             console.error('Erro ao salvar:', e);
         }
@@ -24654,6 +24851,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     
                     console.log('✅ Login automático bem sucedido!');
                     
+                    // Restaurar backup local se mais recente (protege substituições que falharam ao salvar)
+                    restoreLineupBackupIfNewer(savedUser, userData.lastUpdate);
+                    
                     // Iniciar listeners
                     listenToDraftChat();
                     listenToDraftStatus();
@@ -24759,6 +24959,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             console.log('📺 Tela:', state.screen, '| hasTeam:', hasTeam);
                             
                             console.log('✅ Dados carregados do Firebase');
+                            
+                            // Restaurar backup local se mais recente (protege substituições que falharam ao salvar)
+                            restoreLineupBackupIfNewer(state.currentUser, userData.lastUpdate);
                             
                             // Forçar sincronização imediata de fotos/escudos/times
                             lastPhotoSync = 0;
