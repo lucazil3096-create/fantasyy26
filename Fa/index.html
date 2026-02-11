@@ -4366,9 +4366,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.roundStatus = data.roundStatus || 'waiting';
                 state.roundEndedAt = data.roundEndedAt || null;
                 state.substitutionsOpen = data.substitutionsOpen === true; // default false - só libera quando explicitamente true
+                state.adminSubsOverride = data.adminSubsOverride === true; // override manual do admin
                 state.captainEnabled = data.captainEnabled === true;
                 
-                console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'} | Status: ${state.roundStatus}`);
+                console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}${state.adminSubsOverride ? ' (ADMIN)' : ''} | Status: ${state.roundStatus}`);
     
                 // Se rodada está 'waiting', buscar fixtures agendados (para mostrar jogos)
                 // Mas limpar dados que podem estar corrompidos de temporada errada
@@ -4409,7 +4410,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (!cd || !cd.fixtures || cd.fixtures.length === 0) {
                             // Sem cache = rodada não começou
                             console.log('🔧 AUTO-CORREÇÃO: roundStatus=finished mas sem fixtures → mudando para waiting');
-                            db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, roundEndedAt: null, updatedAt: Date.now() });
+                            db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, adminSubsOverride: false, roundEndedAt: null, updatedAt: Date.now() });
                         } else {
                             const cs = cd.fixtures[0]?.league?.season;
                             if (cs && cs !== SEASON) {
@@ -4417,7 +4418,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 console.log(`🔧 AUTO-CORREÇÃO: cache tem temporada ${cs} → limpando e mudando para waiting`);
                                 db.ref(cacheKey).remove();
                                 db.ref('nextRound').remove();
-                                db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, roundEndedAt: null, updatedAt: Date.now() });
+                                db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, adminSubsOverride: false, roundEndedAt: null, updatedAt: Date.now() });
                             }
                         }
                     }).catch(() => {});
@@ -4442,6 +4443,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             currentRound: Math.min(newRound, 38),
                             roundStatus: 'waiting',
                             substitutionsOpen: true,
+                            adminSubsOverride: false,
                             roundEndedAt: null,
                             updatedAt: Date.now()
                         }).then(() => {
@@ -4650,6 +4652,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
         
         // Atualizar Firebase se houver mudanças
+        // RESPEITAR OVERRIDE DO ADMIN: se admin liberou manualmente, NÃO mexer
+        if (state.adminSubsOverride && !shouldAdvanceRound) {
+            newSubstitutionsOpen = state.substitutionsOpen; // Manter exatamente como o admin definiu
+            console.log('🔐 Admin override ativo - subs mantidas ' + (newSubstitutionsOpen ? 'ABERTAS' : 'TRAVADAS'));
+        }
+        
         const stateChanged =
             newRoundStatus !== state.roundStatus ||
             newSubstitutionsOpen !== state.substitutionsOpen ||
@@ -4677,6 +4685,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     roundStatus: 'waiting',
                     roundEndedAt: null,
                     substitutionsOpen: true,
+                    adminSubsOverride: false,
                     updatedAt: Date.now()
                 });
                 // Limpar countdown da rodada anterior
@@ -9473,7 +9482,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             </div>
                             
                             <p class="text-center text-zinc-600 text-[9px] mt-1">
-                                ${canEditTeam() ? '💡 Arraste para trocar' : '🔒 ' + getEditTeamStatus().reason}
+                                ${canEditTeam() ? '💡 Arraste ou segure para trocar' : '🔒 ' + getEditTeamStatus().reason}
                             </p>
                         </div>
     
@@ -14945,8 +14954,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 </div>
                                 
                                 <p class="text-zinc-600 text-xs">
-                                    <strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera 1h após o último jogo.<br>
-                                    <strong>Manual:</strong> Use os botões acima para controlar manualmente.
+                                    ${state.adminSubsOverride 
+                                        ? '<strong class="text-amber-400">⚠️ MODO MANUAL</strong> - Clique em "Travar" para voltar ao automático.'
+                                        : '<strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera 1h após o último jogo.<br><strong>Manual:</strong> Use os botões acima para controlar manualmente.'
+                                    }
                                 </p>
                             </div>
                             
@@ -18924,6 +18935,87 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         showToast('✅ Substituição realizada: ' + fromName + ' ↔ ' + toName);
     };
     
+    // ==================== TAP-TO-SWAP (MOBILE) ====================
+    // No celular, HTML5 drag não funciona. Sistema de toque:
+    // 1º toque longo (300ms) = seleciona jogador, 2º toque = troca
+    let _tapSwapSource = null;
+    let _touchTimer = null;
+    
+    // Event delegation no root - funciona sem re-bind após render
+    document.addEventListener('touchstart', function(e) {
+        if (!canEditTeam() || state.screen !== 'lineup') return;
+        
+        // Achar o slot mais próximo (starter-slot ou reserve-slot)
+        const slot = e.target.closest('.starter-slot, .reserve-slot');
+        if (!slot) return;
+        
+        const type = slot.dataset.type;
+        const index = parseInt(slot.dataset.index);
+        if (!type || isNaN(index)) return;
+        
+        const player = type === 'starter' ? state.starters[index] : state.reserves[index];
+        if (!player) return;
+        
+        // Se já tem um jogador selecionado para troca, fazer a troca imediatamente
+        if (_tapSwapSource) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (_tapSwapSource.type === type && _tapSwapSource.index === index) {
+                // Tocou no mesmo - cancelar
+                _tapSwapSource = null;
+                removeAllHighlights();
+                document.querySelectorAll('.starter-slot, .reserve-slot').forEach(function(s) { s.style.outline = ''; });
+                return;
+            }
+            
+            // Fazer a troca
+            dragData = _tapSwapSource;
+            handleDropOnSlot(e, type, index);
+            _tapSwapSource = null;
+            document.querySelectorAll('.starter-slot, .reserve-slot').forEach(function(s) { s.style.outline = ''; });
+            return;
+        }
+        
+        // Toque longo (300ms) = entrar em modo troca
+        _touchTimer = setTimeout(function() {
+            _tapSwapSource = { type: type, index: index, player: player, position: player.position || '' };
+            
+            // Feedback visual
+            slot.style.outline = '3px solid #10b981';
+            highlightCompatibleSlots(player.position, type);
+            
+            showToast('👆 Toque em outro jogador para trocar');
+            
+            // Vibrar se disponível
+            if (navigator.vibrate) navigator.vibrate(50);
+            
+            // Auto-cancelar após 6 segundos
+            setTimeout(function() {
+                if (_tapSwapSource) {
+                    _tapSwapSource = null;
+                    removeAllHighlights();
+                    document.querySelectorAll('.starter-slot, .reserve-slot').forEach(function(s) { s.style.outline = ''; });
+                }
+            }, 6000);
+        }, 300);
+    }, { passive: false });
+    
+    document.addEventListener('touchend', function() {
+        if (_touchTimer) {
+            clearTimeout(_touchTimer);
+            _touchTimer = null;
+        }
+    });
+    
+    document.addEventListener('touchmove', function() {
+        // Se moveu o dedo, cancelar o toque longo
+        if (_touchTimer) {
+            clearTimeout(_touchTimer);
+            _touchTimer = null;
+        }
+    });
+
     // Destacar slots compatíveis
     function highlightCompatibleSlots(playerPosition, sourceType) {
         // Mostrar indicador de drag
@@ -22147,22 +22239,28 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
         
         const action = open ? 'LIBERAR' : 'TRAVAR';
-        if (!confirm(`Deseja ${action} as substituições para TODOS os usuários?`)) {
+        if (!confirm(`Deseja ${action} as substituições para TODOS os usuários?${open ? '\n\nVai ficar liberado até você travar manualmente.' : '\n\nVai voltar ao modo automático (trava 30min antes da rodada).'}`)) {
             return;
         }
         
         console.log(`${open ? '🔓' : '🔒'} Admin ${action.toLowerCase()}ndo substituições`);
         
-        // Salvar no Firebase (todos receberão via listener)
         if (db) {
             await db.ref('gameState').update({
                 substitutionsOpen: open,
+                adminSubsOverride: open, // true = override ativo, false = volta automático
                 updatedAt: Date.now()
             });
         }
         
         state.substitutionsOpen = open;
-        alert(`✅ Substituições ${open ? 'LIBERADAS' : 'TRAVADAS'}!`);
+        state.adminSubsOverride = open;
+        
+        if (open) {
+            alert('✅ Substituições LIBERADAS!\n\nFicará liberado até você clicar em "Travar".');
+        } else {
+            alert('✅ Substituições TRAVADAS!\n\nVoltou ao modo automático:\n• Trava 30min antes do 1º jogo\n• Libera após a rodada');
+        }
         render();
     };
     
