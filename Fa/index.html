@@ -2342,17 +2342,72 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     // Esta função converte de volta para Object com chaves numéricas corretas
     function sanitizeScores(scores) {
         if (!scores || typeof scores !== 'object') return {};
-        if (!Array.isArray(scores)) return scores; // Já é Object, OK
-    
-        // Converter Array para Object: [undefined, {round1Data}, {round2Data}] → {1: {round1Data}, 2: {round2Data}}
+        if (!Array.isArray(scores)) return scores;
         const obj = {};
-        scores.forEach((val, idx) => {
-            if (val && typeof val === 'object') {
-                obj[idx] = val;
-            }
-        });
-        // Silencioso - conversão Array→Object é normal no Firebase
+        scores.forEach((val, idx) => { if (val && typeof val === 'object') obj[idx] = val; });
         return obj;
+    }
+    
+    // ═══ CACHE DE SCORES + FLAG DE LOAD INICIAL ═══
+    var _SC = {};
+    var _initialLoadDone = false; // Bloqueia renders até scores serem carregados
+    
+    function _put(rd, nick, data) {
+        if (!rd || !nick || !data || !data.players) return;
+        if (!_SC[rd]) _SC[rd] = {};
+        var ex = _SC[rd][nick] || {};
+        _SC[rd][nick] = {
+            players: Object.assign({}, ex.players || {}, data.players || {}),
+            coach: data.coach !== undefined ? data.coach : (ex.coach || 0),
+            cravar: data.cravar !== undefined ? data.cravar : (ex.cravar || 0),
+            live: data.live !== undefined ? data.live : (ex.live || false)
+        };
+    }
+    function _get(nick, rd) {
+        var c = _SC[rd] && _SC[rd][nick];
+        if (c && Object.keys(c.players || {}).length > 0) return c;
+        var u = state.users[nick];
+        if (u && u.scores && u.scores[rd] && u.scores[rd].players && Object.keys(u.scores[rd].players).length > 0) return u.scores[rd];
+        return { players: {}, coach: 0, cravar: 0, live: false };
+    }
+    function _applyCache() {
+        Object.keys(_SC).forEach(function(rd) {
+            Object.keys(_SC[rd]).forEach(function(nick) {
+                var c = _SC[rd][nick];
+                if (!c.players || Object.keys(c.players).length === 0) return;
+                if (!state.users[nick]) return;
+                if (!state.users[nick].scores) state.users[nick].scores = {};
+                if (!state.users[nick].scores[rd]) state.users[nick].scores[rd] = { players: {}, coach: 0, live: false };
+                Object.assign(state.users[nick].scores[rd].players, c.players);
+                if (c.coach) state.users[nick].scores[rd].coach = c.coach;
+                if (c.cravar) state.users[nick].scores[rd].cravar = c.cravar;
+            });
+        });
+        if (state.currentUser && state.users[state.currentUser]) state.scores = state.users[state.currentUser].scores || {};
+    }
+    // Buscar sharedScores e popular cache + state
+    async function _loadShared(round) {
+        if (!db || !round || round <= 0) return;
+        try {
+            var snap = await db.ref('sharedScores/round_' + round).once('value');
+            var data = snap.val();
+            if (data) {
+                Object.keys(data).forEach(function(nick) {
+                    if (data[nick] && data[nick].players) {
+                        _put(round, nick, data[nick]);
+                        // Aplicar diretamente no state.users
+                        if (state.users[nick]) {
+                            if (!state.users[nick].scores) state.users[nick].scores = {};
+                            if (!state.users[nick].scores[round]) state.users[nick].scores[round] = { players: {}, coach: 0, live: false };
+                            Object.assign(state.users[nick].scores[round].players, data[nick].players);
+                            if (data[nick].coach !== undefined) state.users[nick].scores[round].coach = data[nick].coach;
+                            if (data[nick].cravar !== undefined) state.users[nick].scores[round].cravar = data[nick].cravar;
+                        }
+                    }
+                });
+                if (state.currentUser && state.users[state.currentUser]) state.scores = state.users[state.currentUser].scores || {};
+            }
+        } catch(e) { console.error('_loadShared erro:', e); }
     }
     
     // Sanitiza array para Firebase (converte undefined para null)
@@ -3727,61 +3782,15 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         
         _sharedScoresRound = round;
         db.ref('sharedScores/round_' + round).on('value', (snapshot) => {
-            // NÃO sobrescrever se scores acabaram de ser calculados
             if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000)) return;
-            
             const sharedData = snapshot.val();
             if (!sharedData) return;
-            
-            // FIX: Marcar que sharedScores foram carregados para esta rodada
-            if (!state._sharedScoresLoaded) state._sharedScoresLoaded = {};
-            state._sharedScoresLoaded[round] = true;
-            state._roundScoresLoading = false;
-            
-            let updated = false;
             Object.keys(sharedData).forEach(nick => {
-                if (!state.users[nick]) return;
                 const shared = sharedData[nick];
-                if (!shared || !shared.players) return;
-                
-                // FIX: Usar contagem de CHAVES em vez de checar valores !== 0
-                const userScores = state.users[nick].scores?.[round]?.players || {};
-                const userPlayerCount = Object.keys(userScores).length;
-                const sharedPlayerCount = Object.keys(shared.players).length;
-                
-                const userUpdatedAt = state.users[nick]._scoresUpdatedAt?.[round] || 0;
-                const sharedUpdatedAt = shared.updatedAt || 0;
-                
-                // Usar shared se: user NÃO tem players OU shared tem mais dados
-                const shouldUseShared = (userPlayerCount === 0 && sharedPlayerCount > 0) || 
-                    (sharedUpdatedAt > userUpdatedAt && sharedPlayerCount > userPlayerCount);
-                
-                if (shouldUseShared) {
-                    if (!state.users[nick].scores) state.users[nick].scores = {};
-                    if (!state.users[nick].scores[round]) {
-                        state.users[nick].scores[round] = { players: {}, coach: 0, live: false };
-                    }
-                    Object.keys(shared.players).forEach(pid => {
-                        state.users[nick].scores[round].players[pid] = shared.players[pid];
-                    });
-                    if (shared.coach !== undefined) {
-                        state.users[nick].scores[round].coach = shared.coach;
-                    }
-                    state.users[nick].scores[round].live = shared.live || false;
-                    
-                    if (!state.users[nick]._scoresUpdatedAt) state.users[nick]._scoresUpdatedAt = {};
-                    state.users[nick]._scoresUpdatedAt[round] = sharedUpdatedAt;
-                    
-                    updated = true;
-                }
+                if (shared && shared.players) _put(round, nick, shared);
             });
-            
-            if (updated) {
-                if (state.currentUser && state.users[state.currentUser]) {
-                    state.scores = state.users[state.currentUser].scores || {};
-                }
-                render();
-            }
+            _applyCache();
+            render();
         });
     }
     
@@ -4467,92 +4476,17 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // Log de mudanças importantes
                 if (oldRound !== state.currentRound) {
                     console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
-                    
-                    // FIX CRÍTICO: Marcar que scores estão carregando para a nova rodada
-                    // Isso impede o ranking de mostrar 0 enquanto sharedScores não carregaram
-                    state._roundScoresLoading = true;
-                    
-                    // Timeout de segurança: se scores não carregarem em 5s, renderizar mesmo assim
-                    setTimeout(() => {
-                        if (state._roundScoresLoading) {
-                            console.log('⏰ Timeout de carregamento de scores - renderizando...');
-                            state._roundScoresLoading = false;
-                            render();
-                        }
-                    }, 5000);
-                    
-                    // FIX: Carregar sharedScores IMEDIATAMENTE quando rodada é definida
-                    // Antes: listenToSharedScores() era chamado no loadState() quando round=0 → retornava vazio
-                    try { listenToSharedScores(); } catch(e) {}
-                    
-                    // PRÉ-CARREGAR scores compartilhados com .once() para máxima velocidade
-                    if (db) {
-                        db.ref('sharedScores/round_' + state.currentRound).once('value').then(snap => {
-                            const sharedData = snap.val();
-                            if (!state._sharedScoresLoaded) state._sharedScoresLoaded = {};
-                            state._sharedScoresLoaded[state.currentRound] = true;
-                            state._roundScoresLoading = false;
-                            
-                            if (sharedData) {
-                                let updated = false;
-                                Object.keys(sharedData).forEach(nick => {
-                                    if (!state.users[nick]) return;
-                                    const shared = sharedData[nick];
-                                    if (!shared || !shared.players) return;
-                                    
-                                    if (!state.users[nick].scores) state.users[nick].scores = {};
-                                    if (!state.users[nick].scores[state.currentRound]) {
-                                        state.users[nick].scores[state.currentRound] = { players: {}, coach: 0, live: false };
-                                    }
-                                    
-                                    const localCount = Object.keys(state.users[nick].scores[state.currentRound].players || {}).length;
-                                    const sharedCount = Object.keys(shared.players).length;
-                                    
-                                    if (localCount === 0 && sharedCount > 0) {
-                                        Object.assign(state.users[nick].scores[state.currentRound].players, shared.players);
-                                        if (shared.coach !== undefined) state.users[nick].scores[state.currentRound].coach = shared.coach;
-                                        if (shared.cravar !== undefined) state.users[nick].scores[state.currentRound].cravar = shared.cravar;
-                                        if (shared.live !== undefined) state.users[nick].scores[state.currentRound].live = shared.live;
-                                        updated = true;
-                                    }
-                                });
-                                if (updated) {
-                                    if (state.currentUser && state.users[state.currentUser]) {
-                                        state.scores = state.users[state.currentUser].scores || {};
-                                    }
-                                    console.log('📊 Scores pré-carregados via sharedScores (rodada ' + state.currentRound + ')');
-                                }
-                            }
-                            // Renderizar com scores carregados
-                            render();
-                        }).catch(e => {
-                            state._roundScoresLoading = false;
-                            render();
-                        });
-                    }
-                    
-                    // Recarregar jogos da nova rodada (inclusive em 'waiting' para mostrar agendados)
                     fetchLiveFixtures(true);
+                    try { listenToSharedScores(); } catch(e) {}
+                    _loadShared(state.currentRound).then(function() { render(); });
                 }
                 if (oldSubsOpen !== state.substitutionsOpen) {
                     console.log(`${state.substitutionsOpen ? '🔓 SUBSTITUIÇÕES LIBERADAS' : '🔒 ESCALAÇÃO TRAVADA'}`);
-                    
-                    // Se travou as substituições, confirmar time automaticamente
                     if (!state.substitutionsOpen && state.currentUser && !state.isAdmin) {
                         autoConfirmTeam();
                     }
                 }
-                
-                // Re-render se houver mudanças significativas
-                // FIX: Se rodada mudou, NÃO renderizar aqui - o pré-carregamento de sharedScores vai renderizar
-                // Isso evita mostrar 0 pts momentaneamente antes dos scores carregarem
-                if (oldRound !== state.currentRound) {
-                    // Render será feito pelo callback do sharedScores pré-load (FIX 8)
-                    // Só renderizar se tela NÃO é ranking (para outras telas que precisam saber da rodada)
-                    if (state.screen !== 'ranking') {
-                        render();
-                    }
-                } else if (oldSubsOpen !== state.substitutionsOpen) {
+                if (oldRound === state.currentRound && oldSubsOpen !== state.substitutionsOpen) {
                     render();
                 }
             }
@@ -5058,20 +4992,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 return;
             }
             
-            // FIX: NÃO salvar scores via saveUserToCloud!
-            // Scores são salvos EXCLUSIVAMENTE pelos caminhos dedicados:
-            //   1. db.ref('users/'+nick+'/scores/'+round+'/players').update() no cálculo
-            //   2. db.ref('sharedScores/round_'+round+'/'+nick).update() no cálculo
-            // Salvar scores aqui causava um loop:
-            //   saveState() → saveUserToCloud(scores antigos) → listenToUsers detecta → sobrescreve scores bons
-            
             const dataToSave = {
                 password: userData.password || null,
                 teamName: userData.teamName || '',
                 teamLogo: userData.teamLogo || null,
                 formation: userData.formation || '4-3-3',
                 isConfirmed: userData.isConfirmed || false,
-                // scores: REMOVIDO INTENCIONALMENTE - não salvar aqui!
                 favoriteTeam: userData.favoriteTeam || null,
                 userBio: userData.userBio || '',
                 titles: userData.titles || [],
@@ -5233,17 +5159,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 if (l && !c) { merged[rd] = l; return; }
                                 if (!l && !c) return;
                                 
-                                // FIX: Verificar se local TEM players (contando chaves, não valores)
-                                // Antes: Object.values(l.players).some(v => v !== 0) - BUG: scores de 0 eram tratados como "vazio"
-                                var lHasData = l.players && Object.keys(l.players).length > 0;
-                                var cHasData = c.players && Object.keys(c.players).length > 0;
-                                if (lHasData) {
-                                    merged[rd] = l;
-                                } else if (cHasData) {
-                                    merged[rd] = c;
-                                } else {
-                                    merged[rd] = l;
-                                }
+                                // SEMPRE manter local se tem dados calculados
+                                // Firebase de OUTROS users nunca é atualizado (rules bloqueiam)
+                                // então cloud é sempre antigo para eles
+                                var lHas = l.players && Object.keys(l.players).length > 0;
+                                var cHas = c.players && Object.keys(c.players).length > 0;
+                                merged[rd] = lHas ? l : (cHas ? c : l);
                             });
                             return merged;
                         })(),
@@ -5321,11 +5242,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (cloudUsers[nick].formation) {
                             state.formation = cloudUsers[nick].formation;
                         }
-                        // FIX: Usar scores MERGEADOS, MAS proteger se cálculo recente
-                        var _recentCalcScores = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
-                        if (!_recentCalcScores) {
-                            state.scores = state.users[nick].scores || {};
-                        }
+                        // Usar scores MERGEADOS (já calculados acima em state.users[nick])
+                        state.scores = state.users[nick].scores || {};
                         state.captain = cloudUsers[nick].captain || null;
                         state.isConfirmed = cloudUsers[nick].isConfirmed || false;
                     }
@@ -5338,6 +5256,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 console.log('☁️ Usuários sincronizados:', Object.keys(cloudUsers).length);
                 state.firebaseSynced = true;
+                _applyCache();
                 
                 // Recuperar palpites salvos via fallback (palpitesPublic/)
                 if (FIREBASE_URL) {
@@ -5429,60 +5348,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         .catch(function() {});
                 }
                 
-                // FIX: Suplementar scores de outros usuários com sharedScores
-                // Usa Object.keys().length em vez de checar valores !== 0
                 var _recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
                 if (db && state.selectedRound && !_recentCalc) {
-                    db.ref('sharedScores/round_' + state.selectedRound).once('value').then(snap => {
-                        // Re-checar proteção (pode ter mudado durante o await)
-                        if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000)) return;
-                        
-                        const sharedData = snap.val();
-                        if (sharedData) {
-                            // Marcar que sharedScores foram carregados
-                            if (!state._sharedScoresLoaded) state._sharedScoresLoaded = {};
-                            state._sharedScoresLoaded[state.selectedRound] = true;
-                            state._roundScoresLoading = false;
-                            
-                            let updated = false;
-                            Object.keys(sharedData).forEach(nick => {
-                                const user = state.users[nick];
-                                if (!user) return;
-                                const shared = sharedData[nick];
-                                if (!shared || !shared.players) return;
-                                
-                                if (!user.scores) user.scores = {};
-                                if (!user.scores[state.selectedRound]) {
-                                    user.scores[state.selectedRound] = { players: {}, coach: 0, live: false };
-                                }
-                                
-                                const roundScores = user.scores[state.selectedRound];
-                                
-                                // FIX: Só suplementar se local NÃO tem players (keys)
-                                const localPlayerCount = Object.keys(roundScores.players || {}).length;
-                                const sharedPlayerCount = Object.keys(shared.players).length;
-                                
-                                if (localPlayerCount === 0 && sharedPlayerCount > 0) {
-                                    Object.assign(roundScores.players, shared.players);
-                                    updated = true;
-                                }
-                                
-                                if (shared.coach !== undefined && !roundScores.coach) {
-                                    roundScores.coach = shared.coach;
-                                    updated = true;
-                                }
-                                if (shared.cravar !== undefined && !roundScores.cravar) {
-                                    roundScores.cravar = shared.cravar;
-                                    updated = true;
-                                }
-                                if (shared.live !== undefined) roundScores.live = shared.live;
-                            });
-                            if (updated) {
-                                console.log('📊 Scores suplementados via sharedScores');
-                                render();
-                            }
-                        }
-                    }).catch(e => {});
+                    _loadShared(state.selectedRound).then(function() { render(); });
                 }
                 
                 // Verificar acertos automaticamente após sync
@@ -5503,7 +5371,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // Atualizar tela COM DEBOUNCE (evita re-render excessivo durante digitação)
                 // NÃO re-renderizar se scores acabaram de ser calculados (evita flicker no ranking)
                 var _recentCalc2 = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
-                if (!isUserTyping && !_recentCalc2 && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
+                if (_initialLoadDone && !isUserTyping && !_recentCalc2 && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
                     if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
                     renderDebounceTimer = setTimeout(() => {
                         render();
@@ -8226,6 +8094,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         updatedBy: state.currentUser || 'anonymous'
                     };
                     db.ref('sharedScores/round_' + round + '/' + nick).update(sharedScoreData).catch(e => {});
+                    _put(round, nick, sharedScoreData);
                     
                     // 2. Salvar no path do usuário APENAS para o current user
                     // Para outros, os dados ficam em sharedScores (qualquer um pode ler)
@@ -8248,7 +8117,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             }
             
             // PROTEÇÃO: Marcar que scores acabaram de ser calculados
-            // listenToUsers e sharedScores NÃO vão sobrescrever scores por 2 minutos
+            // listenToUsers NÃO vai sobrescrever scores por 2 minutos
             state._scoresCalculatedAt = Date.now();
             
             saveState();
@@ -8412,6 +8281,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             return;
         }
         lastRenderTime = now;
+        _applyCache();
         
         // Auto-detect: se o modal state mudou, é uma ação intencional do usuário
         const _prevCravarTab = window._prevCravarTab || null;
@@ -8871,7 +8741,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const me = state.users[state.currentUser];
         
         // Meu ranking
-        const rankings = users.map(([nick, u]) => ({ nick, score: calculateUserScore(u) })).sort((a, b) => b.score - a.score);
+        const rankings = users.map(([nick, u]) => ({ nick, score: calculateUserScore(u, nick) })).sort((a, b) => b.score - a.score);
         const myRank = rankings.findIndex(r => r.nick === state.currentUser) + 1;
         const myScore = rankings.find(r => r.nick === state.currentUser)?.score || 0;
         const roundScore = getRoundScore(state.selectedRound);
@@ -12220,7 +12090,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         
                         // Pegar scores da rodada atual para os jogadores deste user
                         const currentRd = state.currentRound || state.selectedRound || 0;
-                        const userRoundData = user.scores && user.scores[currentRd] ? user.scores[currentRd] : {};
+                        const userRoundData = _get(nick, currentRd);
+                        if (Object.keys(userRoundData.players||{}).length === 0 && nick !== state.currentUser && db && currentRd > 0) {
+                            _loadShared(currentRd).then(function(){ render(); });
+                        }
                         const userRoundScores = userRoundData.players || {};
                         const isLive = !!userRoundData.live;
                         const userCaptain = user.captain;
@@ -13204,7 +13077,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     function renderViewTeamModal() {
         const user = state.users[state.viewingUser];
         if (!user) return '';
-        
+        const _VN = state.viewingUser;
+        if (Object.keys(_get(_VN, state.selectedRound).players).length === 0 && _VN !== state.currentUser && db && state.selectedRound > 0) {
+            _loadShared(state.selectedRound).then(function(){ render(); });
+        }
         // Posições padrão 4-3-3 para visualização (INVERTIDO: atacantes em cima)
         const viewPositions = [
             { top: '88%', left: '50%', label: 'GOL' },   // GOL
@@ -13223,7 +13099,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const userTotalScore = calculateUserScore(user);
         const userRoundScore = (() => {
             let total = 0;
-            const roundData = user.scores?.[state.selectedRound];
+            const roundData = _get(_VN, state.selectedRound);
             if (roundData?.players) {
                 Object.values(roundData.players).forEach(s => total += (s || 0));
             }
@@ -13275,7 +13151,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             ${viewPositions.map((pos, i) => {
                                 const player = user.starters?.[i];
                                 // Buscar score por ID (number ou string)
-                                const playersObj = user.scores?.[state.selectedRound]?.players || {};
+                                const playersObj = _get(_VN, state.selectedRound).players || {};
                                 const playerScore = player?.id !== undefined 
                                     ? (playersObj[player.id] ?? playersObj[String(player.id)])
                                     : undefined;
@@ -13307,7 +13183,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         
                         <!-- Técnico -->
                         ${user.coach ? (() => {
-                            const coachScore = user.scores?.[state.selectedRound]?.coach;
+                            const coachScore = _get(_VN, state.selectedRound).coach;
                             return `
                             <div onclick="showCoachBreakdownFor('${user.coach.name.replace(/'/g, "\\'")}', '${user.coach.team.replace(/'/g, "\\'")}', '${user.coach.photo || ''}', ${user.coach.teamId}, ${coachScore !== undefined ? coachScore : 'undefined'}, ${state.selectedRound})" class="cursor-pointer bg-white/5 hover:bg-white/10 rounded-lg p-3 mb-4 flex items-center gap-3">
                                 <img src="${user.coach.photo}" alt="${user.coach.name}" class="w-10 h-10 rounded-lg object-cover bg-white/10 flex-shrink-0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
@@ -13329,7 +13205,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2">
                                     <span class="text-zinc-500 w-8">GOL</span>
                                     ${user.reserves && user.reserves[0] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[0].id] ?? pObj[String(user.reserves[0].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[0]).replace(/"/g, '&quot;')})">
@@ -13343,7 +13219,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-zinc-500 w-8">DEF</span>
                                     ${[1,2].map(i => user.reserves && user.reserves[i] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
@@ -13357,7 +13233,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-zinc-500 w-8">MEI</span>
                                     ${[3,4].map(i => user.reserves && user.reserves[i] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
@@ -13371,7 +13247,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-zinc-500 w-8">ATA</span>
                                     ${[5,6].map(i => user.reserves && user.reserves[i] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
@@ -13554,41 +13430,21 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 team: u.teamName,
                 logo: u.teamLogo,
                 favoriteTeam: u.favoriteTeam,
-                score: calculateUserScore(u)
+                score: calculateUserScore(u, nick)
             }))
             .sort((a, b) => b.score - a.score);
         
-        // TOP PONTUADORES DA RODADA (usuários)
         const roundRankings = Object.entries(state.users)
             .filter(([_, u]) => u.isConfirmed)
             .map(([nick, u]) => {
-                // Calcular pontuação só da rodada selecionada
                 let roundScore = 0;
-                const userScores = u.scores?.[round];
-                // FIX: Detectar se este user tem scores carregados para esta rodada
-                const hasRoundData = userScores && userScores.players && Object.keys(userScores.players).length > 0;
-                if (userScores && hasRoundData) {
-                    // Somar pontos dos jogadores
-                    if (userScores.players) {
-                        Object.entries(userScores.players).forEach(([pid, s]) => {
-                            // Capitão pontua 2x
-                            if (state.captainEnabled && u.captain && String(pid) === String(u.captain)) {
-                                roundScore += (s || 0) * 2;
-                            } else {
-                                roundScore += (s || 0);
-                            }
-                        });
-                    }
-                    // Somar pontos do técnico
-                    roundScore += userScores.coach || 0;
-                }
-                return {
-                    nick,
-                    team: u.teamName,
-                    logo: u.teamLogo,
-                    score: Math.round(roundScore * 10) / 10,
-                    _loading: state._roundScoresLoading && !hasRoundData // FIX: marcar como loading
-                };
+                const sc = _get(nick, round);
+                Object.entries(sc.players || {}).forEach(([pid, s]) => {
+                    if (state.captainEnabled && u.captain && String(pid) === String(u.captain)) roundScore += (s||0)*2;
+                    else roundScore += (s||0);
+                });
+                roundScore += sc.coach || 0;
+                return { nick, team: u.teamName, logo: u.teamLogo, score: Math.round(roundScore * 10) / 10 };
             })
             .sort((a, b) => b.score - a.score);
         
@@ -13632,7 +13488,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             
             const userStarters = ensureArray(user.starters, 11);
             const userReserves = ensureArray(user.reserves, 7);
-            const roundScores = user.scores?.[round]?.players || {};
+            const roundScores = _get(nick, round).players || {};
             
             userStarters.forEach(player => {
                 if (player && player.id && roundScores[player.id] !== undefined) {
@@ -13750,7 +13606,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         <!-- Top 1 Pontuador da Rodada -->
                         <div class="card rounded-xl p-4 border border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-transparent">
                             <p class="text-amber-400 text-xs font-display tracking-wider mb-2">TOP RODADA ${round}</p>
-                            ${roundRankings[0] && roundRankings[0].score > 0 && !roundRankings[0]._loading ? `
+                            ${roundRankings[0] && roundRankings[0].score > 0 ? `
                                 <div class="flex items-center gap-3">
                                     ${roundRankings[0].logo ? 
                                         `<img src="${roundRankings[0].logo}" class="w-12 h-12 rounded-full object-cover border-2 border-amber-500">` :
@@ -13763,7 +13619,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                     <p class="text-amber-400 font-display text-2xl">${roundRankings[0].score}</p>
                                 </div>
                             ` : `
-                                <p class="text-zinc-500 text-sm">${state._roundScoresLoading ? '<span class=\"animate-pulse\">Carregando pontuação...</span>' : 'Nenhuma pontuação'}</p>
+                                <p class="text-zinc-500 text-sm">Nenhuma pontuação</p>
                             `}
                         </div>
                         
@@ -13900,7 +13756,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                                 `<div class="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs">${(r.nick || 'U')[0].toUpperCase()}</div>`
                                             }
                                             <span class="flex-1 text-white text-sm truncate">${r.team}</span>
-                                            <span class="text-amber-400 font-bold text-sm">${r._loading ? '<span class=\"animate-pulse\">...</span>' : r.score}</span>
+                                            <span class="text-amber-400 font-bold text-sm">${r.score}</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -17412,40 +17268,32 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                state.coach;
     }
     
-    function calculateUserScore(user) {
+    function calculateUserScore(user, _nick) {
         try {
-        if (!user || !user.scores) return 0;
+        if (!user) return 0;
         let total = 0;
-        const userCaptain = user.captain;
-        Object.entries(user.scores || {}).forEach(([key, round]) => {
-            if (!round || typeof round !== 'object') return; // PROTEÇÃO contra dados corrompidos
+        const cap = user.captain;
+        var rds = new Set();
+        if (user.scores) Object.keys(user.scores).forEach(function(k){ rds.add(k); });
+        if (_nick) Object.keys(_SC).forEach(function(r){ if (_SC[r] && _SC[r][_nick]) rds.add(r); });
+        rds.forEach(function(key) {
             if (key === 'market') {
-                // Market: contar apenas compras/vendas, NÃO cravar_bonus (já contado na rodada)
-                if (round && round.purchases) {
-                    round.purchases.forEach(t => {
-                        if (t.type !== 'cravar_bonus') total += (t.price || 0);
-                    });
-                }
+                var m = user.scores && user.scores.market;
+                if (m && m.purchases) m.purchases.forEach(function(t){ if (t.type !== 'cravar_bonus') total += (t.price || 0); });
             } else {
-                // Ignorar rodadas antes da rodada inicial
                 if (parseInt(key) < STARTING_ROUND) return;
-                Object.entries(round.players || {}).forEach(([pid, s]) => {
-                    // Capitão pontua 2x (se sistema ativo)
-                    if (state.captainEnabled && userCaptain && String(pid) === String(userCaptain)) {
-                        total += s * 2;
-                    } else {
-                        total += s;
-                    }
+                var rd = _nick ? _get(_nick, key) : (user.scores && user.scores[key]) || {};
+                if (!rd || typeof rd !== 'object') return;
+                Object.entries(rd.players || {}).forEach(function(e) {
+                    if (state.captainEnabled && cap && String(e[0]) === String(cap)) total += e[1] * 2;
+                    else total += e[1];
                 });
-                total += round.coach || 0;
-                total += round.cravar || 0; // Pontos do Cravar
+                total += rd.coach || 0;
+                total += rd.cravar || 0;
             }
         });
         return Math.round(total * 10) / 10;
-        } catch(e) {
-            console.error('❌ Erro ao calcular score:', e);
-            return 0;
-        }
+        } catch(e) { return 0; }
     }
     
     
@@ -18431,23 +18279,19 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 const firebaseUser = snapshot.val();
                 if (firebaseUser) {
                     if (!state.users[nick]) state.users[nick] = {};
+                    const _sv = state.users[nick].scores ? JSON.parse(JSON.stringify(state.users[nick].scores)) : {};
+                    const { scores: _x, ...fbClean } = firebaseUser;
                     state.users[nick] = {
-                        ...state.users[nick],
-                        ...firebaseUser,
+                        ...state.users[nick], ...fbClean,
                         teamLogo: firebaseUser.teamLogo || state.users[nick]?.teamLogo || null,
                         starters: ensureArray(firebaseUser.starters, 11),
-                        reserves: ensureArray(firebaseUser.reserves, 7)
+                        reserves: ensureArray(firebaseUser.reserves, 7),
+                        scores: _sv
                     };
-                    
-                    // Atualizar cache de fotos
+                    _applyCache();
                     if (firebaseUser.teamLogo) {
-                        try {
-                            let photoCache = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}');
-                            photoCache[nick] = firebaseUser.teamLogo;
-                            sessionStorage.setItem('fantasy_photos_cache', JSON.stringify(photoCache));
-                        } catch(e) {}
+                        try { var pc = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}'); pc[nick] = firebaseUser.teamLogo; sessionStorage.setItem('fantasy_photos_cache', JSON.stringify(pc)); } catch(e) {}
                     }
-                    
                     render();
                 }
             });
@@ -18927,8 +18771,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const user = state.users[nick];
         const round = state.selectedRound;
         if (user) {
-            const hasScores = user.scores?.[round]?.players && 
-                Object.keys(user.scores[round].players).length > 0;
+            _applyCache();
+            const hasScores = Object.keys(_get(nick, round).players).length > 0;
             
             if (!hasScores) {
                 // 1. Tentar carregar do sharedScores no Firebase
@@ -18942,6 +18786,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             Object.assign(user.scores[round].players, shared.players);
                             if (shared.coach !== undefined) user.scores[round].coach = shared.coach;
                             if (shared.live !== undefined) user.scores[round].live = shared.live;
+                            _put(round, nick, shared);
                             console.log(`📊 Scores de ${nick} carregados do sharedScores`);
                         }
                     }
@@ -18951,8 +18796,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 // 2. Se ainda não tem, calcular usando cache local
                 const cachedStats = window._cachedPlayerStats || {};
-                const stillNoScores = !user.scores?.[round]?.players || 
-                    Object.keys(user.scores[round]?.players || {}).length === 0;
+                const stillNoScores = Object.keys(_get(nick, round).players).length === 0;
                     
                 if (stillNoScores && Object.keys(cachedStats).length > 0 && window._cachedRound == round) {
                     if (!user.scores) user.scores = {};
@@ -25107,6 +24951,27 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     state.screen = 'auth';
                 }
             }
+            
+            // ═══ FIX: Buscar scores ANTES do primeiro render ═══
+            if (db && state.currentUser) {
+                try {
+                    // 1. Pegar rodada atual do gameState
+                    var _gsSnap = await db.ref('gameState').once('value');
+                    var _gs = _gsSnap.val();
+                    if (_gs && _gs.currentRound) {
+                        state.currentRound = _gs.currentRound;
+                        state.selectedRound = _gs.currentRound;
+                        if (_gs.substitutionsOpen !== undefined) state.substitutionsOpen = _gs.substitutionsOpen;
+                        if (_gs.roundStatus) state.roundStatus = _gs.roundStatus;
+                        console.log('⚡ gameState pré-carregado: Rodada', state.currentRound);
+                        
+                        // 2. Pegar sharedScores ANTES do render
+                        await _loadShared(state.currentRound);
+                        console.log('⚡ sharedScores pré-carregados');
+                    }
+                } catch(e) { console.error('Pré-load erro:', e); }
+            }
+            _initialLoadDone = true; // Liberar renders
             
             render();
         } catch(e) {
