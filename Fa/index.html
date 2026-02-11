@@ -4935,6 +4935,42 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         photoCache[nick] = fotoParaUsar;
                     }
                     
+                    // MERGE scores: Firebase é fonte de verdade, mas preservar scores calculados localmente
+                    // (syncRoundScores calcula para todos mas só salva no Firebase para o user atual)
+                    const firebaseScores = sanitizeScores(cloudUsers[nick].scores || {});
+                    const localScores = state.users[nick].scores || {};
+                    const mergedScores = { ...localScores };
+                    
+                    // Para cada rodada no Firebase, usar Firebase como base
+                    Object.keys(firebaseScores).forEach(roundKey => {
+                        if (!mergedScores[roundKey]) {
+                            mergedScores[roundKey] = firebaseScores[roundKey];
+                        } else if (roundKey === 'market') {
+                            mergedScores[roundKey] = firebaseScores[roundKey];
+                        } else {
+                            // Se Firebase tem players com scores, usar Firebase
+                            const fbPlayers = firebaseScores[roundKey]?.players || {};
+                            const localPlayers = mergedScores[roundKey]?.players || {};
+                            const fbHasScores = Object.values(fbPlayers).some(s => s !== 0 && s !== undefined);
+                            const localHasScores = Object.values(localPlayers).some(s => s !== 0 && s !== undefined);
+                            
+                            if (fbHasScores) {
+                                // Firebase tem scores reais - usar Firebase
+                                mergedScores[roundKey] = firebaseScores[roundKey];
+                            } else if (localHasScores && !fbHasScores) {
+                                // Local tem scores mas Firebase não - manter local (calculado pelo syncRoundScores)
+                                // Apenas atualizar campos não-score do Firebase
+                                mergedScores[roundKey] = {
+                                    ...mergedScores[roundKey],
+                                    manualPlayers: firebaseScores[roundKey]?.manualPlayers || mergedScores[roundKey]?.manualPlayers || {},
+                                    cravar: firebaseScores[roundKey]?.cravar || mergedScores[roundKey]?.cravar || 0
+                                };
+                            } else {
+                                mergedScores[roundKey] = firebaseScores[roundKey];
+                            }
+                        }
+                    });
+                    
                     state.users[nick] = {
                         ...state.users[nick],
                         password: state.users[nick].password || cloudUsers[nick].password,
@@ -4945,7 +4981,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         reserves: ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7),
                         formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                         isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
-                        scores: sanitizeScores(cloudUsers[nick].scores || state.users[nick].scores || {}),
+                        scores: mergedScores,
                         favoriteTeam: cloudUsers[nick].favoriteTeam || null,
                         userBio: cloudUsers[nick].userBio || '',
                         achievements: cloudUsers[nick].achievements || [],
@@ -24481,7 +24517,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 render();
             }
             
-            const allPlayers = await autoSyncViaApiFootball();
+            const allPlayers = await autoSyncViaApiFootball(silentSync);
             
             if (allPlayers.length > 0) {
                 // Preservar jogadores que estão escalados por algum usuário
@@ -24605,9 +24641,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     // Auto-sync via API-Football (sem modal)
-    async function autoSyncViaApiFootball() {
-        // Só mostrar progresso se não estiver digitando ou na tela de login
-        const shouldShowProgress = state.isSyncingBackground && !isUserTyping && state.screen !== 'auth' && state.currentUser;
+    async function autoSyncViaApiFootball(silentSync = false) {
+        // Só mostrar progresso se não estiver digitando ou na tela de login E não for sync silencioso
+        const shouldShowProgress = !silentSync && state.isSyncingBackground && !isUserTyping && state.screen !== 'auth' && state.currentUser;
         
         if (shouldShowProgress) {
             state.syncProgress = '📡 Conectando API-Football...';
