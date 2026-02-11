@@ -3728,10 +3728,15 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         _sharedScoresRound = round;
         db.ref('sharedScores/round_' + round).on('value', (snapshot) => {
             // NÃO sobrescrever se scores acabaram de ser calculados
-            if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000)) return;
+            if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000)) return;
             
             const sharedData = snapshot.val();
             if (!sharedData) return;
+            
+            // FIX: Marcar que sharedScores foram carregados para esta rodada
+            if (!state._sharedScoresLoaded) state._sharedScoresLoaded = {};
+            state._sharedScoresLoaded[round] = true;
+            state._roundScoresLoading = false;
             
             let updated = false;
             Object.keys(sharedData).forEach(nick => {
@@ -3739,21 +3744,23 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 const shared = sharedData[nick];
                 if (!shared || !shared.players) return;
                 
-                // Verificar se o user já tem scores melhores (de seu próprio Firebase path)
+                // FIX: Usar contagem de CHAVES em vez de checar valores !== 0
                 const userScores = state.users[nick].scores?.[round]?.players || {};
-                const userHasScores = Object.values(userScores).some(s => s !== 0 && s !== undefined);
-                const sharedHasScores = Object.values(shared.players).some(s => s !== 0 && s !== undefined);
+                const userPlayerCount = Object.keys(userScores).length;
+                const sharedPlayerCount = Object.keys(shared.players).length;
                 
-                // Usar shared se: user não tem scores OU shared é mais recente
                 const userUpdatedAt = state.users[nick]._scoresUpdatedAt?.[round] || 0;
                 const sharedUpdatedAt = shared.updatedAt || 0;
                 
-                if ((!userHasScores && sharedHasScores) || (sharedUpdatedAt > userUpdatedAt && sharedHasScores)) {
+                // Usar shared se: user NÃO tem players OU shared tem mais dados
+                const shouldUseShared = (userPlayerCount === 0 && sharedPlayerCount > 0) || 
+                    (sharedUpdatedAt > userUpdatedAt && sharedPlayerCount > userPlayerCount);
+                
+                if (shouldUseShared) {
                     if (!state.users[nick].scores) state.users[nick].scores = {};
                     if (!state.users[nick].scores[round]) {
                         state.users[nick].scores[round] = { players: {}, coach: 0, live: false };
                     }
-                    // Merge: shared players into user scores
                     Object.keys(shared.players).forEach(pid => {
                         state.users[nick].scores[round].players[pid] = shared.players[pid];
                     });
@@ -3762,7 +3769,6 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     }
                     state.users[nick].scores[round].live = shared.live || false;
                     
-                    // Marcar timestamp
                     if (!state.users[nick]._scoresUpdatedAt) state.users[nick]._scoresUpdatedAt = {};
                     state.users[nick]._scoresUpdatedAt[round] = sharedUpdatedAt;
                     
@@ -3771,7 +3777,6 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             });
             
             if (updated) {
-                // Atualizar scores do usuário atual se necessário
                 if (state.currentUser && state.users[state.currentUser]) {
                     state.scores = state.users[state.currentUser].scores || {};
                 }
@@ -4462,6 +4467,70 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // Log de mudanças importantes
                 if (oldRound !== state.currentRound) {
                     console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
+                    
+                    // FIX CRÍTICO: Marcar que scores estão carregando para a nova rodada
+                    // Isso impede o ranking de mostrar 0 enquanto sharedScores não carregaram
+                    state._roundScoresLoading = true;
+                    
+                    // Timeout de segurança: se scores não carregarem em 5s, renderizar mesmo assim
+                    setTimeout(() => {
+                        if (state._roundScoresLoading) {
+                            console.log('⏰ Timeout de carregamento de scores - renderizando...');
+                            state._roundScoresLoading = false;
+                            render();
+                        }
+                    }, 5000);
+                    
+                    // FIX: Carregar sharedScores IMEDIATAMENTE quando rodada é definida
+                    // Antes: listenToSharedScores() era chamado no loadState() quando round=0 → retornava vazio
+                    try { listenToSharedScores(); } catch(e) {}
+                    
+                    // PRÉ-CARREGAR scores compartilhados com .once() para máxima velocidade
+                    if (db) {
+                        db.ref('sharedScores/round_' + state.currentRound).once('value').then(snap => {
+                            const sharedData = snap.val();
+                            if (!state._sharedScoresLoaded) state._sharedScoresLoaded = {};
+                            state._sharedScoresLoaded[state.currentRound] = true;
+                            state._roundScoresLoading = false;
+                            
+                            if (sharedData) {
+                                let updated = false;
+                                Object.keys(sharedData).forEach(nick => {
+                                    if (!state.users[nick]) return;
+                                    const shared = sharedData[nick];
+                                    if (!shared || !shared.players) return;
+                                    
+                                    if (!state.users[nick].scores) state.users[nick].scores = {};
+                                    if (!state.users[nick].scores[state.currentRound]) {
+                                        state.users[nick].scores[state.currentRound] = { players: {}, coach: 0, live: false };
+                                    }
+                                    
+                                    const localCount = Object.keys(state.users[nick].scores[state.currentRound].players || {}).length;
+                                    const sharedCount = Object.keys(shared.players).length;
+                                    
+                                    if (localCount === 0 && sharedCount > 0) {
+                                        Object.assign(state.users[nick].scores[state.currentRound].players, shared.players);
+                                        if (shared.coach !== undefined) state.users[nick].scores[state.currentRound].coach = shared.coach;
+                                        if (shared.cravar !== undefined) state.users[nick].scores[state.currentRound].cravar = shared.cravar;
+                                        if (shared.live !== undefined) state.users[nick].scores[state.currentRound].live = shared.live;
+                                        updated = true;
+                                    }
+                                });
+                                if (updated) {
+                                    if (state.currentUser && state.users[state.currentUser]) {
+                                        state.scores = state.users[state.currentUser].scores || {};
+                                    }
+                                    console.log('📊 Scores pré-carregados via sharedScores (rodada ' + state.currentRound + ')');
+                                }
+                            }
+                            // Renderizar com scores carregados
+                            render();
+                        }).catch(e => {
+                            state._roundScoresLoading = false;
+                            render();
+                        });
+                    }
+                    
                     // Recarregar jogos da nova rodada (inclusive em 'waiting' para mostrar agendados)
                     fetchLiveFixtures(true);
                 }
@@ -4475,7 +4544,15 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
                 
                 // Re-render se houver mudanças significativas
-                if (oldRound !== state.currentRound || oldSubsOpen !== state.substitutionsOpen) {
+                // FIX: Se rodada mudou, NÃO renderizar aqui - o pré-carregamento de sharedScores vai renderizar
+                // Isso evita mostrar 0 pts momentaneamente antes dos scores carregarem
+                if (oldRound !== state.currentRound) {
+                    // Render será feito pelo callback do sharedScores pré-load (FIX 8)
+                    // Só renderizar se tela NÃO é ranking (para outras telas que precisam saber da rodada)
+                    if (state.screen !== 'ranking') {
+                        render();
+                    }
+                } else if (oldSubsOpen !== state.substitutionsOpen) {
                     render();
                 }
             }
@@ -4981,8 +5058,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 return;
             }
             
-            // PROTEÇÃO: Garantir que scores não é Array (Firebase corrompe)
-            const safeScores = sanitizeScores(userData.scores || {});
+            // FIX: NÃO salvar scores via saveUserToCloud!
+            // Scores são salvos EXCLUSIVAMENTE pelos caminhos dedicados:
+            //   1. db.ref('users/'+nick+'/scores/'+round+'/players').update() no cálculo
+            //   2. db.ref('sharedScores/round_'+round+'/'+nick).update() no cálculo
+            // Salvar scores aqui causava um loop:
+            //   saveState() → saveUserToCloud(scores antigos) → listenToUsers detecta → sobrescreve scores bons
             
             const dataToSave = {
                 password: userData.password || null,
@@ -4990,7 +5071,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 teamLogo: userData.teamLogo || null,
                 formation: userData.formation || '4-3-3',
                 isConfirmed: userData.isConfirmed || false,
-                scores: safeScores,
+                // scores: REMOVIDO INTENCIONALMENTE - não salvar aqui!
                 favoriteTeam: userData.favoriteTeam || null,
                 userBio: userData.userBio || '',
                 titles: userData.titles || [],
@@ -5136,11 +5217,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
                         scores: (function() {
                             // PROTEÇÃO: Se scores acabaram de ser calculados, manter local intocado
-                            var recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000);
+                            var recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
                             if (recentCalc) {
                                 return sanitizeScores(state.users[nick].scores || {});
                             }
-                            // Mergear scores: NUNCA perder scores calculados localmente
+                            
                             var cloud = sanitizeScores(cloudUsers[nick].scores || {});
                             var local = sanitizeScores(state.users[nick].scores || {});
                             var merged = {};
@@ -5151,11 +5232,18 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 if (!l && c) { merged[rd] = c; return; }
                                 if (l && !c) { merged[rd] = l; return; }
                                 if (!l && !c) return;
-                                // Ambos existem: manter o que tem mais dados reais (não-zero)
-                                var lCount = 0, cCount = 0;
-                                if (l.players) Object.values(l.players).forEach(function(v){ if (v !== 0 && v !== undefined) lCount++; });
-                                if (c.players) Object.values(c.players).forEach(function(v){ if (v !== 0 && v !== undefined) cCount++; });
-                                merged[rd] = (lCount >= cCount) ? l : c;
+                                
+                                // FIX: Verificar se local TEM players (contando chaves, não valores)
+                                // Antes: Object.values(l.players).some(v => v !== 0) - BUG: scores de 0 eram tratados como "vazio"
+                                var lHasData = l.players && Object.keys(l.players).length > 0;
+                                var cHasData = c.players && Object.keys(c.players).length > 0;
+                                if (lHasData) {
+                                    merged[rd] = l;
+                                } else if (cHasData) {
+                                    merged[rd] = c;
+                                } else {
+                                    merged[rd] = l;
+                                }
                             });
                             return merged;
                         })(),
@@ -5233,8 +5321,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (cloudUsers[nick].formation) {
                             state.formation = cloudUsers[nick].formation;
                         }
-                        // Usar scores MERGEADOS (já calculados acima em state.users[nick])
-                        state.scores = state.users[nick].scores || {};
+                        // FIX: Usar scores MERGEADOS, MAS proteger se cálculo recente
+                        var _recentCalcScores = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
+                        if (!_recentCalcScores) {
+                            state.scores = state.users[nick].scores || {};
+                        }
                         state.captain = cloudUsers[nick].captain || null;
                         state.isConfirmed = cloudUsers[nick].isConfirmed || false;
                     }
@@ -5338,19 +5429,27 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         .catch(function() {});
                 }
                 
-                // Suplementar scores de outros usuários com sharedScores
-                // MAS NÃO se scores acabaram de ser calculados (evita flicker)
-                var _recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000);
+                // FIX: Suplementar scores de outros usuários com sharedScores
+                // Usa Object.keys().length em vez de checar valores !== 0
+                var _recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
                 if (db && state.selectedRound && !_recentCalc) {
                     db.ref('sharedScores/round_' + state.selectedRound).once('value').then(snap => {
+                        // Re-checar proteção (pode ter mudado durante o await)
+                        if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000)) return;
+                        
                         const sharedData = snap.val();
                         if (sharedData) {
+                            // Marcar que sharedScores foram carregados
+                            if (!state._sharedScoresLoaded) state._sharedScoresLoaded = {};
+                            state._sharedScoresLoaded[state.selectedRound] = true;
+                            state._roundScoresLoading = false;
+                            
                             let updated = false;
                             Object.keys(sharedData).forEach(nick => {
                                 const user = state.users[nick];
                                 if (!user) return;
                                 const shared = sharedData[nick];
-                                if (!shared) return;
+                                if (!shared || !shared.players) return;
                                 
                                 if (!user.scores) user.scores = {};
                                 if (!user.scores[state.selectedRound]) {
@@ -5359,29 +5458,23 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 
                                 const roundScores = user.scores[state.selectedRound];
                                 
-                                // Suplementar players que estão faltando
-                                if (shared.players) {
-                                    const userPlayers = roundScores.players || {};
-                                    const hasRealScores = Object.values(userPlayers).some(s => s !== 0 && s !== undefined);
-                                    
-                                    if (!hasRealScores && Object.keys(shared.players).length > 0) {
-                                        Object.assign(roundScores.players, shared.players);
-                                        updated = true;
-                                    }
+                                // FIX: Só suplementar se local NÃO tem players (keys)
+                                const localPlayerCount = Object.keys(roundScores.players || {}).length;
+                                const sharedPlayerCount = Object.keys(shared.players).length;
+                                
+                                if (localPlayerCount === 0 && sharedPlayerCount > 0) {
+                                    Object.assign(roundScores.players, shared.players);
+                                    updated = true;
                                 }
                                 
-                                // Suplementar coach se faltando
                                 if (shared.coach !== undefined && !roundScores.coach) {
                                     roundScores.coach = shared.coach;
                                     updated = true;
                                 }
-                                
-                                // Suplementar cravar se faltando
                                 if (shared.cravar !== undefined && !roundScores.cravar) {
                                     roundScores.cravar = shared.cravar;
                                     updated = true;
                                 }
-                                
                                 if (shared.live !== undefined) roundScores.live = shared.live;
                             });
                             if (updated) {
@@ -5409,7 +5502,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 // Atualizar tela COM DEBOUNCE (evita re-render excessivo durante digitação)
                 // NÃO re-renderizar se scores acabaram de ser calculados (evita flicker no ranking)
-                var _recentCalc2 = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 15000);
+                var _recentCalc2 = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
                 if (!isUserTyping && !_recentCalc2 && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
                     if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
                     renderDebounceTimer = setTimeout(() => {
@@ -8155,7 +8248,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             }
             
             // PROTEÇÃO: Marcar que scores acabaram de ser calculados
-            // listenToUsers NÃO vai sobrescrever scores por 15 segundos
+            // listenToUsers e sharedScores NÃO vão sobrescrever scores por 2 minutos
             state._scoresCalculatedAt = Date.now();
             
             saveState();
@@ -13472,7 +13565,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // Calcular pontuação só da rodada selecionada
                 let roundScore = 0;
                 const userScores = u.scores?.[round];
-                if (userScores) {
+                // FIX: Detectar se este user tem scores carregados para esta rodada
+                const hasRoundData = userScores && userScores.players && Object.keys(userScores.players).length > 0;
+                if (userScores && hasRoundData) {
                     // Somar pontos dos jogadores
                     if (userScores.players) {
                         Object.entries(userScores.players).forEach(([pid, s]) => {
@@ -13491,7 +13586,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     nick,
                     team: u.teamName,
                     logo: u.teamLogo,
-                    score: Math.round(roundScore * 10) / 10
+                    score: Math.round(roundScore * 10) / 10,
+                    _loading: state._roundScoresLoading && !hasRoundData // FIX: marcar como loading
                 };
             })
             .sort((a, b) => b.score - a.score);
@@ -13654,7 +13750,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         <!-- Top 1 Pontuador da Rodada -->
                         <div class="card rounded-xl p-4 border border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-transparent">
                             <p class="text-amber-400 text-xs font-display tracking-wider mb-2">TOP RODADA ${round}</p>
-                            ${roundRankings[0] && roundRankings[0].score > 0 ? `
+                            ${roundRankings[0] && roundRankings[0].score > 0 && !roundRankings[0]._loading ? `
                                 <div class="flex items-center gap-3">
                                     ${roundRankings[0].logo ? 
                                         `<img src="${roundRankings[0].logo}" class="w-12 h-12 rounded-full object-cover border-2 border-amber-500">` :
@@ -13667,7 +13763,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                     <p class="text-amber-400 font-display text-2xl">${roundRankings[0].score}</p>
                                 </div>
                             ` : `
-                                <p class="text-zinc-500 text-sm">Nenhuma pontuação</p>
+                                <p class="text-zinc-500 text-sm">${state._roundScoresLoading ? '<span class=\"animate-pulse\">Carregando pontuação...</span>' : 'Nenhuma pontuação'}</p>
                             `}
                         </div>
                         
@@ -13804,7 +13900,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                                 `<div class="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs">${(r.nick || 'U')[0].toUpperCase()}</div>`
                                             }
                                             <span class="flex-1 text-white text-sm truncate">${r.team}</span>
-                                            <span class="text-amber-400 font-bold text-sm">${r.score}</span>
+                                            <span class="text-amber-400 font-bold text-sm">${r._loading ? '<span class=\"animate-pulse\">...</span>' : r.score}</span>
                                         </div>
                                     `).join('')}
                                 </div>
@@ -18832,8 +18928,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const round = state.selectedRound;
         if (user) {
             const hasScores = user.scores?.[round]?.players && 
-                Object.keys(user.scores[round].players).length > 0 &&
-                Object.values(user.scores[round].players).some(s => s !== 0);
+                Object.keys(user.scores[round].players).length > 0;
             
             if (!hasScores) {
                 // 1. Tentar carregar do sharedScores no Firebase
@@ -18857,7 +18952,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // 2. Se ainda não tem, calcular usando cache local
                 const cachedStats = window._cachedPlayerStats || {};
                 const stillNoScores = !user.scores?.[round]?.players || 
-                    !Object.values(user.scores[round]?.players || {}).some(s => s !== 0);
+                    Object.keys(user.scores[round]?.players || {}).length === 0;
                     
                 if (stillNoScores && Object.keys(cachedStats).length > 0 && window._cachedRound == round) {
                     if (!user.scores) user.scores = {};
