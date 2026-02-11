@@ -739,6 +739,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     // ==================== FIREBASE AUTH HELPERS ====================
+    // Senha em memória (NÃO persiste em localStorage) para re-autenticação
+    let _sessionPlainPassword = null;
+
     // Gera email fake para Firebase Auth baseado no nickname
     function getAuthEmail(nickname) {
         return nickname.toLowerCase().replace(/[^a-z0-9_-]/g, '') + '@fantasybr.app';
@@ -757,25 +760,56 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             console.log('🔐 Firebase Auth: logado como', nickname);
             user = cred.user;
         } catch (e) {
-            // 2. Se não existe ou credencial inválida, tentar criar
-            if (e.code === 'auth/user-not-found' || e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+            // 2. Se não existe, tentar criar
+            if (e.code === 'auth/user-not-found') {
                 try {
                     const cred = await fbAuth.createUserWithEmailAndPassword(email, plainPassword);
                     console.log('🔐 Firebase Auth: conta criada para', nickname);
                     user = cred.user;
                 } catch (createErr) {
-                    if (createErr.code === 'auth/email-already-in-use') {
-                        // Conta existe mas senha diferente - auth sem DB mapping
-                        console.warn('⚠️ Firebase Auth: conta existe com senha diferente');
-                    } else {
-                        console.warn('⚠️ Firebase Auth create falhou:', createErr.code);
-                    }
+                    console.warn('⚠️ Firebase Auth create falhou:', createErr.code);
                     return null;
                 }
+            } else if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+                // Conta existe mas senha diferente - tentar deletar e recriar NÃO é possível
+                // Tentar com senha do localStorage como fallback
+                const savedPass = localStorage.getItem('fantasyRememberPass');
+                if (savedPass) {
+                    try {
+                        const decoded = atob(savedPass);
+                        if (decoded !== plainPassword) {
+                            const cred = await fbAuth.signInWithEmailAndPassword(email, decoded);
+                            console.log('🔐 Firebase Auth: logado com senha salva para', nickname);
+                            user = cred.user;
+                            // Atualizar senha no Auth para ficar em sincronia
+                            try {
+                                await cred.user.updatePassword(plainPassword);
+                                console.log('🔐 Firebase Auth: senha atualizada');
+                            } catch (upErr) {
+                                console.warn('⚠️ Não conseguiu atualizar senha no Auth:', upErr.code);
+                            }
+                        }
+                    } catch (fallbackErr) {
+                        console.warn('⚠️ Firebase Auth fallback também falhou:', fallbackErr.code);
+                    }
+                }
+                
+                if (!user) {
+                    console.warn('⚠️ Firebase Auth: conta existe com senha diferente para', nickname);
+                    return null;
+                }
+            } else if (e.code === 'auth/email-already-in-use') {
+                console.warn('⚠️ Firebase Auth: email em uso para', nickname);
+                return null;
             } else {
                 console.warn('⚠️ Firebase Auth erro:', e.code);
                 return null;
             }
+        }
+    
+        // Salvar senha em memória para re-autenticação futura
+        if (user) {
+            _sessionPlainPassword = plainPassword;
         }
     
         // 3. Salvar UID mappings (separado - falha aqui não afeta o auth)
@@ -792,6 +826,49 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         return user;
     }
     
+    // Marca um UID como admin no Firebase
+    // Garantir que Firebase Auth está ativo antes de operações de escrita
+    async function ensureFirebaseAuth() {
+        if (!fbAuth) return false;
+        
+        // Já está autenticado
+        if (fbAuth.currentUser) return true;
+        
+        const nickname = state.currentUser;
+        if (!nickname) return false;
+        
+        console.log('🔐 Re-autenticando Firebase Auth para', nickname);
+        
+        // Tentar com senha em memória
+        if (_sessionPlainPassword) {
+            const user = await firebaseAuthSignIn(nickname, _sessionPlainPassword);
+            if (user) return true;
+        }
+        
+        // Tentar com senha salva no localStorage (remember device)
+        const savedPass = localStorage.getItem('fantasyRememberPass');
+        if (savedPass) {
+            try {
+                const decoded = atob(savedPass);
+                const user = await firebaseAuthSignIn(nickname, decoded);
+                if (user) return true;
+            } catch (e) {
+                console.warn('⚠️ Erro ao decodificar senha salva:', e);
+            }
+        }
+        
+        // Último recurso: anonymous auth (permite escrita em paths públicos)
+        try {
+            await fbAuth.signInAnonymously();
+            console.log('🔐 Firebase Auth: login anônimo como fallback');
+            return true; // parcial - só funciona em paths sem restrição de UID
+        } catch (e) {
+            console.warn('⚠️ Firebase Auth anônimo falhou:', e.code);
+        }
+        
+        return false;
+    }
+
     // Marca um UID como admin no Firebase
     async function setAdminUid(uid) {
         if (db && uid) {
@@ -5139,6 +5216,62 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 console.log('☁️ Usuários sincronizados:', Object.keys(cloudUsers).length);
                 state.firebaseSynced = true;
+                
+                // Sincronizar palpites do sharedPalpites (fallback) de volta para o usuário
+                if (db) {
+                    db.ref('sharedPalpites').once('value').then(snap => {
+                        const sharedPalpites = snap.val();
+                        if (!sharedPalpites) return;
+                        Object.keys(sharedPalpites).forEach(nick => {
+                            const user = state.users[nick];
+                            if (!user) return;
+                            if (!user.palpitesCravados) user.palpitesCravados = {};
+                            const rodadas = sharedPalpites[nick];
+                            if (!rodadas) return;
+                            let merged = false;
+                            Object.keys(rodadas).forEach(rodada => {
+                                if (!user.palpitesCravados[rodada]) {
+                                    user.palpitesCravados[rodada] = rodadas[rodada];
+                                    merged = true;
+                                    console.log(`🔄 Palpites de ${nick} R${rodada} recuperados do fallback`);
+                                }
+                            });
+                            // Se é o usuário atual e mergeou, tentar salvar no path correto
+                            if (merged && nick === state.currentUser && fbAuth && fbAuth.currentUser) {
+                                db.ref('users/' + nick + '/palpitesCravados').set(user.palpitesCravados)
+                                    .then(() => {
+                                        // Limpar sharedPalpites após migração
+                                        db.ref('sharedPalpites/' + nick).remove();
+                                        console.log('✅ Palpites migrados de sharedPalpites para', nick);
+                                    })
+                                    .catch(() => {}); // silenciar se falhar
+                            }
+                        });
+                    }).catch(() => {}); // silenciar erro
+                }
+                
+                // Também sincronizar palpites locais que não foram salvos no Firebase
+                if (db && state.currentUser && fbAuth && fbAuth.currentUser) {
+                    const localUser = state.users[state.currentUser];
+                    const cloudUser = cloudUsers[state.currentUser];
+                    if (localUser && localUser.palpitesCravados) {
+                        const localPalpites = localUser.palpitesCravados;
+                        const cloudPalpites = cloudUser ? (cloudUser.palpitesCravados || {}) : {};
+                        let hasNew = false;
+                        Object.keys(localPalpites).forEach(rodada => {
+                            if (!cloudPalpites[rodada] && localPalpites[rodada] && localPalpites[rodada].cravadoEm) {
+                                hasNew = true;
+                            }
+                        });
+                        if (hasNew) {
+                            const merged = { ...cloudPalpites, ...localPalpites };
+                            db.ref('users/' + state.currentUser + '/palpitesCravados').set(cleanUndefined(merged))
+                                .then(() => console.log('✅ Palpites locais sincronizados para Firebase'))
+                                .catch(() => {});
+                        }
+                    }
+                }
+
                 
                 // Suplementar scores de outros usuários com sharedScores
                 // (quando syncRoundScores salvou lá mas Firebase rules bloquearam escrita no path do user)
@@ -10024,7 +10157,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     // Cravar resultados
-    window.cravarResultados = function() {
+    window.cravarResultados = async function() {
         if (!state.currentUser) return;
         
         const rodada = state.currentRound;
@@ -10097,6 +10230,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         };
     
         // Salvar no Firebase com tratamento de erro
+        let saveFailed = false;
         if (db) {
             const dataToSave = cleanUndefined(userData.palpitesCravados[rodada]);
             
@@ -10107,22 +10241,54 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 return;
             }
             
+            // Garantir autenticação Firebase antes de salvar
+            const isAuthed = await ensureFirebaseAuth();
+            if (!isAuthed) {
+                console.warn('⚠️ Firebase Auth não disponível, salvando apenas localmente');
+            }
+            
             // Salvar no path do usuário
-            db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(dataToSave)
-                .then(() => {
-                    console.log('✅ Palpites cravados salvos no Firebase:', state.currentUser, 'R' + rodada);
-                })
-                .catch(err => {
-                    console.error('❌ Erro ao salvar palpites no Firebase:', err.message, err.code);
-                    // Fallback: salvar no sharedScores (path sem restrição)
-                    db.ref('sharedPalpites/' + state.currentUser + '/' + rodada).set(dataToSave)
-                        .then(() => {
+            try {
+                await db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(dataToSave);
+                console.log('✅ Palpites cravados salvos no Firebase:', state.currentUser, 'R' + rodada);
+            } catch (err) {
+                console.error('❌ Erro ao salvar palpites no Firebase:', err.message, err.code);
+                
+                // Se PERMISSION_DENIED, tentar re-autenticar e salvar de novo
+                if (err.code === 'PERMISSION_DENIED' && _sessionPlainPassword) {
+                    console.log('🔄 Tentando re-autenticar e salvar novamente...');
+                    try {
+                        // Forçar sign-out e sign-in novamente
+                        await fbAuth.signOut();
+                        const reUser = await firebaseAuthSignIn(state.currentUser, _sessionPlainPassword);
+                        if (reUser) {
+                            await db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(dataToSave);
+                            console.log('✅ Palpites salvos após re-autenticação!');
+                        } else {
+                            throw new Error('Re-auth falhou');
+                        }
+                    } catch (retryErr) {
+                        console.error('❌ Re-tentativa falhou:', retryErr.message);
+                        // Fallback: salvar no sharedPalpites (path público)
+                        try {
+                            await db.ref('sharedPalpites/' + state.currentUser + '/' + rodada).set(dataToSave);
                             console.log('✅ Palpites salvos via fallback (sharedPalpites)');
-                        })
-                        .catch(err2 => {
-                            alert('❌ Erro ao salvar palpites!\n\nVerifique sua conexão e tente novamente.\nCódigo: ' + (err.code || err.message));
-                        });
-                });
+                        } catch (err2) {
+                            saveFailed = true;
+                            alert('❌ Erro ao salvar palpites na nuvem!\n\nSeus palpites foram salvos localmente neste dispositivo.\nFaça logout e login novamente para sincronizar.');
+                        }
+                    }
+                } else {
+                    // Fallback: salvar no sharedPalpites
+                    try {
+                        await db.ref('sharedPalpites/' + state.currentUser + '/' + rodada).set(dataToSave);
+                        console.log('✅ Palpites salvos via fallback (sharedPalpites)');
+                    } catch (err2) {
+                        saveFailed = true;
+                        alert('❌ Erro ao salvar palpites na nuvem!\n\nSeus palpites foram salvos localmente neste dispositivo.\nFaça logout e login novamente para sincronizar.');
+                    }
+                }
+            }
         } else {
             console.warn('⚠️ Firebase DB não disponível para salvar palpites');
         }
@@ -10130,7 +10296,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         // Persistir dados localmente também via saveState
         saveState();
     
-        alert(`${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
+        if (!saveFailed) {
+            alert(`${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
+        }
     
         closeModalDirect();
     };
@@ -17258,6 +17426,37 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     state.users[nickname] = firebaseUser || {};
                 }
                 state.users[nickname].password = hashedPass;
+                
+                // Tentar atualizar Firebase Auth também
+                // Se o usuário tinha "lembrar dispositivo", a senha antiga pode estar no localStorage
+                const savedPass = localStorage.getItem('fantasyRememberPass');
+                if (savedPass && fbAuth) {
+                    try {
+                        const oldPassword = atob(savedPass);
+                        const email = getAuthEmail(nickname);
+                        const cred = await fbAuth.signInWithEmailAndPassword(email, oldPassword);
+                        if (cred.user) {
+                            await cred.user.updatePassword(password);
+                            console.log('🔐 Firebase Auth: senha atualizada na recuperação');
+                        }
+                    } catch (authErr) {
+                        console.warn('⚠️ Não foi possível atualizar Firebase Auth:', authErr.code);
+                        // Tentar deletar e recriar a conta Auth
+                        try {
+                            const email = getAuthEmail(nickname);
+                            // Marcar que Auth precisa ser recriada no próximo login
+                            await db.ref('pendingAuthReset/' + nickname).set({ 
+                                timestamp: Date.now(),
+                                newPasswordHash: hashedPass 
+                            });
+                        } catch (e) {}
+                    }
+                }
+                
+                // Atualizar credenciais salvas: NÃO atualizar agora.
+                // A senha antiga no localStorage será usada como fallback 
+                // para re-sincronizar o Firebase Auth no próximo login.
+                
                 saveState();
                 alert('Senha atualizada com sucesso!\n\nAgora você pode fazer login.');
                 state.authMode = 'login';
@@ -17299,6 +17498,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             errorEl.classList.remove('hidden');
             return;
         }
+        
+        // Guardar senha em memória para re-autenticação Firebase
+        _sessionPlainPassword = password;
         
         if (state.authMode === 'register') {
             const accessCode = document.getElementById('accessCode').value;
@@ -24440,6 +24642,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
         
         // Firebase Auth: login automático (antes de acessar dados)
+        _sessionPlainPassword = password;
         await firebaseAuthSignIn(savedUser, password);
     
         // Buscar do Firebase com timeout
