@@ -1137,6 +1137,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         substitutionsOpen: false, // Travado por padrão até Firebase confirmar
         autoConfirmedAt: null, // Quando foi confirmado automaticamente
         delayedGamesRounds: [], // Rodadas com jogos atrasados acontecendo
+        delayedFixtures: [], // Fixtures de jogos atrasados (ao vivo ou futuros, auto-detectados)
         
         // Sistema de Sync
         isSyncingBackground: false, // Se está sincronizando em background
@@ -2706,7 +2707,29 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             });
                         }
                         console.log(`🔄 AUTO-AVANÇO no carregamento: → Rodada ${roundNum}`);
+                    } else if (!subsOpen) {
+                        // CORREÇÃO: Rodada finished mas subs fechadas = forçar abertura
+                        subsOpen = true;
+                        if (db) {
+                            await db.ref('gameState').update({
+                                substitutionsOpen: true,
+                                updatedAt: Date.now()
+                            });
+                        }
+                        console.log(`🔓 CORREÇÃO: Rodada finished com subs travadas → LIBERANDO`);
                     }
+                }
+                
+                // CORREÇÃO: Se rodada finished sem roundEndedAt, liberar subs também
+                if (roundStatus === 'finished' && !gameState.roundEndedAt && !subsOpen) {
+                    subsOpen = true;
+                    if (db) {
+                        await db.ref('gameState').update({
+                            substitutionsOpen: true,
+                            updatedAt: Date.now()
+                        });
+                    }
+                    console.log(`🔓 CORREÇÃO: Rodada finished sem roundEndedAt → LIBERANDO subs`);
                 }
     
                 // Aplicar gameState do Firebase IMEDIATAMENTE (sem esperar API)
@@ -2717,7 +2740,18 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.captainEnabled = gameState.captainEnabled === true;
                 state.delayedGamesRounds = gameState.delayedGamesRounds || [];
                 console.log(`✅ gameState: Rodada ${roundNum} | Status: ${roundStatus} | Subs: ${subsOpen ? 'Abertas' : 'Travadas'}`);
-
+                
+                // Carregar jogos atrasados do cache automaticamente
+                if (state.delayedGamesRounds.length > 0 && db) {
+                    db.ref('cache/delayedFixtures').once('value').then(snap => {
+                        const cached = snap.val();
+                        if (cached && cached.fixtures && cached.fixtures.length > 0) {
+                            state.delayedFixtures = cached.fixtures;
+                            console.log(`📌 Jogos atrasados carregados: ${cached.fixtures.length} jogos (rodadas ${state.delayedGamesRounds.join(', ')})`);
+                            render();
+                        }
+                    }).catch(() => {});
+                }
                 // VALIDAÇÃO: confirmar contra API em segundo plano (NÃO bloqueia)
                 (async function() {
                     try {
@@ -2994,6 +3028,19 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             state.fixturesLastUpdate = cacheData.updatedAt;
                             state.isLoadingFixtures = false;
                             
+                            // Carregar jogos atrasados do Firebase cache
+                            try {
+                                if (db) {
+                                    const delayedSnap = await db.ref('cache/delayedFixtures').once('value');
+                                    const delayedData = delayedSnap.val();
+                                    if (delayedData && delayedData.fixtures && delayedData.fixtures.length > 0) {
+                                        state.delayedFixtures = delayedData.fixtures;
+                                        state.delayedGamesRounds = delayedData.rounds || [];
+                                        console.log(`📌 Jogos atrasados carregados do cache: ${delayedData.fixtures.length} jogos`);
+                                    }
+                                }
+                            } catch(e) { console.log('Erro ao carregar delayed cache:', e.message); }
+                            
                             // Verificar acertos automaticamente após carregar do cache
                             if (typeof verificarAcertosAutomatico === 'function') {
                                 setTimeout(() => verificarAcertosAutomatico(), 500);
@@ -3126,6 +3173,120 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 f && f.fixture && f.fixture.status && f.teams && f.teams.home && f.teams.away
             );
             state.fixturesLastUpdate = Date.now();
+
+            // ========== DETECTAR JOGOS ATRASADOS DE OUTRAS RODADAS ==========
+            try {
+                const today = new Date().toISOString().split('T')[0];
+                let detectedDelayed = [];
+                let detectedDelayedRounds = [];
+
+                // 1. Verificar jogos ao vivo de QUALQUER rodada
+                try {
+                    const liveAllRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&live=all`, { useCache: false });
+                    if (liveAllRes.response && liveAllRes.response.length > 0) {
+                        for (const f of liveAllRes.response) {
+                            const roundStr = f.league?.round || '';
+                            const roundMatch = roundStr.match(/Regular Season - (\d+)/);
+                            if (roundMatch) {
+                                const fRound = parseInt(roundMatch[1]);
+                                if (fRound !== state.selectedRound) {
+                                    detectedDelayed.push(f);
+                                    if (!detectedDelayedRounds.includes(fRound)) {
+                                        detectedDelayedRounds.push(fRound);
+                                    }
+                                    console.log(`🔴 JOGO ATRASADO ao vivo: Rodada ${fRound} - ${f.teams?.home?.name} x ${f.teams?.away?.name}`);
+                                }
+                            }
+                        }
+                    }
+                } catch(e) { console.log('Erro ao buscar jogos ao vivo (delayed):', e.message); }
+
+                // 2. Verificar jogos de HOJE que são de outras rodadas (agendados/finalizados hoje)
+                try {
+                    const todayRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`, { useCache: !forceRefresh });
+                    if (todayRes.response && todayRes.response.length > 0) {
+                        for (const f of todayRes.response) {
+                            const status = f.fixture?.status?.short;
+                            const roundStr = f.league?.round || '';
+                            const roundMatch = roundStr.match(/Regular Season - (\d+)/);
+                            if (roundMatch) {
+                                const fRound = parseInt(roundMatch[1]);
+                                // Jogo de outra rodada que está ao vivo, finalizado hoje, ou agendado hoje
+                                if (fRound !== state.selectedRound) {
+                                    const isLive = ['1H','2H','HT','ET','P','BT','LIVE'].includes(status);
+                                    const isFinished = ['FT','AET','PEN'].includes(status);
+                                    const isScheduled = ['NS','TBD'].includes(status);
+                                    if (isLive || isFinished || isScheduled) {
+                                        // Evitar duplicatas (pode já ter vindo do live=all)
+                                        const alreadyExists = detectedDelayed.some(d => d.fixture?.id === f.fixture?.id);
+                                        if (!alreadyExists) {
+                                            detectedDelayed.push(f);
+                                        }
+                                        if (!detectedDelayedRounds.includes(fRound)) {
+                                            detectedDelayedRounds.push(fRound);
+                                        }
+                                        if (!isFinished) {
+                                            console.log(`📅 JOGO ATRASADO hoje: Rodada ${fRound} - ${f.teams?.home?.name} x ${f.teams?.away?.name} (${status})`);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch(e) { console.log('Erro ao buscar jogos de hoje (delayed):', e.message); }
+
+                // Atualizar state
+                state.delayedFixtures = detectedDelayed;
+                state.delayedGamesRounds = detectedDelayedRounds;
+
+                // 3. NOVO: Detectar jogos atrasados FUTUROS (agendados nos próximos dias)
+                // Usa next=20 para pegar os próximos jogos e filtrar os de rodadas anteriores
+                try {
+                    const upcomingRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&next=20`, { useCache: !forceRefresh });
+                    if (upcomingRes.response && upcomingRes.response.length > 0) {
+                        for (const f of upcomingRes.response) {
+                            const roundStr = f.league?.round || '';
+                            const roundMatch = roundStr.match(/Regular Season - (\d+)/);
+                            if (roundMatch) {
+                                const fRound = parseInt(roundMatch[1]);
+                                // Jogo de rodada ANTERIOR à atual = atrasado!
+                                if (fRound < state.selectedRound) {
+                                    const alreadyExists = detectedDelayed.some(d => d.fixture?.id === f.fixture?.id);
+                                    if (!alreadyExists) {
+                                        detectedDelayed.push(f);
+                                        console.log(`📅 JOGO ATRASADO futuro: Rodada ${fRound} - ${f.teams?.home?.name} x ${f.teams?.away?.name} (${new Date(f.fixture?.date).toLocaleDateString('pt-BR')})`);
+                                    }
+                                    if (!detectedDelayedRounds.includes(fRound)) {
+                                        detectedDelayedRounds.push(fRound);
+                                    }
+                                }
+                            }
+                        }
+                        // Re-atualizar state com os novos dados
+                        state.delayedFixtures = detectedDelayed;
+                        state.delayedGamesRounds = detectedDelayedRounds;
+                    }
+                } catch(e) { console.log('Erro ao buscar próximos jogos (delayed):', e.message); }
+
+                // Salvar no Firebase para outros usuários
+                if (detectedDelayedRounds.length > 0 && db) {
+                    console.log(`📌 Jogos atrasados detectados: rodadas ${detectedDelayedRounds.join(', ')} (${detectedDelayed.length} jogos)`);
+                    db.ref('gameState/delayedGamesRounds').set(detectedDelayedRounds);
+                    // Cache dos fixtures atrasados para o score
+                    db.ref('cache/delayedFixtures').set({
+                        fixtures: detectedDelayed,
+                        rounds: detectedDelayedRounds,
+                        updatedAt: Date.now()
+                    });
+                } else if (state.delayedGamesRounds.length === 0 && db) {
+                    // Limpar se não tem mais jogos atrasados
+                    db.ref('gameState/delayedGamesRounds').set([]);
+                    db.ref('cache/delayedFixtures').remove();
+                }
+            } catch(e) {
+                console.log('Erro na detecção de jogos atrasados:', e.message);
+            }
+            // ========== FIM DETECÇÃO JOGOS ATRASADOS ==========
     
             // Verificar acertos automaticamente após carregar jogos
             if (typeof verificarAcertosAutomatico === 'function') {
@@ -3265,6 +3426,45 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     <p class="text-zinc-600 text-xs text-center mt-2">
                         Atualizado ${getTimeAgo(state.fixturesLastUpdate)}
                     </p>
+                ` : ''}
+                ${(state.delayedFixtures && state.delayedFixtures.length > 0) ? `
+                    <div class="mt-3 pt-3 border-t border-amber-500/20">
+                        <h4 class="text-amber-400 text-xs font-bold mb-2 flex items-center gap-1">
+                            ⏱️ JOGO${state.delayedFixtures.length > 1 ? 'S' : ''} ATRASADO${state.delayedFixtures.length > 1 ? 'S' : ''} 
+                            <span class="text-zinc-500 font-normal">(pontos contam!)</span>
+                        </h4>
+                        <div class="space-y-2">
+                            ${state.delayedFixtures.map(f => {
+                                const st = getMatchStatus(f.fixture?.status?.short || 'NS');
+                                const el = f.fixture?.status?.elapsed;
+                                const date = new Date(f.fixture?.date || Date.now());
+                                const timeStr = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                                const roundMatch = (f.league?.round || '').match(/Regular Season - (\\d+)/);
+                                const roundNum = roundMatch ? roundMatch[1] : '?';
+                                return '<div class="bg-amber-500/5 border border-amber-500/20 rounded-lg p-2">' +
+                                    '<div class="flex items-center justify-between text-xs mb-1">' +
+                                        '<span class="' + (st.live ? 'text-emerald-400 animate-pulse' : st.color) + ' font-medium">' + 
+                                            (st.live && el ? el + "'" : st.text) + 
+                                        '</span>' +
+                                        '<span class="text-amber-500/70 text-[10px]">R' + roundNum + ' · ' + timeStr + '</span>' +
+                                    '</div>' +
+                                    '<div class="flex items-center justify-between">' +
+                                        '<div class="flex items-center gap-1.5 flex-1">' +
+                                            (f.teams?.home?.logo ? '<img src="' + f.teams.home.logo + '" class="w-4 h-4" onerror="this.style.display=\\x27none\\x27">' : '') +
+                                            '<span class="text-white text-xs truncate">' + (f.teams?.home?.name || '').split(' ').pop() + '</span>' +
+                                        '</div>' +
+                                        '<span class="text-white font-bold text-sm mx-2">' + 
+                                            (f.goals?.home !== null && f.goals?.home !== undefined ? f.goals.home + ' - ' + f.goals.away : 'x') + 
+                                        '</span>' +
+                                        '<div class="flex items-center gap-1.5 flex-1 justify-end">' +
+                                            '<span class="text-white text-xs truncate">' + (f.teams?.away?.name || '').split(' ').pop() + '</span>' +
+                                            (f.teams?.away?.logo ? '<img src="' + f.teams.away.logo + '" class="w-4 h-4" onerror="this.style.display=\\x27none\\x27">' : '') +
+                                        '</div>' +
+                                    '</div>' +
+                                '</div>';
+                            }).join('')}
+                        </div>
+                    </div>
                 ` : ''}
             </div>
         `;
@@ -4405,6 +4605,19 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.substitutionsOpen = data.substitutionsOpen === true; // default false - só libera quando explicitamente true
                 state.adminSubsOverride = data.adminSubsOverride === true; // override manual do admin
                 state.captainEnabled = data.captainEnabled === true;
+                state.delayedGamesRounds = data.delayedGamesRounds || [];
+                
+                // Carregar jogos atrasados do cache se ainda não temos
+                if (state.delayedGamesRounds.length > 0 && (!state.delayedFixtures || state.delayedFixtures.length === 0)) {
+                    db.ref('cache/delayedFixtures').once('value').then(snap => {
+                        const cached = snap.val();
+                        if (cached && cached.fixtures && cached.fixtures.length > 0) {
+                            state.delayedFixtures = cached.fixtures;
+                            console.log(`📌 Jogos atrasados carregados do cache: ${cached.fixtures.length} jogos`);
+                            render();
+                        }
+                    }).catch(() => {});
+                }
                 
                 console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}${state.adminSubsOverride ? ' (ADMIN)' : ''} | Status: ${state.roundStatus}`);
     
@@ -4490,7 +4703,19 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             releaseLock('roundAdvance');
                         });
                         return;
+                    } else if (!state.substitutionsOpen && !state.adminSubsOverride) {
+                        // CORREÇÃO: Rodada finished mas subs travadas → forçar abertura
+                        console.log('🔓 CORREÇÃO (listener): Rodada finished com subs travadas → LIBERANDO');
+                        state.substitutionsOpen = true;
+                        db.ref('gameState').update({ substitutionsOpen: true, updatedAt: Date.now() });
                     }
+                }
+
+                // CORREÇÃO: Se rodada finished sem roundEndedAt mas subs fechadas
+                if (state.roundStatus === 'finished' && !state.roundEndedAt && !state.substitutionsOpen && !state.adminSubsOverride) {
+                    console.log('🔓 CORREÇÃO (listener): Rodada finished sem roundEndedAt → LIBERANDO subs');
+                    state.substitutionsOpen = true;
+                    if (db) db.ref('gameState').update({ substitutionsOpen: true, updatedAt: Date.now() });
                 }
     
                 // Log de mudanças importantes
@@ -4661,7 +4886,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         } else {
             // Todos os jogos terminaram (ou adiados)
             newRoundStatus = 'finished';
-            newSubstitutionsOpen = false;
+            newSubstitutionsOpen = true; // LIBERADO imediatamente após fim dos jogos
     
             // Avançar rodada às 6h da manhã do dia seguinte ao fim dos jogos
             // Isso dá tempo para os usuários conferirem as pontuações
@@ -4677,12 +4902,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             nextMorning6am.setHours(6, 0, 0, 0);
     
             if (now >= nextMorning6am.getTime()) {
-                newSubstitutionsOpen = true;
                 shouldAdvanceRound = true;
-                console.log(`🔓 Passou das 6h da manhã - AVANÇANDO RODADA e LIBERANDO`);
+                console.log(`🔄 Passou das 6h da manhã - AVANÇANDO RODADA (subs já abertas)`);
             } else {
                 const hoursLeft = Math.ceil((nextMorning6am.getTime() - now) / (60 * 60 * 1000));
-                console.log(`⏳ Rodada encerrada. Próxima rodada abre às 6h (~${hoursLeft}h)`);
+                console.log(`✅ Rodada encerrada - Substituições ABERTAS. Avanço de rodada às 6h (~${hoursLeft}h)`);
                 // Auto-detectar próxima rodada para o countdown
                 autoDetectNextRound();
             }
@@ -7736,6 +7960,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
         // Não sincronizar se a rodada ainda não começou (waiting)
         // MAS permitir se algum jogo já deveria ter começado (horário passou)
+        // OU se existem jogos atrasados acontecendo
         if (state.roundStatus === 'waiting') {
             const _nowCheck = Date.now();
             const _anyGameStarted = (state.liveFixtures || []).some(f => {
@@ -7745,11 +7970,19 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 return ['1H','2H','HT','ET','P','BT','LIVE','FT','AET','PEN'].includes(st) ||
                        (st === 'NS' && mt < _nowCheck && (_nowCheck - mt) < 3 * 60 * 60 * 1000);
             });
-            if (!_anyGameStarted) {
-                console.log(`✓ Rodada ${state.selectedRound} ainda não começou, pulando syncScores`);
+            const _hasDelayedGames = (state.delayedFixtures || []).some(f => {
+                const st = f.fixture?.status?.short;
+                return ['1H','2H','HT','ET','P','BT','LIVE','FT','AET','PEN'].includes(st);
+            });
+            if (!_anyGameStarted && !_hasDelayedGames) {
+                console.log(`✓ Rodada ${state.selectedRound} ainda não começou e sem jogos atrasados, pulando syncScores`);
                 return;
             }
-            console.log(`⚠️ Rodada em 'waiting' mas jogos já começaram - sincronizando pontuação`);
+            if (_hasDelayedGames) {
+                console.log(`📌 Rodada em 'waiting' mas tem jogos atrasados - sincronizando pontuação`);
+            } else {
+                console.log(`⚠️ Rodada em 'waiting' mas jogos já começaram - sincronizando pontuação`);
+            }
         }
     
         const round = state.selectedRound;
@@ -7782,9 +8015,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     const cacheAge = Date.now() - cacheData.timestamp;
                     const hasLive = cacheData.hasLiveGames;
     
-                    // Se tem jogos ao vivo: cache de 3 min
+                    // Se tem jogos ao vivo ou atrasados: cache de 3 min
                     // Se não tem jogos ao vivo: cache de 1 hora
-                    const maxCacheAge = hasLive ? CACHE_3MIN : (60 * 60 * 1000);
+                    const hasDelayedLive = (state.delayedFixtures || []).some(f => 
+                        ['1H','2H','HT','ET','P','BT','LIVE'].includes(f.fixture?.status?.short)
+                    );
+                    const maxCacheAge = (hasLive || hasDelayedLive) ? CACHE_3MIN : (60 * 60 * 1000);
                     
                     if (cacheAge < maxCacheAge) {
                         const minAgo = Math.round(cacheAge / 60000);
@@ -7826,34 +8062,55 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 fixtures = await getFixturesForRound(round);
                 
                 // ========== INCLUIR JOGOS ATRASADOS ==========
-                // Se existem rodadas com jogos atrasados, buscar esses jogos também
-                const delayedRounds = state.delayedGamesRounds || [];
+                // Usar delayedGamesRounds (auto-detectado via API)
+                let delayedRounds = [...(state.delayedGamesRounds || [])];
+                
                 if (delayedRounds.length > 0) {
                     console.log(`📌 Buscando jogos atrasados das rodadas: ${delayedRounds.join(', ')}`);
                     
-                    for (const delayedRound of delayedRounds) {
-                        try {
-                            const delayedFixtures = await getFixturesForRound(delayedRound);
-                            // Só incluir jogos que estão ao vivo ou terminaram HOJE
-                            const today = new Date().toISOString().split('T')[0];
-                            
-                            const relevantDelayed = delayedFixtures.filter(f => {
-                                const status = f.fixture?.status?.short;
-                                const fixtureDate = f.fixture?.date?.split('T')[0];
+                    // Primeiro tentar usar os delayedFixtures já detectados (economiza API)
+                    if (state.delayedFixtures && state.delayedFixtures.length > 0) {
+                        const today = new Date().toISOString().split('T')[0];
+                        const relevantFromState = state.delayedFixtures.filter(f => {
+                            const status = f.fixture?.status?.short;
+                            const fixtureDate = f.fixture?.date?.split('T')[0];
+                            const isLive = ['1H','HT','2H','ET','P','BT','LIVE'].includes(status);
+                            const finishedToday = ['FT','AET','PEN'].includes(status) && fixtureDate === today;
+                            const scheduledToday = ['NS','TBD'].includes(status) && fixtureDate === today;
+                            return isLive || finishedToday || scheduledToday;
+                        });
+                        if (relevantFromState.length > 0) {
+                            console.log(`   ↳ Usando ${relevantFromState.length} jogos atrasados já detectados`);
+                            fixtures = [...fixtures, ...relevantFromState];
+                        }
+                    } else {
+                        // Fallback: buscar da API por rodada
+                        const now = Date.now();
+                        const fortyEightHours = 48 * 60 * 60 * 1000;
+                        
+                        for (const delayedRound of delayedRounds) {
+                            try {
+                                const delayedFixtures = await getFixturesForRound(delayedRound);
+                                const today = new Date().toISOString().split('T')[0];
                                 
-                                // Jogo ao vivo OU finalizado hoje
-                                const isLive = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'].includes(status);
-                                const finishedToday = ['FT', 'AET', 'PEN'].includes(status) && fixtureDate === today;
+                                const relevantDelayed = delayedFixtures.filter(f => {
+                                    const status = f.fixture?.status?.short;
+                                    const fixtureDate = f.fixture?.date?.split('T')[0];
+                                    const matchTime = new Date(f.fixture?.date).getTime();
+                                    const isLive = ['1H', 'HT', '2H', 'ET', 'P', 'BT', 'LIVE'].includes(status);
+                                    const finishedToday = ['FT', 'AET', 'PEN'].includes(status) && fixtureDate === today;
+                                    // MELHORIA: Incluir jogos finalizados recentemente (até 48h)
+                                    const finishedRecently = ['FT', 'AET', 'PEN'].includes(status) && (now - matchTime) < fortyEightHours;
+                                    return isLive || finishedToday || finishedRecently;
+                                });
                                 
-                                return isLive || finishedToday;
-                            });
-                            
-                            if (relevantDelayed.length > 0) {
-                                console.log(`   ↳ Rodada ${delayedRound}: ${relevantDelayed.length} jogos atrasados`);
-                                fixtures = [...fixtures, ...relevantDelayed];
+                                if (relevantDelayed.length > 0) {
+                                    console.log(`   ↳ Rodada ${delayedRound}: ${relevantDelayed.length} jogos atrasados (API)`);
+                                    fixtures = [...fixtures, ...relevantDelayed];
+                                }
+                            } catch (e) {
+                                console.log(`   ↳ Erro ao buscar rodada ${delayedRound}:`, e);
                             }
-                        } catch (e) {
-                            console.log(`   ↳ Erro ao buscar rodada ${delayedRound}:`, e);
                         }
                     }
                 }
@@ -8996,12 +9253,13 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 if (diffMs > 0) {
                     const hLeft = Math.floor(diffMs / (60*60*1000));
                     const mLeft = Math.floor((diffMs % (60*60*1000)) / (60*1000));
-                    nextRoundInfo = '<p class="text-zinc-400 text-xs mt-2">Rodada ' + (state.currentRound + 1) + ' abre em <span class="text-purple-400 font-bold">' + hLeft + 'h ' + String(mLeft).padStart(2,'0') + 'm</span></p>';
+                    nextRoundInfo = '<p class="text-zinc-400 text-xs mt-2">Rodada ' + (state.currentRound + 1) + ' avança em <span class="text-purple-400 font-bold">' + hLeft + 'h ' + String(mLeft).padStart(2,'0') + 'm</span></p>';
                 } else {
                     nextRoundInfo = '<p class="text-emerald-400 text-xs mt-2 font-bold">Próxima rodada abrindo...</p>';
                 }
             }
-            countdownHTML = '<div class="text-center">' + (countdownBoxes ? '<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/15 border border-purple-500/30 mb-2"><span class="text-purple-400 font-black text-sm tracking-wider">⏳ PRÓXIMO JOGO</span></div>' : '<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>') + countdownBoxes + nextRoundInfo + '</div>';
+            const subsOpenBadge = state.substitutionsOpen ? '<p class="text-emerald-400 text-xs mt-2 font-semibold">🔓 Substituições liberadas — monte sua escalação!</p>' : '';
+            countdownHTML = '<div class="text-center">' + (countdownBoxes ? '<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/15 border border-purple-500/30 mb-2"><span class="text-purple-400 font-black text-sm tracking-wider">⏳ PRÓXIMO JOGO</span></div>' : '<div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30"><span class="text-emerald-400 font-black text-sm tracking-wider">RODADA ENCERRADA</span></div>') + subsOpenBadge + countdownBoxes + nextRoundInfo + '</div>';
         } else if (upcomingGames.length > 0) {
             const nextDate = new Date(upcomingGames[0].fixture.date);
             const diff = nextDate - now;
@@ -9162,6 +9420,83 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 </div>
                 
                 <div class="max-w-7xl mx-auto px-3 sm:px-6 pb-24 sm:pb-6 pt-4">
+                    
+                    ${(() => {
+                        const delayed = state.delayedFixtures || [];
+                        if (delayed.length === 0) return '';
+                        
+                        const now = Date.now();
+                        const gamesHtml = delayed.map(f => {
+                            const homeName = f.teams?.home?.name || '?';
+                            const awayName = f.teams?.away?.name || '?';
+                            const homeShort = homeName.split(' ').pop();
+                            const awayShort = awayName.split(' ').pop();
+                            const status = f.fixture?.status?.short || 'NS';
+                            const gameDate = f.fixture?.date ? new Date(f.fixture.date) : null;
+                            const roundStr = f.league?.round || '';
+                            const roundMatch = roundStr.match(/Regular Season - (\d+)/);
+                            const fRound = roundMatch ? roundMatch[1] : '?';
+                            
+                            let statusText = '';
+                            let statusColor = 'amber';
+                            
+                            const isLive = ['1H','2H','HT','ET','P','BT','LIVE'].includes(status);
+                            const isFinished = ['FT','AET','PEN'].includes(status);
+                            
+                            if (isLive) {
+                                const elapsed = f.fixture?.status?.elapsed || '';
+                                statusText = '🔴 AO VIVO' + (elapsed ? " " + elapsed + "'" : '');
+                                statusColor = 'red';
+                            } else if (isFinished) {
+                                const hGoals = f.goals?.home ?? '-';
+                                const aGoals = f.goals?.away ?? '-';
+                                statusText = '✅ ' + hGoals + ' x ' + aGoals;
+                                statusColor = 'emerald';
+                            } else if (gameDate) {
+                                const diff = gameDate.getTime() - now;
+                                if (diff > 0) {
+                                    const days = Math.floor(diff / (24*60*60*1000));
+                                    const dayNames = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+                                    const dayName = dayNames[gameDate.getDay()];
+                                    const timeStr = String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0');
+                                    const dateStr = String(gameDate.getDate()).padStart(2,'0') + '/' + String(gameDate.getMonth()+1).padStart(2,'0');
+                                    if (days === 0) { statusText = 'HOJE ' + timeStr; statusColor = 'red'; }
+                                    else if (days === 1) { statusText = 'AMANHÃ ' + timeStr; statusColor = 'orange'; }
+                                    else { statusText = dayName + ' ' + dateStr + ' ' + timeStr; }
+                                } else {
+                                    statusText = 'Em andamento';
+                                    statusColor = 'red';
+                                }
+                            }
+                            
+                            return '<div class="flex items-center gap-3 flex-wrap">' +
+                                '<span class="text-zinc-500 text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded">R' + fRound + '</span>' +
+                                '<span class="text-white font-bold text-sm">' + homeShort + '</span>' +
+                                '<span class="text-zinc-500 text-xs">x</span>' +
+                                '<span class="text-white font-bold text-sm">' + awayShort + '</span>' +
+                                '<span class="text-' + statusColor + '-400 text-xs font-medium ml-auto">' + statusText + '</span>' +
+                            '</div>';
+                        }).join('');
+                        
+                        // Filtrar: não mostrar se TODOS os jogos já terminaram
+                        const allFinished = delayed.every(f => ['FT','AET','PEN'].includes(f.fixture?.status?.short));
+                        const anyLive = delayed.some(f => ['1H','2H','HT','ET','P','BT','LIVE'].includes(f.fixture?.status?.short));
+                        
+                        let headerText = 'JOGOS ATRASADOS';
+                        let headerIcon = '⚠️';
+                        if (anyLive) { headerText = 'JOGO ATRASADO AO VIVO'; headerIcon = '🔴'; }
+                        else if (allFinished) { headerText = 'JOGOS ATRASADOS ENCERRADOS'; headerIcon = '✅'; }
+                        
+                        return '<div class="mb-4 rounded-2xl p-4 border border-amber-500/30 bg-gradient-to-r from-amber-900/20 via-zinc-900 to-amber-900/10">' +
+                            '<div class="flex items-center gap-2 mb-3">' +
+                                '<span class="text-lg">' + headerIcon + '</span>' +
+                                '<h3 class="text-amber-400 font-bold text-sm tracking-wide">' + headerText + '</h3>' +
+                                '<span class="text-zinc-500 text-xs ml-auto">Pontos contam na rodada ' + state.currentRound + '</span>' +
+                            '</div>' +
+                            '<div class="space-y-2">' + gamesHtml + '</div>' +
+                            '<p class="text-zinc-500 text-[10px] mt-3">Detectado automaticamente. Jogadores destes times pontuam na rodada atual.</p>' +
+                        '</div>';
+                    })()}
                     
                     <!-- HERO: User + Countdown + Jogos -->
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
@@ -15232,7 +15567,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <p class="text-zinc-600 text-xs">
                                     ${state.adminSubsOverride 
                                         ? '<strong class="text-amber-400">⚠️ MODO MANUAL</strong> - Clique em "Travar" para voltar ao automático.'
-                                        : '<strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera 1h após o último jogo.<br><strong>Manual:</strong> Use os botões acima para controlar manualmente.'
+                                        : '<strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera imediatamente após o fim da rodada.<br><strong>Manual:</strong> Use os botões acima para controlar manualmente.'
                                     }
                                 </p>
                             </div>
@@ -15257,6 +15592,40 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <p class="text-zinc-600 text-xs">
                                     Quando ativo, cada participante pode escolher 1 titular como capitão.<br>
                                     O capitão pontua <strong class="text-yellow-400">2x</strong> na rodada.
+                                </p>
+                            </div>
+                            
+                            <!-- Jogos Atrasados (Automático) -->
+                            <div class="bg-zinc-900 rounded-xl p-6 border border-amber-500/30">
+                                <h4 class="text-amber-400 font-medium mb-4">⚠️ Jogos Atrasados (Detecção Automática)</h4>
+                                
+                                <div class="space-y-2 mb-4">
+                                    ${(state.delayedFixtures || []).length > 0 ? (state.delayedFixtures || []).map(f => {
+                                        const homeName = f.teams?.home?.name || '?';
+                                        const awayName = f.teams?.away?.name || '?';
+                                        const status = f.fixture?.status?.short || 'NS';
+                                        const gameDate = f.fixture?.date ? new Date(f.fixture.date) : null;
+                                        const dateStr = gameDate ? String(gameDate.getDate()).padStart(2,'0') + '/' + String(gameDate.getMonth()+1).padStart(2,'0') + ' ' + String(gameDate.getHours()).padStart(2,'0') + ':' + String(gameDate.getMinutes()).padStart(2,'0') : '?';
+                                        const roundStr = f.league?.round || '';
+                                        const roundMatch = roundStr.match(/Regular Season - (\d+)/);
+                                        const fRound = roundMatch ? roundMatch[1] : '?';
+                                        const isLive = ['1H','2H','HT','ET','P','BT','LIVE'].includes(status);
+                                        const isFinished = ['FT','AET','PEN'].includes(status);
+                                        const statusLabel = isLive ? '🔴 AO VIVO' : isFinished ? '✅ ' + (f.goals?.home ?? '-') + 'x' + (f.goals?.away ?? '-') : '⏳ ' + dateStr;
+                                        const borderColor = isLive ? 'border-red-500/30' : isFinished ? 'border-emerald-500/30' : 'border-amber-500/20';
+                                        return '<div class="flex items-center gap-3 p-3 bg-zinc-800 rounded-lg border ' + borderColor + '">' +
+                                            '<span class="text-zinc-500 text-xs bg-zinc-700 px-1.5 py-0.5 rounded">R' + fRound + '</span>' +
+                                            '<span class="text-white text-sm font-bold">' + homeName + ' x ' + awayName + '</span>' +
+                                            '<span class="text-amber-400 text-xs ml-auto">' + statusLabel + '</span>' +
+                                        '</div>';
+                                    }).join('') : '<p class="text-zinc-600 text-sm text-center py-3">Nenhum jogo atrasado detectado</p>'}
+                                </div>
+                                
+                                <p class="text-zinc-600 text-xs">
+                                    <strong>100% automático:</strong> O sistema detecta jogos de rodadas anteriores via API-Football.<br>
+                                    Os pontos são incluídos automaticamente na rodada ${state.currentRound}.<br>
+                                    Um banner aparece na tela inicial para todos os participantes.<br>
+                                    ${state.delayedGamesRounds?.length > 0 ? '<strong class="text-amber-400">Rodadas com jogos atrasados: ' + state.delayedGamesRounds.join(', ') + '</strong>' : ''}
                                 </p>
                             </div>
                             
@@ -25482,11 +25851,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     // ==================== ATUALIZAÇÃO INTELIGENTE DE PONTOS ====================
     let liveUpdateInterval = null;
     
-    // Função para verificar se tem jogos ao vivo agora
+    // Função para verificar se tem jogos ao vivo agora (incluindo atrasados)
     function hasLiveGamesNow() {
-        if (!state.liveFixtures || state.liveFixtures.length === 0) return false;
         const _now = Date.now();
-        return state.liveFixtures.some(f => {
+        const allFixtures = [...(state.liveFixtures || []), ...(state.delayedFixtures || [])];
+        if (allFixtures.length === 0) return false;
+        return allFixtures.some(f => {
             const status = f.fixture?.status?.short;
             // Status ao vivo da API
             if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) return true;
@@ -25501,9 +25871,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
     // Função para verificar se tem jogo começando em breve (próxima 1 hora)
     function hasGameStartingSoon() {
-        if (!state.liveFixtures || state.liveFixtures.length === 0) return false;
+        const allFixtures = [...(state.liveFixtures || []), ...(state.delayedFixtures || [])];
+        if (allFixtures.length === 0) return false;
         const now = Date.now();
-        return state.liveFixtures.some(f => {
+        return allFixtures.some(f => {
             const status = f.fixture?.status?.short;
             if (!['NS', 'TBD'].includes(status)) return false;
             const gameTime = new Date(f.fixture?.date).getTime();
