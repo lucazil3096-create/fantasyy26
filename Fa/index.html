@@ -3707,6 +3707,41 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             const val = snapshot.val();
             state.resultadosFinais = val || {};
             console.log('📋 Resultados finais carregados:', Object.keys(state.resultadosFinais).length, 'rodadas');
+            
+            // Backfill: adicionar nomes dos times que faltam (1x por sessão)
+            if (!window._rfBackfillDone) {
+                window._rfBackfillDone = true;
+                Object.keys(state.resultadosFinais).forEach(function(rodadaKey) {
+                    var rodada = state.resultadosFinais[rodadaKey];
+                    var needsFix = Object.values(rodada).some(function(r) { return r && r.casa && !r.timeCasa; });
+                    if (!needsFix) return;
+                    // Buscar fixtures cache desta rodada
+                    db.ref('cache/fixtures_round_' + rodadaKey).once('value').then(function(cSnap) {
+                        var cData = cSnap.val();
+                        if (!cData || !cData.fixtures) return;
+                        var lookup = {};
+                        cData.fixtures.forEach(function(f) {
+                            if (f && f.fixture && f.teams) {
+                                lookup[String(f.fixture.id)] = { casa: f.teams.home.name, fora: f.teams.away.name };
+                            }
+                        });
+                        var updates = {};
+                        Object.keys(rodada).forEach(function(jid) {
+                            var r = rodada[jid];
+                            if (r && r.casa && !r.timeCasa && lookup[jid]) {
+                                r.timeCasa = lookup[jid].casa;
+                                r.timeFora = lookup[jid].fora;
+                                updates[jid + '/timeCasa'] = lookup[jid].casa;
+                                updates[jid + '/timeFora'] = lookup[jid].fora;
+                            }
+                        });
+                        if (Object.keys(updates).length > 0) {
+                            db.ref('resultadosFinais/' + rodadaKey).update(updates);
+                            console.log('✅ Backfill nomes R' + rodadaKey + ': ' + Object.keys(updates).length/2 + ' jogos');
+                        }
+                    }).catch(function() {});
+                });
+            }
         });
     }
     
@@ -3777,7 +3812,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     // Salvar resultado final de um jogo
-    function salvarResultadoFinal(rodada, jogoId, golsCasa, golsFora) {
+    function salvarResultadoFinal(rodada, jogoId, golsCasa, golsFora, timeCasa, timeFora) {
         if (!db) return;
         if (golsCasa === null || golsCasa === undefined) return;
         
@@ -3788,28 +3823,31 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         if (state.resultadosFinais[rodadaKey]?.[key]) {
             const existente = state.resultadosFinais[rodadaKey][key];
             if (existente.casa === String(golsCasa) && existente.fora === String(golsFora)) {
-                return; // Já salvo, não precisa atualizar
+                // Atualizar nomes se não tinha
+                if (timeCasa && !existente.timeCasa) {
+                    existente.timeCasa = timeCasa;
+                    existente.timeFora = timeFora;
+                    db.ref('resultadosFinais/' + rodadaKey + '/' + key).update({ timeCasa, timeFora });
+                }
+                return;
             }
         }
         
-        // Salvar no state local
-        if (!state.resultadosFinais[rodadaKey]) {
-            state.resultadosFinais[rodadaKey] = {};
-        }
-        state.resultadosFinais[rodadaKey][key] = {
+        var dados = {
             casa: String(golsCasa),
             fora: String(golsFora),
             timestamp: Date.now()
         };
+        if (timeCasa) { dados.timeCasa = timeCasa; dados.timeFora = timeFora; }
         
-        // Salvar no Firebase
-        db.ref('resultadosFinais/' + rodadaKey + '/' + key).set({
-            casa: String(golsCasa),
-            fora: String(golsFora),
-            timestamp: Date.now()
-        });
+        if (!state.resultadosFinais[rodadaKey]) {
+            state.resultadosFinais[rodadaKey] = {};
+        }
+        state.resultadosFinais[rodadaKey][key] = dados;
         
-        console.log('✅ Resultado final salvo: Jogo ' + jogoId + ' = ' + golsCasa + 'x' + golsFora + ' (Rodada ' + rodada + ')');
+        db.ref('resultadosFinais/' + rodadaKey + '/' + key).set(dados);
+        
+        console.log('✅ Resultado final salvo: ' + (timeCasa||'') + ' ' + golsCasa + 'x' + golsFora + ' ' + (timeFora||'') + ' (Rodada ' + rodada + ')');
     }
     
     // Obter resultado final de um jogo (prioriza Firebase sobre API)
@@ -10089,7 +10127,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
         // Salvar resultados finais
         jogosFinalizados.forEach(jogo => {
-            salvarResultadoFinal(rodada, jogo.id, jogo.golsCasa, jogo.golsFora);
+            salvarResultadoFinal(rodada, jogo.id, jogo.golsCasa, jogo.golsFora, jogo.casa, jogo.fora);
         });
     
         // Verificar TODOS os usuários confirmados
@@ -13504,14 +13542,18 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 let acertos = 0;
                 let total = 0;
                 const jogos = getJogosDaRodada();
-                const _rk = 'round_' + round;
+                const _rk = String(round);
                 const _res = state.resultadosFinais[_rk] || {};
                 const _past = round != state.currentRound && Object.keys(_res).length > 0;
+                var jogosAcertados = [];
                 if (_past) {
                     Object.keys(_res).forEach(jid => {
                         var r = _res[jid], p = palpites[jid] || palpites[String(jid)];
                         if (!p || p.casa === '' || p.fora === '') return; total++;
-                        if (String(p.casa) === String(r.casa) && String(p.fora) === String(r.fora)) acertos++;
+                        if (String(p.casa) === String(r.casa) && String(p.fora) === String(r.fora)) {
+                            acertos++;
+                            jogosAcertados.push({ casa: r.timeCasa || '', fora: r.timeFora || '', placar: r.casa + 'x' + r.fora });
+                        }
                     });
                 } else {
                     jogos.forEach(jogo => {
@@ -13520,11 +13562,14 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         var gc = rs ? rs.casa : String(jogo.golsCasa), gf = rs ? rs.fora : String(jogo.golsFora);
                         var p = palpites[jogo.id] || palpites[String(jogo.id)];
                         if (!p || p.casa === '' || p.fora === '') return; total++;
-                        if (String(p.casa) === gc && String(p.fora) === gf) acertos++;
+                        if (String(p.casa) === gc && String(p.fora) === gf) {
+                            acertos++;
+                            jogosAcertados.push({ casa: jogo.casa, fora: jogo.fora, placar: gc + 'x' + gf });
+                        }
                     });
                 }
                 
-                return { nick, team: u.teamName, logo: u.teamLogo, acertos, total };
+                return { nick, team: u.teamName, logo: u.teamLogo, acertos, total, jogosAcertados };
             })
             .filter(c => c.total > 0)
             .sort((a, b) => b.acertos - a.acertos || b.total - a.total);
@@ -13690,6 +13735,16 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                         <p class="text-zinc-500 text-xs">acertos</p>
                                     </div>
                                 </div>
+                                ${cravadores[0].jogosAcertados && cravadores[0].jogosAcertados.length > 0 ? `
+                                    <div class="mt-2 pt-2 border-t border-emerald-500/10">
+                                        ${cravadores[0].jogosAcertados.map(j => `
+                                            <div class="flex items-center gap-1 text-xs text-zinc-400 py-0.5">
+                                                <span class="text-emerald-500">✓</span>
+                                                <span>${j.casa ? j.casa + ' ' : ''}<span class="text-emerald-400 font-bold">${j.placar}</span>${j.fora ? ' ' + j.fora : ''}</span>
+                                            </div>
+                                        `).join('')}
+                                    </div>
+                                ` : ''}
                             ` : `
                                 <p class="text-zinc-500 text-sm">Nenhum acerto</p>
                             `}
@@ -13819,14 +13874,26 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 ` : `
                                     <div class="space-y-2">
                                         ${cravadores.slice(0, 5).map((c, i) => `
-                                            <div onclick="viewProfile('${c.nick}')" class="flex items-center gap-2 p-2 rounded-lg hover:bg-zinc-800/50 cursor-pointer transition">
-                                                <span class="w-5 h-5 flex items-center justify-center text-xs font-bold ${i === 0 ? 'text-emerald-400' : 'text-zinc-500'}">${i + 1}</span>
-                                                ${c.logo ? 
-                                                    `<img src="${c.logo}" class="w-7 h-7 rounded-full object-cover">` :
-                                                    `<div class="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs">${(c.nick || 'U')[0].toUpperCase()}</div>`
-                                                }
-                                                <span class="flex-1 text-white text-sm truncate">${c.team}</span>
-                                                <span class="text-emerald-400 font-bold text-sm">${c.acertos}/${c.total}</span>
+                                            <div class="rounded-lg ${i === 0 ? 'bg-emerald-500/10 border border-emerald-500/20' : ''}">
+                                                <div onclick="viewProfile('${c.nick}')" class="flex items-center gap-2 p-2 hover:bg-zinc-800/50 cursor-pointer transition rounded-lg">
+                                                    <span class="w-5 h-5 flex items-center justify-center text-xs font-bold ${i === 0 ? 'text-emerald-400' : 'text-zinc-500'}">${i + 1}</span>
+                                                    ${c.logo ? 
+                                                        `<img src="${c.logo}" class="w-7 h-7 rounded-full object-cover">` :
+                                                        `<div class="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/30 text-xs">${(c.nick || 'U')[0].toUpperCase()}</div>`
+                                                    }
+                                                    <span class="flex-1 text-white text-sm truncate">${c.team}</span>
+                                                    <span class="text-emerald-400 font-bold text-sm">${c.acertos}/${c.total}</span>
+                                                </div>
+                                                ${c.jogosAcertados && c.jogosAcertados.length > 0 ? `
+                                                    <div class="px-2 pb-2 ml-9">
+                                                        ${c.jogosAcertados.map(j => `
+                                                            <div class="flex items-center gap-1.5 text-xs text-zinc-400 py-0.5">
+                                                                <span class="text-emerald-500 text-[10px]">✓</span>
+                                                                <span class="truncate">${j.casa ? j.casa + ' ' : ''}<span class="text-emerald-400/80">${j.placar}</span>${j.fora ? ' ' + j.fora : ''}</span>
+                                                            </div>
+                                                        `).join('')}
+                                                    </div>
+                                                ` : ''}
                                             </div>
                                         `).join('')}
                                     </div>
