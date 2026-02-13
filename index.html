@@ -2342,17 +2342,47 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     // Esta função converte de volta para Object com chaves numéricas corretas
     function sanitizeScores(scores) {
         if (!scores || typeof scores !== 'object') return {};
-        if (!Array.isArray(scores)) return scores; // Já é Object, OK
-    
-        // Converter Array para Object: [undefined, {round1Data}, {round2Data}] → {1: {round1Data}, 2: {round2Data}}
+        if (!Array.isArray(scores)) return scores;
         const obj = {};
-        scores.forEach((val, idx) => {
-            if (val && typeof val === 'object') {
-                obj[idx] = val;
-            }
-        });
-        console.log(`🔧 Scores convertido de Array(${scores.length}) para Object com chaves: [${Object.keys(obj).join(', ')}]`);
+        scores.forEach((val, idx) => { if (val && typeof val === 'object') obj[idx] = val; });
         return obj;
+    }
+    
+    var _SC = {};
+    function _put(rd, nick, data) {
+        if (!rd || !nick || !data || !data.players) return;
+        if (!_SC[rd]) _SC[rd] = {};
+        var ex = _SC[rd][nick] || {};
+        _SC[rd][nick] = {
+            players: Object.assign({}, ex.players || {}, data.players || {}),
+            coach: data.coach !== undefined ? data.coach : (ex.coach || 0),
+            cravar: data.cravar !== undefined ? data.cravar : (ex.cravar || 0),
+            live: data.live !== undefined ? data.live : (ex.live || false)
+        };
+    }
+    function _get(nick, rd) {
+        var c = _SC[rd] && _SC[rd][nick];
+        if (c && Object.keys(c.players || {}).length > 0) return c;
+        var u = state.users[nick];
+        if (u && u.scores && u.scores[rd] && u.scores[rd].players && Object.keys(u.scores[rd].players).length > 0) return u.scores[rd];
+        return { players: {}, coach: 0, cravar: 0, live: false };
+    }
+    function _sync() {
+        try {
+        Object.keys(_SC).forEach(function(rd) {
+            Object.keys(_SC[rd]).forEach(function(nick) {
+                var c = _SC[rd][nick];
+                if (!c.players || Object.keys(c.players).length === 0) return;
+                if (!state.users[nick]) return;
+                if (!state.users[nick].scores) state.users[nick].scores = {};
+                if (!state.users[nick].scores[rd]) state.users[nick].scores[rd] = { players: {}, coach: 0, live: false };
+                Object.assign(state.users[nick].scores[rd].players, c.players);
+                if (c.coach) state.users[nick].scores[rd].coach = c.coach;
+                if (c.cravar) state.users[nick].scores[rd].cravar = c.cravar;
+            });
+        });
+        if (state.currentUser && state.users[state.currentUser]) state.scores = state.users[state.currentUser].scores || {};
+        } catch(e) {}
     }
     
     // Sanitiza array para Firebase (converte undefined para null)
@@ -2609,6 +2639,16 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 hasLive = true;
             }
             
+            // Jogo NS mas horário já passou (até 3h) = provavelmente ao vivo, API atrasada
+            if (status === 'NS') {
+                const gameTime = new Date(f.fixture?.date).getTime();
+                const timeSinceStart = now - gameTime;
+                if (timeSinceStart > 0 && timeSinceStart < 3 * 60 * 60 * 1000) {
+                    hasLive = true;
+                    console.log(`⚡ ${f.teams?.home?.name} x ${f.teams?.away?.name} - NS mas já começou, forçando cache curto`);
+                }
+            }
+            
             // Jogo não começou - verificar quando começa
             if (['NS', 'TBD', 'PST'].includes(status)) {
                 const gameTime = new Date(f.fixture?.date).getTime();
@@ -2699,39 +2739,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     }
                 }
     
-                // VALIDAÇÃO: buscar rodada da API pra confirmar sincronização
-                // Sempre validar no carregamento da página para garantir rodada correta
-                try {
-                    for (const season of [SEASON]) {
-                        const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
-                        if (nextRes.response && nextRes.response.length > 0) {
-                            const roundStr = nextRes.response[0].league.round;
-                            const match = roundStr.match(/Regular Season - (\d+)/);
-                            if (match) {
-                                const apiRound = parseInt(match[1]);
-                                if (roundNum !== apiRound && roundStatus !== 'live') {
-                                    console.log(`⚠️ CORREÇÃO: Firebase rodada ${roundNum} ≠ API rodada ${apiRound}. Sincronizando.`);
-                                    roundNum = apiRound;
-                                    roundStatus = 'waiting';
-                                    subsOpen = true;
-                                    if (db) {
-                                        await db.ref('gameState').update({
-                                            currentRound: apiRound,
-                                            roundStatus: 'waiting',
-                                            substitutionsOpen: true,
-                                            roundEndedAt: null,
-                                            updatedAt: Date.now()
-                                        });
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.log('⚠️ Não foi possível validar contra API:', e.message);
-                }
-    
+                // Aplicar gameState do Firebase IMEDIATAMENTE (sem esperar API)
                 state.currentRound = roundNum;
                 state.selectedRound = roundNum;
                 state.substitutionsOpen = subsOpen;
@@ -2739,6 +2747,43 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.captainEnabled = gameState.captainEnabled === true;
                 state.delayedGamesRounds = gameState.delayedGamesRounds || [];
                 console.log(`✅ gameState: Rodada ${roundNum} | Status: ${roundStatus} | Subs: ${subsOpen ? 'Abertas' : 'Travadas'}`);
+
+                // VALIDAÇÃO: confirmar contra API em segundo plano (NÃO bloqueia)
+                (async function() {
+                    try {
+                        for (const season of [SEASON]) {
+                            const nextRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${season}&next=1`);
+                            if (nextRes.response && nextRes.response.length > 0) {
+                                const roundStr = nextRes.response[0].league.round;
+                                const match = roundStr.match(/Regular Season - (\d+)/);
+                                if (match) {
+                                    const apiRound = parseInt(match[1]);
+                                    if (state.currentRound !== apiRound && state.roundStatus !== 'live') {
+                                        console.log(`⚠️ CORREÇÃO: Firebase rodada ${state.currentRound} ≠ API rodada ${apiRound}. Sincronizando.`);
+                                        state.currentRound = apiRound;
+                                        state.selectedRound = apiRound;
+                                        state.roundStatus = 'waiting';
+                                        state.substitutionsOpen = true;
+                                        if (db) {
+                                            db.ref('gameState').update({
+                                                currentRound: apiRound,
+                                                roundStatus: 'waiting',
+                                                substitutionsOpen: true,
+                                                roundEndedAt: null,
+                                                updatedAt: Date.now()
+                                            });
+                                        }
+                                        fetchLiveFixtures(true).then(() => render());
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.log('⚠️ Não foi possível validar contra API:', e.message);
+                    }
+                })();
+
                 return;
             }
             
@@ -2997,15 +3042,45 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             console.log('🌐 Buscando da API-Football...');
             let fixtures = [];
             
-            // Tentar buscar por rodada
+            // Tentar buscar por rodada (pular cache do apiCall se forceRefresh)
             try {
-                const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${state.selectedRound}`);
+                const res = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&round=Regular Season - ${state.selectedRound}`, { useCache: !forceRefresh });
                 if (res.response && res.response.length > 0) {
                     fixtures = res.response;
                     console.log(` Encontrados ${fixtures.length} jogos da rodada ${state.selectedRound}`);
                 }
             } catch (e) {
                 console.log('Erro ao buscar por rodada:', e);
+            }
+            
+            // REAL-TIME: Se forceRefresh (atualização ao vivo), buscar também /fixtures?live=all
+            // O endpoint /fixtures?round=X pode ter cache no servidor da API-Football
+            // O endpoint /fixtures?live=all retorna dados em tempo real
+            if (forceRefresh && fixtures.length > 0) {
+                try {
+                    const liveRes = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&live=all`, { useCache: false });
+                    if (liveRes.response && liveRes.response.length > 0) {
+                        console.log(`⚡ ${liveRes.response.length} jogos AO VIVO encontrados (real-time)`);
+                        // Criar mapa de fixtures ao vivo por ID para merge rápido
+                        const liveMap = {};
+                        liveRes.response.forEach(lf => {
+                            if (lf.fixture && lf.fixture.id) {
+                                liveMap[lf.fixture.id] = lf;
+                            }
+                        });
+                        // Substituir dados da rodada com dados ao vivo (mais frescos)
+                        fixtures = fixtures.map(f => {
+                            const fid = f.fixture?.id;
+                            if (fid && liveMap[fid]) {
+                                console.log(`  🔄 ${f.teams?.home?.name} x ${f.teams?.away?.name}: ${liveMap[fid].goals?.home}-${liveMap[fid].goals?.away} (${liveMap[fid].fixture?.status?.short} ${liveMap[fid].fixture?.status?.elapsed}')`);
+                                return liveMap[fid]; // Usar dados ao vivo
+                            }
+                            return f;
+                        });
+                    }
+                } catch(e) {
+                    console.log('Erro ao buscar jogos ao vivo:', e.message);
+                }
             }
             
             // NÃO usar fallback para temporada anterior (2025) em fixtures
@@ -3015,7 +3090,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             if (fixtures.length === 0) {
                 try {
                     const today = new Date().toISOString().split('T')[0];
-                    const res3 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`);
+                    const res3 = await apiCall(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`, { useCache: !forceRefresh });
                     if (res3.response && res3.response.length > 0) {
                         fixtures = res3.response;
                         console.log(` Encontrados ${fixtures.length} jogos de hoje`);
@@ -3130,12 +3205,37 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const sorted = validFixtures.sort((a, b) => {
             const statusA = getMatchStatus(a.fixture?.status?.short || 'NS');
             const statusB = getMatchStatus(b.fixture?.status?.short || 'NS');
-            if (statusA.live && !statusB.live) return -1;
-            if (!statusA.live && statusB.live) return 1;
+            // Detectar NS com horário passado como "ao vivo"
+            const _nowSort = Date.now();
+            const aIsNSLive = a.fixture?.status?.short === 'NS' && new Date(a.fixture?.date).getTime() < _nowSort && (_nowSort - new Date(a.fixture?.date).getTime()) < 3*60*60*1000;
+            const bIsNSLive = b.fixture?.status?.short === 'NS' && new Date(b.fixture?.date).getTime() < _nowSort && (_nowSort - new Date(b.fixture?.date).getTime()) < 3*60*60*1000;
+            const aLive = statusA.live || aIsNSLive;
+            const bLive = statusB.live || bIsNSLive;
+            if (aLive && !bLive) return -1;
+            if (!aLive && bLive) return 1;
             return new Date(a.fixture?.date || 0) - new Date(b.fixture?.date || 0);
         });
         
-        const hasLiveGames = sorted.some(f => getMatchStatus(f.fixture?.status?.short || 'NS').live);
+        const _nowFixtures = Date.now();
+        const hasLiveGames = sorted.some(f => {
+            const st = f.fixture?.status?.short || 'NS';
+            if (getMatchStatus(st).live) return true;
+            // NS com horário passado
+            if (st === 'NS' && new Date(f.fixture?.date).getTime() < _nowFixtures && (_nowFixtures - new Date(f.fixture?.date).getTime()) < 3*60*60*1000) return true;
+            return false;
+        });
+        
+        // Se há jogos NS com horário passado, forçar refresh da API (dados desatualizados)
+        const hasStaleNS = sorted.some(f => {
+            const st = f.fixture?.status?.short;
+            const gt = new Date(f.fixture?.date).getTime();
+            return st === 'NS' && gt < _nowFixtures && (_nowFixtures - gt) < 3*60*60*1000;
+        });
+        if (hasStaleNS && !state.isLoadingFixtures && (!state._lastStaleRefresh || (_nowFixtures - state._lastStaleRefresh) > 2*60*1000)) {
+            state._lastStaleRefresh = _nowFixtures;
+            console.log('🔄 Jogos NS com horário passado detectados - forçando refresh da API');
+            setTimeout(() => fetchLiveFixtures(true), 500);
+        }
         
         return `
             <div class="card rounded-xl p-4">
@@ -3163,12 +3263,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         const awayGoals = f.goals?.away;
                         
                         return `
-                            <div class="bg-zinc-800/50 rounded-lg p-2 ${status.live ? 'border border-emerald-500/30' : ''}">
+                            <div class="bg-zinc-800/50 rounded-lg p-2 ${status.live ? 'border border-emerald-500/30' : ''}${!status.live && f.fixture?.status?.short === 'NS' && new Date(f.fixture?.date).getTime() < Date.now() && (Date.now() - new Date(f.fixture?.date).getTime()) < 3*60*60*1000 ? ' border border-amber-500/30' : ''}">
                                 <div class="flex items-center justify-between text-xs mb-1">
-                                    <span class="${status.color} font-medium">
-                                        ${status.live && elapsed ? `${elapsed}'` : status.text}
+                                    <span class="${status.live ? status.color : (f.fixture?.status?.short === 'NS' && new Date(f.fixture?.date).getTime() < Date.now() && (Date.now() - new Date(f.fixture?.date).getTime()) < 3*60*60*1000 ? 'text-amber-400 animate-pulse' : status.color)} font-medium">
+                                        ${status.live && elapsed ? `${elapsed}'` : (f.fixture?.status?.short === 'NS' && new Date(f.fixture?.date).getTime() < Date.now() && (Date.now() - new Date(f.fixture?.date).getTime()) < 3*60*60*1000 ? '⚽ EM JOGO' : status.text)}
                                     </span>
-                                    ${!status.live && f.fixture?.status?.short === 'NS' ? `
+                                    ${!status.live && f.fixture?.status?.short === 'NS' && new Date(f.fixture?.date).getTime() > Date.now() ? `
                                         <span class="text-zinc-500">${dateStr} ${timeStr}</span>
                                     ` : ''}
                                 </div>
@@ -3352,6 +3452,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             } else if (status === 'FT') {
                 statusText = 'FIM';
                 isFinished = true;
+            } else if (status === 'NS' && date.getTime() < agora && (agora - date.getTime()) < 3*60*60*1000) {
+                // Jogo NS mas horário já passou - tratar como ao vivo
+                statusText = 'AO VIVO';
+                statusClass = 'text-amber-400';
+                isLive = true;
             } else {
                 isUpcoming = true;
                 const ehHoje = date.toDateString() === new Date().toDateString();
@@ -3365,7 +3470,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             
             return { 
                 homeTeam, awayTeam, homeLogo, awayLogo, 
-                homeGoals, awayGoals, 
+                homeGoals: isLive && homeGoals === null ? 0 : homeGoals, 
+                awayGoals: isLive && awayGoals === null ? 0 : awayGoals, 
                 statusText, statusClass, 
                 isLive, isFinished, isUpcoming,
                 date: date.getTime()
@@ -3631,6 +3737,34 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             const val = snapshot.val();
             state.resultadosFinais = val || {};
             console.log('📋 Resultados finais carregados:', Object.keys(state.resultadosFinais).length, 'rodadas');
+        });
+    }
+    
+    // Listener para scores compartilhados (permite que todos vejam pontuação de todos)
+    let _sharedScoresRound = null;
+    function listenToSharedScores() {
+        if (!db) return;
+        const round = state.selectedRound || state.currentRound;
+        if (!round) return;
+        
+        // Se já está escutando essa rodada, não duplicar
+        if (_sharedScoresRound === round) return;
+        
+        // Remover listener anterior
+        if (_sharedScoresRound) {
+            db.ref('sharedScores/round_' + _sharedScoresRound).off();
+        }
+        
+        _sharedScoresRound = round;
+        db.ref('sharedScores/round_' + round).on('value', (snapshot) => {
+            if (state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000)) return;
+            const sharedData = snapshot.val();
+            if (!sharedData) return;
+            Object.keys(sharedData).forEach(nick => {
+                if (sharedData[nick] && sharedData[nick].players) _put(round, nick, sharedData[nick]);
+            });
+            _sync();
+            render();
         });
     }
     
@@ -4223,9 +4357,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 state.roundStatus = data.roundStatus || 'waiting';
                 state.roundEndedAt = data.roundEndedAt || null;
                 state.substitutionsOpen = data.substitutionsOpen === true; // default false - só libera quando explicitamente true
+                state.adminSubsOverride = data.adminSubsOverride === true; // override manual do admin
                 state.captainEnabled = data.captainEnabled === true;
                 
-                console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'} | Status: ${state.roundStatus}`);
+                console.log(`📡 gameState: Rodada ${state.currentRound} | Subs: ${state.substitutionsOpen ? 'Abertas' : 'Travadas'}${state.adminSubsOverride ? ' (ADMIN)' : ''} | Status: ${state.roundStatus}`);
     
                 // Se rodada está 'waiting', buscar fixtures agendados (para mostrar jogos)
                 // Mas limpar dados que podem estar corrompidos de temporada errada
@@ -4266,7 +4401,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (!cd || !cd.fixtures || cd.fixtures.length === 0) {
                             // Sem cache = rodada não começou
                             console.log('🔧 AUTO-CORREÇÃO: roundStatus=finished mas sem fixtures → mudando para waiting');
-                            db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, roundEndedAt: null, updatedAt: Date.now() });
+                            db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, adminSubsOverride: false, roundEndedAt: null, updatedAt: Date.now() });
                         } else {
                             const cs = cd.fixtures[0]?.league?.season;
                             if (cs && cs !== SEASON) {
@@ -4274,7 +4409,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 console.log(`🔧 AUTO-CORREÇÃO: cache tem temporada ${cs} → limpando e mudando para waiting`);
                                 db.ref(cacheKey).remove();
                                 db.ref('nextRound').remove();
-                                db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, roundEndedAt: null, updatedAt: Date.now() });
+                                db.ref('gameState').update({ roundStatus: 'waiting', substitutionsOpen: true, adminSubsOverride: false, roundEndedAt: null, updatedAt: Date.now() });
                             }
                         }
                     }).catch(() => {});
@@ -4299,6 +4434,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             currentRound: Math.min(newRound, 38),
                             roundStatus: 'waiting',
                             substitutionsOpen: true,
+                            adminSubsOverride: false,
                             roundEndedAt: null,
                             updatedAt: Date.now()
                         }).then(() => {
@@ -4314,8 +4450,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // Log de mudanças importantes
                 if (oldRound !== state.currentRound) {
                     console.log(`🔄 RODADA MUDOU: ${oldRound} → ${state.currentRound}`);
-                    // Recarregar jogos da nova rodada (inclusive em 'waiting' para mostrar agendados)
                     fetchLiveFixtures(true);
+                    try { listenToSharedScores(); } catch(e) {}
                 }
                 if (oldSubsOpen !== state.substitutionsOpen) {
                     console.log(`${state.substitutionsOpen ? '🔓 SUBSTITUIÇÕES LIBERADAS' : '🔒 ESCALAÇÃO TRAVADA'}`);
@@ -4408,6 +4544,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 if (isPostponed) {
                     // Jogo remarcado (>48h no futuro ou data já passou) - tratar como adiado
                     console.log(`⏭️ ${fixture.teams?.home?.name} x ${fixture.teams?.away?.name} - NS mas adiado (ignorado)`);
+                } else if (matchTime < now && (now - matchTime) < 3 * 60 * 60 * 1000) {
+                    // Jogo com horário já passado mas API ainda mostra NS = provavelmente ao vivo
+                    hasLiveGames = true;
+                    allGamesFinished = false;
+                    console.log(`🔴 ${fixture.teams?.home?.name} x ${fixture.teams?.away?.name} - NS mas horário já passou, tratando como AO VIVO`);
                 } else {
                     allGamesFinished = false;
                     if (matchTime < firstUpcomingGameTime) {
@@ -4502,6 +4643,23 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
         
         // Atualizar Firebase se houver mudanças
+        // RESPEITAR OVERRIDE DO ADMIN: se admin liberou manualmente, NÃO mexer em substitutionsOpen
+        if (state.adminSubsOverride && !shouldAdvanceRound) {
+            // Override ativo: não mudar substitutionsOpen, só atualizar roundStatus se mudou
+            if (newRoundStatus !== state.roundStatus) {
+                console.log('🔐 Admin override ativo - só atualizando roundStatus, subs intocadas');
+                if (db) {
+                    await db.ref('gameState').update({
+                        roundStatus: newRoundStatus,
+                        roundEndedAt: allGamesFinished ? lastGameEndTime : null,
+                        updatedAt: Date.now()
+                    });
+                }
+            }
+            releaseLock('updateGameState');
+            return;
+        }
+        
         const stateChanged =
             newRoundStatus !== state.roundStatus ||
             newSubstitutionsOpen !== state.substitutionsOpen ||
@@ -4529,6 +4687,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     roundStatus: 'waiting',
                     roundEndedAt: null,
                     substitutionsOpen: true,
+                    adminSubsOverride: false,
                     updatedAt: Date.now()
                 });
                 // Limpar countdown da rodada anterior
@@ -4810,16 +4969,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 return;
             }
             
-            // PROTEÇÃO: Garantir que scores não é Array (Firebase corrompe)
-            const safeScores = sanitizeScores(userData.scores || {});
-            
             const dataToSave = {
                 password: userData.password || null,
                 teamName: userData.teamName || '',
                 teamLogo: userData.teamLogo || null,
                 formation: userData.formation || '4-3-3',
                 isConfirmed: userData.isConfirmed || false,
-                scores: safeScores,
                 favoriteTeam: userData.favoriteTeam || null,
                 userBio: userData.userBio || '',
                 titles: userData.titles || [],
@@ -4845,8 +5000,45 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 dataToSave.coach = userData.coach;
             }
             
-            db.ref('users/' + nickname).update(dataToSave);
-            console.log(' Salvo na nuvem:', nickname);
+            // Tentar salvar via SDK (requer auth)
+            db.ref('users/' + nickname).update(dataToSave)
+                .then(() => {
+                    console.log('☁️ Salvo na nuvem:', nickname);
+                    // Limpar backup se existir (dados já estão no path correto)
+                    if (FIREBASE_URL) {
+                        fetch(FIREBASE_URL + '/lineupBackup/' + encodeURIComponent(nickname) + '.json', { method: 'DELETE' }).catch(() => {});
+                    }
+                })
+                .catch((err) => {
+                    console.error('❌ SDK falhou ao salvar:', err.code || err.message);
+                    
+                    // FALLBACK: Salvar escalação em lineupBackup/ (rule: .write: true)
+                    // Só salva dados essenciais para pontuação
+                    if (FIREBASE_URL && dataToSave.starters) {
+                        const lineupData = cleanUndefined({
+                            starters: dataToSave.starters,
+                            reserves: dataToSave.reserves,
+                            coach: dataToSave.coach,
+                            formation: dataToSave.formation,
+                            isConfirmed: dataToSave.isConfirmed,
+                            teamName: dataToSave.teamName,
+                            savedAt: Date.now()
+                        });
+                        fetch(FIREBASE_URL + '/lineupBackup/' + encodeURIComponent(nickname) + '.json', {
+                            method: 'PUT',
+                            body: JSON.stringify(lineupData),
+                            headers: { 'Content-Type': 'application/json' }
+                        })
+                        .then(r => {
+                            if (r.ok) {
+                                console.log('✅ Escalação salva em lineupBackup/' + nickname);
+                            } else {
+                                console.error('❌ lineupBackup falhou:', r.status);
+                            }
+                        })
+                        .catch(e => console.error('❌ lineupBackup error:', e.message));
+                    }
+                });
         } catch (e) {
             console.error('Erro ao salvar na nuvem:', e);
         }
@@ -4895,17 +5087,70 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         teamName: cloudUsers[nick].teamName || state.users[nick].teamName,
                         teamLogo: fotoParaUsar,
                         coach: cloudUsers[nick].coach || state.users[nick].coach,
-                        starters: ensureArray(cloudUsers[nick].starters || state.users[nick].starters, 11),
-                        reserves: ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7),
+                        starters: (function() {
+                            // Para o usuário atual: se backup local é mais recente, manter local
+                            if (isCurrentUser) {
+                                try {
+                                    var bk = JSON.parse(localStorage.getItem('fantasy_lineup_backup') || '{}');
+                                    if (bk.nickname === nick && bk.savedAt) {
+                                        var fbTime = cloudUsers[nick].lastUpdate ? new Date(cloudUsers[nick].lastUpdate).getTime() : 0;
+                                        if (bk.savedAt > fbTime && bk.starters) {
+                                            return ensureArray(bk.starters, 11);
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                            return ensureArray(cloudUsers[nick].starters || state.users[nick].starters, 11);
+                        })(),
+                        reserves: (function() {
+                            if (isCurrentUser) {
+                                try {
+                                    var bk = JSON.parse(localStorage.getItem('fantasy_lineup_backup') || '{}');
+                                    if (bk.nickname === nick && bk.savedAt) {
+                                        var fbTime = cloudUsers[nick].lastUpdate ? new Date(cloudUsers[nick].lastUpdate).getTime() : 0;
+                                        if (bk.savedAt > fbTime && bk.reserves) {
+                                            return ensureArray(bk.reserves, 7);
+                                        }
+                                    }
+                                } catch(e) {}
+                            }
+                            return ensureArray(cloudUsers[nick].reserves || state.users[nick].reserves, 7);
+                        })(),
                         formation: cloudUsers[nick].formation || state.users[nick].formation || '4-3-3',
                         isConfirmed: cloudUsers[nick].isConfirmed || state.users[nick].isConfirmed,
-                        scores: sanitizeScores(cloudUsers[nick].scores || state.users[nick].scores || {}),
+                        scores: (function() {
+                            // PROTEÇÃO: Se scores acabaram de ser calculados, manter local intocado
+                            var recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
+                            if (recentCalc) {
+                                return sanitizeScores(state.users[nick].scores || {});
+                            }
+                            
+                            var cloud = sanitizeScores(cloudUsers[nick].scores || {});
+                            var local = sanitizeScores(state.users[nick].scores || {});
+                            var merged = {};
+                            var allRounds = new Set(Object.keys(local).concat(Object.keys(cloud)));
+                            allRounds.forEach(function(rd) {
+                                var l = local[rd];
+                                var c = cloud[rd];
+                                if (!l && c) { merged[rd] = c; return; }
+                                if (l && !c) { merged[rd] = l; return; }
+                                if (!l && !c) return;
+                                
+                                // SEMPRE manter local se tem dados calculados
+                                // Firebase de OUTROS users nunca é atualizado (rules bloqueiam)
+                                // então cloud é sempre antigo para eles
+                                var lHas = l.players && Object.keys(l.players).length > 0;
+                                var cHas = c.players && Object.keys(c.players).length > 0;
+                                merged[rd] = lHas ? l : (cHas ? c : l);
+                            });
+                            return merged;
+                        })(),
                         favoriteTeam: cloudUsers[nick].favoriteTeam || null,
                         userBio: cloudUsers[nick].userBio || '',
                         achievements: cloudUsers[nick].achievements || [],
                         titles: cloudUsers[nick].titles || [],
-                        // DADOS 100% ONLINE - Sempre do Firebase
-                        palpitesCravados: cloudUsers[nick].palpitesCravados || {},
+                        // DADOS 100% ONLINE - Sempre do Firebase (mergear palpites locais)
+                        palpitesCravados: Object.assign({}, state.users[nick].palpitesCravados || {}, cloudUsers[nick].palpitesCravados || {}),
                         jogosConferidos: cloudUsers[nick].jogosConferidos || {},
                         seenGoals: cloudUsers[nick].seenGoals || {},
                         achievementsShown: cloudUsers[nick].achievementsShown || [],
@@ -4913,12 +5158,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         seenNotifications: cloudUsers[nick].seenNotifications || []
                     };
                     
-                    // Se scores estavam como Array (corrompidos pelo Firebase), re-salvar como Object
-                    // IMPORTANTE: Só re-salvar se for o usuário atual (Firebase rules bloqueiam escrita em outros users)
-                    if (cloudUsers[nick].scores && Array.isArray(cloudUsers[nick].scores) && db && nick === state.currentUser) {
-                        console.log(`🔧 Re-salvando scores de ${nick} no Firebase (Array→Object)`);
-                        db.ref('users/' + nick + '/scores').set(state.users[nick].scores);
-                    }
+                    // Scores Array→Object: apenas converter localmente, NÃO re-salvar no Firebase
+                    // (re-salvar causa loop infinito: save→listener→detecta Array→save→listener...)
+                    // A conversão já foi feita pelo sanitizeScores acima
     
                     // MIGRAÇÃO: Mover cravar_bonus do market para a rodada correta
                     const userScores = state.users[nick].scores;
@@ -4937,12 +5179,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             });
                             // Remover cravar_bonus do market
                             userScores.market.purchases = userScores.market.purchases.filter(p => p.type !== 'cravar_bonus');
-                            // Salvar no Firebase - só para o próprio usuário ou admin
-                            if (db && (nick === state.currentUser || state.isAdmin)) {
-                                db.ref('users/' + nick + '/scores/market/purchases').set(userScores.market.purchases);
+                            // Salvar no Firebase - APENAS para o próprio usuário
+                            if (db && nick === state.currentUser) {
+                                db.ref('users/' + nick + '/scores/market/purchases').set(userScores.market.purchases).catch(e => {});
                                 Object.keys(userScores).forEach(key => {
                                     if (key !== 'market' && userScores[key] && userScores[key].cravar) {
-                                        db.ref('users/' + nick + '/scores/' + key + '/cravar').set(userScores[key].cravar);
+                                        db.ref('users/' + nick + '/scores/' + key + '/cravar').set(userScores[key].cravar).catch(e => {});
                                     }
                                 });
                             }
@@ -4964,15 +5206,11 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (cloudUsers[nick].teamName && cloudUsers[nick].teamName.trim()) {
                             state.teamName = cloudUsers[nick].teamName;
                         }
-                        if (cloudUsers[nick].starters) {
-                            state.starters = ensureArray(cloudUsers[nick].starters, 11);
-                        }
-                        if (cloudUsers[nick].reserves) {
-                            state.reserves = ensureArray(cloudUsers[nick].reserves, 7);
-                        }
-                        if (cloudUsers[nick].coach) {
-                            state.coach = cloudUsers[nick].coach;
-                        }
+                        // Starters/reserves: usar dados mergeados de state.users[nick]
+                        // (que já foram processados acima com merge local+cloud)
+                        state.starters = ensureArray(state.users[nick].starters, 11);
+                        state.reserves = ensureArray(state.users[nick].reserves, 7);
+                        state.coach = state.users[nick].coach || state.coach;
                         // Aplicar foto custom do técnico
                         if (state.coach && state.coach.id) {
                             var _tc = TECNICOS_2026.find(function(c){return c.id === state.coach.id;});
@@ -4981,9 +5219,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         if (cloudUsers[nick].formation) {
                             state.formation = cloudUsers[nick].formation;
                         }
-                        if (cloudUsers[nick].scores) {
-                            state.scores = sanitizeScores(cloudUsers[nick].scores);
-                        }
+                        // Usar scores MERGEADOS (já calculados acima em state.users[nick])
+                        state.scores = state.users[nick].scores || {};
                         state.captain = cloudUsers[nick].captain || null;
                         state.isConfirmed = cloudUsers[nick].isConfirmed || false;
                     }
@@ -4996,6 +5233,110 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 console.log('☁️ Usuários sincronizados:', Object.keys(cloudUsers).length);
                 state.firebaseSynced = true;
+                _sync();
+                
+                // Recuperar palpites salvos via fallback (palpitesPublic/)
+                if (FIREBASE_URL) {
+                    fetch(FIREBASE_URL + '/palpitesPublic.json')
+                        .then(function(res) { return res.ok ? res.json() : null; })
+                        .then(function(data) {
+                            if (!data) return;
+                            Object.keys(data).forEach(function(nick) {
+                                var user = state.users[nick];
+                                if (!user) return;
+                                if (!user.palpitesCravados) user.palpitesCravados = {};
+                                var rodadas = data[nick];
+                                if (!rodadas) return;
+                                Object.keys(rodadas).forEach(function(r) {
+                                    if (!user.palpitesCravados[r]) {
+                                        user.palpitesCravados[r] = rodadas[r];
+                                        console.log('🔄 Palpite recuperado: ' + nick + ' R' + r);
+                                    }
+                                });
+                                // Se é o user atual e auth OK, migrar para users/ e limpar
+                                if (nick === state.currentUser && fbAuth && fbAuth.currentUser) {
+                                    db.ref('users/' + nick + '/palpitesCravados').set(cleanUndefined(user.palpitesCravados))
+                                        .then(function() {
+                                            fetch(FIREBASE_URL + '/palpitesPublic/' + nick + '.json', { method: 'DELETE' }).catch(function(){});
+                                            console.log('✅ Palpites migrados para users/' + nick);
+                                        })
+                                        .catch(function() {});
+                                }
+                            });
+                            render();
+                        })
+                        .catch(function() {});
+                }
+                
+                // Recuperar escalações salvas via fallback (lineupBackup/) - APENAS UMA VEZ
+                if (FIREBASE_URL && !window._lineupBackupRecovered) {
+                    window._lineupBackupRecovered = true;
+                    fetch(FIREBASE_URL + '/lineupBackup.json')
+                        .then(function(res) { return res.ok ? res.json() : null; })
+                        .then(function(data) {
+                            if (!data) return;
+                            var updated = false;
+                            Object.keys(data).forEach(function(nick) {
+                                var backup = data[nick];
+                                if (!backup || !backup.starters) return;
+                                var user = state.users[nick];
+                                if (!user) return;
+                                
+                                // Só recuperar para o current user
+                                if (nick !== state.currentUser) return;
+                                
+                                // Comparar timestamps: backup mais recente que Firebase?
+                                var fbTime = user.lastUpdate ? new Date(user.lastUpdate).getTime() : 0;
+                                var bkTime = backup.savedAt || 0;
+                                
+                                if (bkTime > fbTime) {
+                                    console.log('🔄 Escalação recuperada de lineupBackup/' + nick);
+                                    user.starters = ensureArray(backup.starters, 11);
+                                    user.reserves = ensureArray(backup.reserves, 7);
+                                    if (backup.coach) user.coach = backup.coach;
+                                    if (backup.formation) user.formation = backup.formation;
+                                    if (backup.isConfirmed !== undefined) user.isConfirmed = backup.isConfirmed;
+                                    
+                                    state.starters = user.starters;
+                                    state.reserves = user.reserves;
+                                    state.coach = user.coach;
+                                    state.formation = user.formation;
+                                    updated = true;
+                                    
+                                    // Migrar de volta para users/ e limpar backup
+                                    if (fbAuth && fbAuth.currentUser) {
+                                        db.ref('users/' + nick).update(cleanUndefined({
+                                            starters: user.starters,
+                                            reserves: user.reserves,
+                                            coach: user.coach,
+                                            formation: user.formation,
+                                            lastUpdate: new Date().toISOString()
+                                        }))
+                                        .then(function() {
+                                            fetch(FIREBASE_URL + '/lineupBackup/' + encodeURIComponent(nick) + '.json', { method: 'DELETE' }).catch(function(){});
+                                            console.log('✅ Escalação migrada para users/' + nick);
+                                        })
+                                        .catch(function() {});
+                                    }
+                                }
+                            });
+                            if (updated) render();
+                        })
+                        .catch(function() {});
+                }
+                
+                var _recentCalc = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
+                if (db && state.selectedRound && !_recentCalc) {
+                    db.ref('sharedScores/round_' + state.selectedRound).once('value').then(function(snap) {
+                        var data = snap.val();
+                        if (data) {
+                            Object.keys(data).forEach(function(nick) {
+                                if (data[nick] && data[nick].players) _put(state.selectedRound, nick, data[nick]);
+                            });
+                            _sync(); render();
+                        }
+                    }).catch(function(){});
+                }
                 
                 // Verificar acertos automaticamente após sync
                 if (state.currentUser && state.liveFixtures && state.liveFixtures.length > 0) {
@@ -5013,7 +5354,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
                 
                 // Atualizar tela COM DEBOUNCE (evita re-render excessivo durante digitação)
-                if (!isUserTyping && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
+                // NÃO re-renderizar se scores acabaram de ser calculados (evita flicker no ranking)
+                var _recentCalc2 = state._scoresCalculatedAt && (Date.now() - state._scoresCalculatedAt < 120000);
+                if (!isUserTyping && !_recentCalc2 && (state.screen === 'draft' || state.screen === 'ranking' || state.screen === 'lineup')) {
                     if (renderDebounceTimer) clearTimeout(renderDebounceTimer);
                     renderDebounceTimer = setTimeout(() => {
                         render();
@@ -5330,10 +5673,50 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             
             // Escutar resultados finais dos jogos
             try { listenToResultadosFinais(); } catch(e) { console.error('Erro listenToResultadosFinais:', e); }
+            
+            // Escutar scores compartilhados (pontuação de todos os usuários em tempo real)
+            try { listenToSharedScores(); } catch(e) { console.error('Erro listenToSharedScores:', e); }
     
         } catch (e) {
             console.error('Erro ao carregar estado:', e);
         }
+    }
+    
+    // Restaurar backup da escalação se mais recente que Firebase
+    function restoreLineupBackupIfNewer(nickname, firebaseLastUpdate) {
+        try {
+            const raw = localStorage.getItem('fantasy_lineup_backup');
+            if (!raw) return false;
+            const backup = JSON.parse(raw);
+            if (backup.nickname !== nickname) return false;
+            
+            // Comparar timestamps
+            const fbTime = firebaseLastUpdate ? new Date(firebaseLastUpdate).getTime() : 0;
+            const backupTime = backup.savedAt || 0;
+            
+            if (backupTime > fbTime && backup.starters) {
+                console.log('🔄 Backup local mais recente que Firebase (' + Math.round((backupTime - fbTime)/1000) + 's) - restaurando escalação');
+                state.starters = ensureArray(backup.starters, 11);
+                state.reserves = ensureArray(backup.reserves, 7);
+                if (backup.coach) state.coach = backup.coach;
+                if (backup.formation) state.formation = backup.formation;
+                
+                // Atualizar users[] também
+                if (state.users[nickname]) {
+                    state.users[nickname].starters = state.starters;
+                    state.users[nickname].reserves = state.reserves;
+                    state.users[nickname].coach = state.coach;
+                    state.users[nickname].formation = state.formation;
+                }
+                
+                // Tentar salvar no Firebase de novo
+                saveUserToCloud(nickname, state.users[nickname]);
+                return true;
+            }
+        } catch(e) {
+            console.log('Erro ao restaurar backup:', e.message);
+        }
+        return false;
     }
     
     function saveState() {
@@ -5378,10 +5761,26 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 saveUserToCloud(state.currentUser, state.users[state.currentUser]);
             }
             
-            // localStorage: APENAS para lembrar qual usuário está logado
+            // localStorage: salvar dados essenciais como backup (protege contra falha do Firebase)
             localStorage.setItem('fantasyBrasileirao2026', JSON.stringify({
                 currentUser: state.currentUser
             }));
+            
+            // Backup da escalação no localStorage (protege substituições contra F5)
+            if (state.currentUser) {
+                try {
+                    localStorage.setItem('fantasy_lineup_backup', JSON.stringify({
+                        nickname: state.currentUser,
+                        starters: state.starters,
+                        reserves: state.reserves,
+                        coach: state.coach,
+                        formation: state.formation,
+                        teamName: state.teamName,
+                        isConfirmed: state.isConfirmed,
+                        savedAt: Date.now()
+                    }));
+                } catch(e) {}
+            }
         } catch (e) {
             console.error('Erro ao salvar:', e);
         }
@@ -6459,7 +6858,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         try {
             // Verificar cache no Firebase primeiro (usando SDK para evitar 401)
             const cacheKey = `statsCache_${fixtureId}`;
-    
+            
+            // Pular cache se estiver em modo force refresh global E jogo não finalizado
+            if (!window._forceRefreshActive || isFinished) {
             try {
                 let cache = null;
                 // Priorizar Firebase SDK (autenticado) sobre REST API
@@ -6487,6 +6888,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             } catch(e) {
                 console.log(`Cache miss para ${fixtureId}:`, e.message);
             }
+            } // fim do if (!_forceRefreshActive)
     
             // Buscar da API
             console.log(`🌐 Buscando stats jogo ${fixtureId} (API)`);
@@ -6507,12 +6909,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         savedBy: state.currentUser || 'anonymous'
                     };
                     if (db) {
-                        await db.ref(cacheKey).set(cacheData);
+                        try { await db.ref(cacheKey).set(cacheData); } catch(_e) {}
                     } else {
-                        await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
+                        try { await fetch(`${FIREBASE_URL}/${cacheKey}.json`, {
                             method: 'PUT',
                             body: JSON.stringify(cacheData)
-                        });
+                        }); } catch(_e) {}
                     }
                     const cacheDur = isFinished ? '24h' : '3min';
                     console.log(`💾 Stats salvos Firebase (cache ${cacheDur})`);
@@ -7232,13 +7634,25 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     // Sincronizar pontuação da rodada para TODOS os usuários confirmados
     // ESTRATÉGIA ECONÔMICA: Cache compartilhado no Firebase
     // Inclui jogos atrasados de rodadas anteriores na pontuação
-    async function syncRoundScores() {
+    async function syncRoundScores(forceRefresh = false) {
         if (state.isUpdatingScores) return;
     
         // Não sincronizar se a rodada ainda não começou (waiting)
+        // MAS permitir se algum jogo já deveria ter começado (horário passou)
         if (state.roundStatus === 'waiting') {
-            console.log(`✓ Rodada ${state.selectedRound} ainda não começou, pulando syncScores`);
-            return;
+            const _nowCheck = Date.now();
+            const _anyGameStarted = (state.liveFixtures || []).some(f => {
+                const st = f.fixture?.status?.short || 'NS';
+                const mt = new Date(f.fixture?.date).getTime();
+                // Jogo ao vivo OU jogo NS com horário já passado (até 3h)
+                return ['1H','2H','HT','ET','P','BT','LIVE','FT','AET','PEN'].includes(st) ||
+                       (st === 'NS' && mt < _nowCheck && (_nowCheck - mt) < 3 * 60 * 60 * 1000);
+            });
+            if (!_anyGameStarted) {
+                console.log(`✓ Rodada ${state.selectedRound} ainda não começou, pulando syncScores`);
+                return;
+            }
+            console.log(`⚠️ Rodada em 'waiting' mas jogos já começaram - sincronizando pontuação`);
         }
     
         const round = state.selectedRound;
@@ -7254,6 +7668,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             let useCache = false;
             let cachedStats = null;
             
+            // Se forceRefresh, pular cache completamente
+            if (!forceRefresh) {
             try {
                 // Usar Firebase SDK (evita 401) com fallback para REST API
                 let cacheData = null;
@@ -7284,6 +7700,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
             } catch (e) {
                 console.log('Sem cache, buscando na API...');
+            }
+            } else {
+                console.log('🔄 forceRefresh: pulando cache de scores');
             }
             
             let allPlayerStats = {};
@@ -7362,9 +7781,21 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 
                 const liveGames = fixtures.filter(f => liveStatuses.includes(f.fixture?.status?.short));
                 const finishedGames = fixtures.filter(f => finishedStatuses.includes(f.fixture?.status?.short));
-                gamesToProcess = [...liveGames, ...finishedGames];
                 
-                hasLiveGames = liveGames.length > 0;
+                // Incluir jogos NS cujo horário já passou (API pode ter stats mesmo com status desatualizado)
+                const _nowSync = Date.now();
+                const nsButStarted = fixtures.filter(f => {
+                    const st = f.fixture?.status?.short;
+                    const mt = new Date(f.fixture?.date).getTime();
+                    return st === 'NS' && mt < _nowSync && (_nowSync - mt) < 3 * 60 * 60 * 1000;
+                });
+                if (nsButStarted.length > 0) {
+                    console.log(`⚠️ ${nsButStarted.length} jogos NS com horário passado - incluindo para buscar stats`);
+                }
+                
+                gamesToProcess = [...liveGames, ...finishedGames, ...nsButStarted];
+                
+                hasLiveGames = liveGames.length > 0 || nsButStarted.length > 0;
                 state.hasLiveGames = hasLiveGames;
                 
                 console.log(`🔴 ${liveGames.length} jogos AO VIVO`);
@@ -7637,18 +8068,31 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
                 
                 // Salvar no Firebase - APENAS os scores calculados (não manuais)
-                // IMPORTANTE: Só salvar scores do PRÓPRIO usuário ou se for admin
-                // Firebase rules bloqueiam escrita em paths de outros usuários
-                if (db && Object.keys(calculatedScores).length > 0 && (nick === state.currentUser || state.isAdmin)) {
-                    console.log(`    💾 Salvando ${Object.keys(calculatedScores).length} scores calculados para ${nick}`);
-                    // Usar update() para NÃO sobrescrever scores manuais
-                    db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores).catch(e => {
-                        console.log(`    ⚠️ Erro ao salvar scores de ${nick}:`, e.message);
-                    });
-                    db.ref('users/' + nick + '/scores/' + round).update({
-                        coach: user.scores[round].coach,
-                        live: user.scores[round].live
-                    }).catch(e => {});
+                // Salvar para TODOS os usuários no Firebase
+                if (db && Object.keys(calculatedScores).length > 0) {
+                    // 1. Salvar no caminho compartilhado (fallback - qualquer usuário pode escrever)
+                    const sharedScoreData = {
+                        players: calculatedScores,
+                        coach: user.scores[round].coach || 0,
+                        live: user.scores[round].live,
+                        updatedAt: Date.now(),
+                        updatedBy: state.currentUser || 'anonymous'
+                    };
+                    db.ref('sharedScores/round_' + round + '/' + nick).update(sharedScoreData).catch(e => {});
+                    _put(round, nick, sharedScoreData);
+                    
+                    // 2. Salvar no path do usuário APENAS para o current user
+                    // Para outros, os dados ficam em sharedScores (qualquer um pode ler)
+                    if (nick === state.currentUser) {
+                        console.log(`    💾 Salvando ${Object.keys(calculatedScores).length} scores para ${nick}`);
+                        db.ref('users/' + nick + '/scores/' + round + '/players').update(calculatedScores).catch(e => {
+                            console.log(`    ⚠️ Erro ao salvar scores de ${nick}:`, e.message);
+                        });
+                        db.ref('users/' + nick + '/scores/' + round).update({
+                            coach: user.scores[round].coach,
+                            live: user.scores[round].live
+                        }).catch(e => {});
+                    }
                 }
             }
             
@@ -7656,6 +8100,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             if (state.currentUser && state.users[state.currentUser]) {
                 state.scores = state.users[state.currentUser].scores || {};
             }
+            
+            // PROTEÇÃO: Marcar que scores acabaram de ser calculados
+            // listenToUsers NÃO vai sobrescrever scores por 2 minutos
+            state._scoresCalculatedAt = Date.now();
             
             saveState();
             console.log(` Pontuação da Rodada ${round} calculada para todos!`);
@@ -7672,6 +8120,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         state.isUpdatingScores = false;
         state.liveScoresUpdating = false;
         render();
+        
+        // Re-registrar listener de scores compartilhados (caso rodada tenha mudado)
+        try { listenToSharedScores(); } catch(e) {}
         
         // Processar fila de animações de gol
         setTimeout(() => {
@@ -7815,6 +8266,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             return;
         }
         lastRenderTime = now;
+        _sync();
         
         // Auto-detect: se o modal state mudou, é uma ação intencional do usuário
         const _prevCravarTab = window._prevCravarTab || null;
@@ -8274,7 +8726,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const me = state.users[state.currentUser];
         
         // Meu ranking
-        const rankings = users.map(([nick, u]) => ({ nick, score: calculateUserScore(u) })).sort((a, b) => b.score - a.score);
+        const rankings = users.map(([nick, u]) => ({ nick, score: calculateUserScore(u, nick) })).sort((a, b) => b.score - a.score);
         const myRank = rankings.findIndex(r => r.nick === state.currentUser) + 1;
         const myScore = rankings.find(r => r.nick === state.currentUser)?.score || 0;
         const roundScore = getRoundScore(state.selectedRound);
@@ -8375,8 +8827,17 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const isRoundFinished = (state.roundStatus === 'finished' && hasValidFixtures) || allGamesFinished ||
             (liveGames.length === 0 && finishedCount > 0 && (nsGames.length === 0 || nsAllPostponed));
     
-        if (liveGames.length > 0) {
-            countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">AO VIVO</span></div></div>';
+        // Detectar jogos que já deveriam ter começado (horário passou mas API ainda mostra NS)
+        const gamesJaDeveriamIniciar = allFixtures.filter(f => {
+            const st = f.fixture?.status?.short || 'NS';
+            const matchTime = new Date(f.fixture?.date).getTime();
+            // Jogo com horário passado (até 3h atrás) mas status ainda NS = provavelmente ao vivo
+            return st === 'NS' && matchTime < now && (now - matchTime) < 3 * 60 * 60 * 1000;
+        });
+        const rodadaEmAndamento = gamesJaDeveriamIniciar.length > 0;
+
+        if (liveGames.length > 0 || rodadaEmAndamento) {
+            countdownHTML = '<div class="text-center"><div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40"><span class="w-2 h-2 bg-red-500 rounded-full animate-ping"></span><span class="text-red-400 font-black text-sm tracking-wider">' + (liveGames.length > 0 ? 'AO VIVO' : 'RODADA EM ANDAMENTO') + '</span></div></div>';
         } else if (isRoundFinished) {
             // Countdown: até o próximo jogo OU até a próxima rodada abrir
             let nextRoundInfo = '';
@@ -8664,13 +9125,20 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                         const stA = a.fixture?.status?.short || 'NS';
                                         const stB = b.fixture?.status?.short || 'NS';
                                         const live = ['1H','2H','HT','ET','P','LIVE'];
-                                        if (live.includes(stA) && !live.includes(stB)) return -1;
-                                        if (!live.includes(stA) && live.includes(stB)) return 1;
+                                        const _nowSort = Date.now();
+                                        const aStarted = live.includes(stA) || (stA === 'NS' && new Date(a.fixture?.date).getTime() < _nowSort && (_nowSort - new Date(a.fixture?.date).getTime()) < 3*60*60*1000);
+                                        const bStarted = live.includes(stB) || (stB === 'NS' && new Date(b.fixture?.date).getTime() < _nowSort && (_nowSort - new Date(b.fixture?.date).getTime()) < 3*60*60*1000);
+                                        if (aStarted && !bStarted) return -1;
+                                        if (!aStarted && bStarted) return 1;
                                         return new Date(a.fixture.date) - new Date(b.fixture.date);
                                     }).map(g => {
                                         const st = g.fixture?.status?.short || 'NS';
                                         const isLive = ['1H','2H','HT','ET','P','LIVE'].includes(st);
                                         const isFT = ['FT','AET','PEN'].includes(st);
+                                        const _matchT = new Date(g.fixture?.date).getTime();
+                                        const _nowG = Date.now();
+                                        const isNSButStarted = st === 'NS' && _matchT < _nowG && (_nowG - _matchT) < 3*60*60*1000;
+                                        const showAsLive = isLive || isNSButStarted;
                                         const homeLogo = g.teams?.home?.logo || '';
                                         const awayLogo = g.teams?.away?.logo || '';
                                         const hName = capitalizeTeamName(g.teams?.home?.name || '?').substring(0,14);
@@ -8680,13 +9148,15 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                         const timeStr = matchDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
                                         let statusHTML = '';
                                         if (isLive) statusHTML = '<span class="text-[9px] font-black text-red-400 bg-red-500/20 px-1.5 py-0.5 rounded">' + (g.fixture?.status?.elapsed || '') + "\x27</span>";
+                                        else if (isNSButStarted) statusHTML = '<span class="text-[9px] font-black text-amber-400 bg-amber-500/20 px-1.5 py-0.5 rounded animate-pulse">AO VIVO</span>';
                                         else if (isFT) statusHTML = '<span class="text-[9px] text-zinc-500">FIM</span>';
                                         else statusHTML = '<span class="text-[9px] text-zinc-500">' + dayStr + ' ' + timeStr + '</span>';
-                                        return '<div class="flex items-center gap-1.5 p-2 rounded-lg ' + (isLive ? 'bg-red-500/5 border border-red-500/20' : 'bg-zinc-800/30') + '">' +
+                                        const hasGoals = g.goals?.home !== null && g.goals?.home !== undefined;
+                                        return '<div class="flex items-center gap-1.5 p-2 rounded-lg ' + (showAsLive ? 'bg-red-500/5 border border-red-500/20' : 'bg-zinc-800/30') + '">' +
                                             (homeLogo ? '<img src="' + homeLogo + '" class="w-5 h-5 object-contain flex-shrink-0">' : '') +
                                             '<span class="text-[11px] text-zinc-300 truncate flex-1 text-right">' + hName + '</span>' +
                                             '<div class="flex flex-col items-center mx-1 min-w-[40px]">' +
-                                            (isLive || isFT ? '<span class="text-sm font-black ' + (isLive ? 'text-white' : 'text-zinc-400') + '">' + (g.goals?.home ?? 0) + ' - ' + (g.goals?.away ?? 0) + '</span>' : '<span class="text-zinc-500 text-[10px]">vs</span>') +
+                                            (showAsLive || isFT ? '<span class="text-sm font-black ' + (showAsLive ? 'text-white' : 'text-zinc-400') + '">' + (g.goals?.home ?? 0) + ' - ' + (g.goals?.away ?? 0) + '</span>' : (hasGoals ? '<span class="text-sm font-black text-zinc-400">' + (g.goals?.home ?? 0) + ' - ' + (g.goals?.away ?? 0) + '</span>' : '<span class="text-zinc-500 text-[10px]">vs</span>')) +
                                             statusHTML + '</div>' +
                                             '<span class="text-[11px] text-zinc-300 truncate flex-1">' + aName + '</span>' +
                                             (awayLogo ? '<img src="' + awayLogo + '" class="w-5 h-5 object-contain flex-shrink-0">' : '') + '</div>';
@@ -9044,7 +9514,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                         })()}</span>`;
                                     })()}
                                 </div>
-                                <button onclick="syncRoundScores()" 
+                                <button onclick="window._forceRefreshActive=true;fetchLiveFixtures(true).then(()=>syncRoundScores(true)).finally(()=>setTimeout(()=>{window._forceRefreshActive=false},30000))" 
                                     class="p-1.5 bg-zinc-800 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white transition ${state.liveScoresUpdating ? 'animate-spin' : ''}">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                 </button>
@@ -9168,7 +9638,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             </div>
                             
                             <p class="text-center text-zinc-600 text-[9px] mt-1">
-                                ${canEditTeam() ? '💡 Arraste para trocar' : '🔒 ' + getEditTeamStatus().reason}
+                                ${canEditTeam() ? '💡 Arraste ou segure para trocar' : '🔒 ' + getEditTeamStatus().reason}
                             </p>
                         </div>
     
@@ -9627,13 +10097,21 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 // Somar ao cravar existente (pode ter acertos parciais de antes)
                 userData.scores[rodada].cravar = (userData.scores[rodada].cravar || 0) + pontosGanhos;
     
-                // Salvar no Firebase com tratamento de erro
-                // IMPORTANTE: Só salvar no Firebase se for o próprio usuário ou admin
-                if (db && (nick === state.currentUser || state.isAdmin)) {
-                    db.ref('users/' + nick + '/scores/' + rodada + '/cravar').set(userData.scores[rodada].cravar)
-                        .catch(err => console.error('❌ Erro ao salvar cravar score:', nick, err.message));
-                    db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
-                        .catch(err => console.error('❌ Erro ao salvar jogosConferidos:', nick, err.message));
+                // Salvar no Firebase - tentar para todos os usuários
+                if (db) {
+                    // Salvar no sharedScores (qualquer um pode escrever)
+                    db.ref('sharedScores/round_' + rodada + '/' + nick + '/cravar').set(userData.scores[rodada].cravar)
+                        .catch(e => {});
+                    
+                    // Salvar no path do usuário (apenas próprio)
+                    if (nick === state.currentUser) {
+                        db.ref('users/' + nick + '/scores/' + rodada + '/cravar').set(userData.scores[rodada].cravar)
+                            .catch(err => { console.error('❌ Erro cravar:', err.message); });
+                    }
+                    if (nick === state.currentUser) {
+                        db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
+                            .catch(err => { console.error('❌ Erro jogosConferidos:', err.message); });
+                    }
                 }
     
                 // Se é o usuário atual, atualizar state e notificar
@@ -9647,10 +10125,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 }
                 needsRender = true;
             } else if (novosJogosConferidos.length > 0) {
-                // Só salvar no Firebase se for o próprio usuário ou admin
-                if (db && (nick === state.currentUser || state.isAdmin)) {
+                // Salvar jogosConferidos apenas do user atual
+                if (db && nick === state.currentUser) {
                     db.ref('users/' + nick + '/jogosConferidos').set(cleanUndefined(userData.jogosConferidos))
-                        .catch(err => console.error('❌ Erro ao salvar jogosConferidos:', nick, err.message));
+                        .catch(err => {});
                 }
             }
         }
@@ -9745,7 +10223,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     // Cravar resultados
-    window.cravarResultados = function() {
+    window.cravarResultados = async function() {
         if (!state.currentUser) return;
         
         const rodada = state.currentRound;
@@ -9818,24 +10296,50 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         };
     
         // Salvar no Firebase com tratamento de erro
+        let saveOk = false;
         if (db) {
             const dataToSave = cleanUndefined(userData.palpitesCravados[rodada]);
-            db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(dataToSave)
-                .then(() => {
-                    console.log('✅ Palpites cravados salvos no Firebase:', state.currentUser, 'R' + rodada);
-                })
-                .catch(err => {
-                    console.error('❌ Erro ao salvar palpites no Firebase:', err.message, err.code);
-                    alert('❌ Erro ao salvar palpites no servidor!\n\nCódigo: ' + (err.code || err.message) + '\n\nTente fazer logout e login novamente.');
-                });
-        } else {
-            console.warn('⚠️ Firebase DB não disponível para salvar palpites');
+            
+            // Validar rodada
+            if (!rodada || rodada <= 0) {
+                console.error('❌ Rodada inválida para cravar:', rodada);
+                alert('❌ Erro: Rodada não detectada. Recarregue a página.');
+                return;
+            }
+            
+            // Tentar salvar via SDK no path normal
+            try {
+                await db.ref('users/' + state.currentUser + '/palpitesCravados/' + rodada).set(dataToSave);
+                console.log('✅ Palpites salvos no Firebase:', state.currentUser, 'R' + rodada);
+                saveOk = true;
+            } catch (err) {
+                console.error('❌ SDK falhou:', err.code || err.message);
+                
+                // Fallback: salvar em palpitesPublic/ via REST (rule: .write: true)
+                try {
+                    const restRes = await fetch(FIREBASE_URL + '/palpitesPublic/' + encodeURIComponent(state.currentUser) + '/' + rodada + '.json', {
+                        method: 'PUT',
+                        body: JSON.stringify(dataToSave),
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    if (restRes.ok) {
+                        console.log('✅ Palpites salvos via palpitesPublic/ (fallback)');
+                        saveOk = true;
+                    }
+                } catch (err2) {
+                    console.error('❌ Fallback também falhou:', err2.message);
+                }
+            }
         }
     
-        // Persistir dados localmente também via saveState
+        // Persistir localmente sempre
         saveState();
     
-        alert(`${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
+        if (saveOk) {
+            alert(`✅ ${palpitesCompletos} palpite(s) cravado(s) com sucesso!\n\nAguarde o fim dos jogos para ver se acertou.\nCada acerto = 5 pontos!`);
+        } else {
+            alert(`⚠️ ${palpitesCompletos} palpite(s) salvos apenas localmente.\n\nVerifique sua conexão.`);
+        }
     
         closeModalDirect();
     };
@@ -11567,7 +12071,13 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         
                         // Pegar scores da rodada atual para os jogadores deste user
                         const currentRd = state.currentRound || state.selectedRound || 0;
-                        const userRoundData = user.scores && user.scores[currentRd] ? user.scores[currentRd] : {};
+                        const userRoundData = _get(nick, currentRd);
+                        if (Object.keys(userRoundData.players||{}).length === 0 && nick !== state.currentUser && db && currentRd > 0) {
+                            db.ref('sharedScores/round_' + currentRd + '/' + nick).once('value').then(function(snap) {
+                                var sh = snap.val();
+                                if (sh && sh.players && Object.keys(sh.players).length > 0) { _put(currentRd, nick, sh); _sync(); render(); }
+                            }).catch(function(){});
+                        }
                         const userRoundScores = userRoundData.players || {};
                         const isLive = !!userRoundData.live;
                         const userCaptain = user.captain;
@@ -12551,7 +13061,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     function renderViewTeamModal() {
         const user = state.users[state.viewingUser];
         if (!user) return '';
-        
+        const _VN = state.viewingUser;
+        if (Object.keys(_get(_VN, state.selectedRound).players).length === 0 && _VN !== state.currentUser && db && state.selectedRound > 0) {
+            db.ref('sharedScores/round_' + state.selectedRound + '/' + _VN).once('value').then(function(snap) {
+                var sh = snap.val(); if (sh && sh.players && Object.keys(sh.players).length > 0) { _put(state.selectedRound, _VN, sh); _sync(); render(); }
+            }).catch(function(){});
+        }
         // Posições padrão 4-3-3 para visualização (INVERTIDO: atacantes em cima)
         const viewPositions = [
             { top: '88%', left: '50%', label: 'GOL' },   // GOL
@@ -12570,7 +13085,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         const userTotalScore = calculateUserScore(user);
         const userRoundScore = (() => {
             let total = 0;
-            const roundData = user.scores?.[state.selectedRound];
+            const roundData = _get(_VN, state.selectedRound);
             if (roundData?.players) {
                 Object.values(roundData.players).forEach(s => total += (s || 0));
             }
@@ -12622,7 +13137,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             ${viewPositions.map((pos, i) => {
                                 const player = user.starters?.[i];
                                 // Buscar score por ID (number ou string)
-                                const playersObj = user.scores?.[state.selectedRound]?.players || {};
+                                const playersObj = _get(_VN, state.selectedRound).players || {};
                                 const playerScore = player?.id !== undefined 
                                     ? (playersObj[player.id] ?? playersObj[String(player.id)])
                                     : undefined;
@@ -12654,7 +13169,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                         
                         <!-- Técnico -->
                         ${user.coach ? (() => {
-                            const coachScore = user.scores?.[state.selectedRound]?.coach;
+                            const coachScore = _get(_VN, state.selectedRound).coach;
                             return `
                             <div onclick="showCoachBreakdownFor('${user.coach.name.replace(/'/g, "\\'")}', '${user.coach.team.replace(/'/g, "\\'")}', '${user.coach.photo || ''}', ${user.coach.teamId}, ${coachScore !== undefined ? coachScore : 'undefined'}, ${state.selectedRound})" class="cursor-pointer bg-white/5 hover:bg-white/10 rounded-lg p-3 mb-4 flex items-center gap-3">
                                 <img src="${user.coach.photo}" alt="${user.coach.name}" class="w-10 h-10 rounded-lg object-cover bg-white/10 flex-shrink-0" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
@@ -12676,7 +13191,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2">
                                     <span class="text-zinc-500 w-8">GOL</span>
                                     ${user.reserves && user.reserves[0] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[0].id] ?? pObj[String(user.reserves[0].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[0]).replace(/"/g, '&quot;')})">
@@ -12690,7 +13205,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-zinc-500 w-8">DEF</span>
                                     ${[1,2].map(i => user.reserves && user.reserves[i] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
@@ -12704,7 +13219,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-zinc-500 w-8">MEI</span>
                                     ${[3,4].map(i => user.reserves && user.reserves[i] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
@@ -12718,7 +13233,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 <div class="flex items-center gap-2 flex-wrap">
                                     <span class="text-zinc-500 w-8">ATA</span>
                                     ${[5,6].map(i => user.reserves && user.reserves[i] ? (() => {
-                                        const pObj = user.scores?.[state.selectedRound]?.players || {};
+                                        const pObj = _get(_VN, state.selectedRound).players || {};
                                         const resScore = pObj[user.reserves[i].id] ?? pObj[String(user.reserves[i].id)];
                                         return `
                                         <div class="flex items-center gap-1.5 bg-white/5 rounded px-2 py-1 cursor-pointer hover:bg-white/10 transition" onclick="event.stopPropagation();viewPlayer(${JSON.stringify(user.reserves[i]).replace(/"/g, '&quot;')})">
@@ -12901,38 +13416,20 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 team: u.teamName,
                 logo: u.teamLogo,
                 favoriteTeam: u.favoriteTeam,
-                score: calculateUserScore(u)
+                score: calculateUserScore(u, nick)
             }))
             .sort((a, b) => b.score - a.score);
         
-        // TOP PONTUADORES DA RODADA (usuários)
         const roundRankings = Object.entries(state.users)
             .filter(([_, u]) => u.isConfirmed)
             .map(([nick, u]) => {
-                // Calcular pontuação só da rodada selecionada
-                let roundScore = 0;
-                const userScores = u.scores?.[round];
-                if (userScores) {
-                    // Somar pontos dos jogadores
-                    if (userScores.players) {
-                        Object.entries(userScores.players).forEach(([pid, s]) => {
-                            // Capitão pontua 2x
-                            if (state.captainEnabled && u.captain && String(pid) === String(u.captain)) {
-                                roundScore += (s || 0) * 2;
-                            } else {
-                                roundScore += (s || 0);
-                            }
-                        });
-                    }
-                    // Somar pontos do técnico
-                    roundScore += userScores.coach || 0;
-                }
-                return {
-                    nick,
-                    team: u.teamName,
-                    logo: u.teamLogo,
-                    score: Math.round(roundScore * 10) / 10
-                };
+                var roundScore = 0, sc = _get(nick, round);
+                Object.entries(sc.players || {}).forEach(function(e) {
+                    if (state.captainEnabled && u.captain && String(e[0]) === String(u.captain)) roundScore += (e[1]||0)*2;
+                    else roundScore += (e[1]||0);
+                });
+                roundScore += sc.coach || 0;
+                return { nick: nick, team: u.teamName, logo: u.teamLogo, score: Math.round(roundScore * 10) / 10 };
             })
             .sort((a, b) => b.score - a.score);
         
@@ -12976,7 +13473,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
             
             const userStarters = ensureArray(user.starters, 11);
             const userReserves = ensureArray(user.reserves, 7);
-            const roundScores = user.scores?.[round]?.players || {};
+            const roundScores = _get(nick, round).players || {};
             
             userStarters.forEach(player => {
                 if (player && player.id && roundScores[player.id] !== undefined) {
@@ -14602,8 +15099,10 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                                 </div>
                                 
                                 <p class="text-zinc-600 text-xs">
-                                    <strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera 1h após o último jogo.<br>
-                                    <strong>Manual:</strong> Use os botões acima para controlar manualmente.
+                                    ${state.adminSubsOverride 
+                                        ? '<strong class="text-amber-400">⚠️ MODO MANUAL</strong> - Clique em "Travar" para voltar ao automático.'
+                                        : '<strong>Automático:</strong> Trava 30min antes do 1º jogo. Libera 1h após o último jogo.<br><strong>Manual:</strong> Use os botões acima para controlar manualmente.'
+                                    }
                                 </p>
                             </div>
                             
@@ -16754,40 +17253,31 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                state.coach;
     }
     
-    function calculateUserScore(user) {
+    function calculateUserScore(user, _nick) {
         try {
-        if (!user || !user.scores) return 0;
-        let total = 0;
-        const userCaptain = user.captain;
-        Object.entries(user.scores || {}).forEach(([key, round]) => {
-            if (!round || typeof round !== 'object') return; // PROTEÇÃO contra dados corrompidos
+        if (!user) return 0;
+        var total = 0, cap = user.captain;
+        var rds = {};
+        if (user.scores) Object.keys(user.scores).forEach(function(k){ rds[k] = true; });
+        if (_nick) Object.keys(_SC).forEach(function(r){ if (_SC[r] && _SC[r][_nick]) rds[r] = true; });
+        Object.keys(rds).forEach(function(key) {
             if (key === 'market') {
-                // Market: contar apenas compras/vendas, NÃO cravar_bonus (já contado na rodada)
-                if (round && round.purchases) {
-                    round.purchases.forEach(t => {
-                        if (t.type !== 'cravar_bonus') total += (t.price || 0);
-                    });
-                }
+                var m = user.scores && user.scores.market;
+                if (m && m.purchases) m.purchases.forEach(function(t){ if (t.type !== 'cravar_bonus') total += (t.price || 0); });
             } else {
-                // Ignorar rodadas antes da rodada inicial
                 if (parseInt(key) < STARTING_ROUND) return;
-                Object.entries(round.players || {}).forEach(([pid, s]) => {
-                    // Capitão pontua 2x (se sistema ativo)
-                    if (state.captainEnabled && userCaptain && String(pid) === String(userCaptain)) {
-                        total += s * 2;
-                    } else {
-                        total += s;
-                    }
+                var rd = _nick ? _get(_nick, key) : ((user.scores && user.scores[key]) || {});
+                if (!rd || typeof rd !== 'object') return;
+                Object.entries(rd.players || {}).forEach(function(e) {
+                    if (state.captainEnabled && cap && String(e[0]) === String(cap)) total += e[1] * 2;
+                    else total += e[1];
                 });
-                total += round.coach || 0;
-                total += round.cravar || 0; // Pontos do Cravar
+                total += rd.coach || 0;
+                total += rd.cravar || 0;
             }
         });
         return Math.round(total * 10) / 10;
-        } catch(e) {
-            console.error('❌ Erro ao calcular score:', e);
-            return 0;
-        }
+        } catch(e) { return 0; }
     }
     
     
@@ -17216,7 +17706,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     await autoDetectNextRound(true);
                 }
                 render();
-            }, 500);
+            }, 50);
         }
         
         // Escutar chat do draft
@@ -17273,7 +17763,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         setTimeout(async () => {
             await detectCurrentRound();
             render();
-        }, 500);
+        }, 50);
     };
     
     window.openPlayerModal = function(index, type) {
@@ -17773,23 +18263,19 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 const firebaseUser = snapshot.val();
                 if (firebaseUser) {
                     if (!state.users[nick]) state.users[nick] = {};
+                    var _sv = state.users[nick].scores ? JSON.parse(JSON.stringify(state.users[nick].scores)) : {};
+                    delete firebaseUser.scores;
                     state.users[nick] = {
-                        ...state.users[nick],
-                        ...firebaseUser,
+                        ...state.users[nick], ...firebaseUser,
                         teamLogo: firebaseUser.teamLogo || state.users[nick]?.teamLogo || null,
                         starters: ensureArray(firebaseUser.starters, 11),
-                        reserves: ensureArray(firebaseUser.reserves, 7)
+                        reserves: ensureArray(firebaseUser.reserves, 7),
+                        scores: _sv
                     };
-                    
-                    // Atualizar cache de fotos
+                    _sync();
                     if (firebaseUser.teamLogo) {
-                        try {
-                            let photoCache = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}');
-                            photoCache[nick] = firebaseUser.teamLogo;
-                            sessionStorage.setItem('fantasy_photos_cache', JSON.stringify(photoCache));
-                        } catch(e) {}
+                        try { var pc = JSON.parse(sessionStorage.getItem('fantasy_photos_cache') || '{}'); pc[nick] = firebaseUser.teamLogo; sessionStorage.setItem('fantasy_photos_cache', JSON.stringify(pc)); } catch(e) {}
                     }
-                    
                     render();
                 }
             });
@@ -18261,9 +18747,92 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         render();
     };
     
-    window.viewUserTeam = function(nick) {
+    window.viewUserTeam = async function(nick) {
         state.viewingUser = nick;
         state.modal = 'viewTeam';
+        
+        // Garantir que o amigo tem scores para a rodada selecionada
+        const user = state.users[nick];
+        const round = state.selectedRound;
+        if (user) {
+            _sync();
+            const hasScores = Object.keys(_get(nick, round).players).length > 0;
+            
+            if (!hasScores) {
+                // 1. Tentar carregar do sharedScores no Firebase
+                try {
+                    if (db) {
+                        const snap = await db.ref('sharedScores/round_' + round + '/' + nick).once('value');
+                        const shared = snap.val();
+                        if (shared && shared.players && Object.keys(shared.players).length > 0) {
+                            if (!user.scores) user.scores = {};
+                            if (!user.scores[round]) user.scores[round] = { players: {}, coach: 0, live: false };
+                            Object.assign(user.scores[round].players, shared.players);
+                            if (shared.coach !== undefined) user.scores[round].coach = shared.coach;
+                            if (shared.live !== undefined) user.scores[round].live = shared.live;
+                            _put(round, nick, shared);
+                            console.log(`📊 Scores de ${nick} carregados do sharedScores`);
+                        }
+                    }
+                } catch(e) {
+                    console.log('Erro ao carregar sharedScores:', e.message);
+                }
+                
+                // 2. Se ainda não tem, calcular usando cache local
+                const cachedStats = window._cachedPlayerStats || {};
+                const stillNoScores = Object.keys(_get(nick, round).players).length === 0;
+                    
+                if (stillNoScores && Object.keys(cachedStats).length > 0 && window._cachedRound == round) {
+                    if (!user.scores) user.scores = {};
+                    if (!user.scores[round]) user.scores[round] = { players: {}, coach: 0, live: false };
+                    
+                    const teamsWithGames = new Set();
+                    Object.values(cachedStats).forEach(s => { if (s._teamId) teamsWithGames.add(s._teamId); });
+                    
+                    ensureArray(user.starters, 11).forEach(player => {
+                        if (player && player.id) {
+                            const pid = Number(player.id);
+                            if (pid < 0) return;
+                            const sk = cachedStats[pid] ? pid : player.id;
+                            if (cachedStats[sk]) {
+                                user.scores[round].players[pid] = calculatePlayerScore(
+                                    cachedStats[sk].data, cachedStats[sk].fixture, false,
+                                    player.teamId || cachedStats[sk]._teamId, player.position || _getManualPosition(pid)
+                                );
+                            } else if (player.teamId && teamsWithGames.has(player.teamId)) {
+                                user.scores[round].players[pid] = 0;
+                            }
+                        }
+                    });
+                    
+                    ensureArray(user.reserves, 7).forEach(player => {
+                        if (player && player.id) {
+                            const pid = Number(player.id);
+                            if (pid < 0) return;
+                            const sk = cachedStats[pid] ? pid : player.id;
+                            if (cachedStats[sk]) {
+                                user.scores[round].players[pid] = Math.round(
+                                    calculatePlayerScore(cachedStats[sk].data, cachedStats[sk].fixture, false,
+                                        player.teamId || cachedStats[sk]._teamId, player.position || _getManualPosition(pid)
+                                    ) * 0.5 * 10) / 10;
+                            } else if (player.teamId && teamsWithGames.has(player.teamId)) {
+                                user.scores[round].players[pid] = 0;
+                            }
+                        }
+                    });
+                    
+                    if (user.coach && user.coach.teamId) {
+                        (state.liveFixtures || []).forEach(fixture => {
+                            if (fixture.teams?.home?.id === user.coach.teamId || fixture.teams?.away?.id === user.coach.teamId) {
+                                user.scores[round].coach = calculateCoachScore(fixture, user.coach.teamId, cachedStats);
+                            }
+                        });
+                    }
+                    console.log(`📊 Scores de ${nick} calculados do cache local`);
+                }
+            }
+        }
+        
         render();
     };
     
@@ -18497,6 +19066,87 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         showToast('✅ Substituição realizada: ' + fromName + ' ↔ ' + toName);
     };
     
+    // ==================== TAP-TO-SWAP (MOBILE) ====================
+    // No celular, HTML5 drag não funciona. Sistema de toque:
+    // 1º toque longo (300ms) = seleciona jogador, 2º toque = troca
+    let _tapSwapSource = null;
+    let _touchTimer = null;
+    
+    // Event delegation no root - funciona sem re-bind após render
+    document.addEventListener('touchstart', function(e) {
+        if (!canEditTeam() || state.screen !== 'lineup') return;
+        
+        // Achar o slot mais próximo (starter-slot ou reserve-slot)
+        const slot = e.target.closest('.starter-slot, .reserve-slot');
+        if (!slot) return;
+        
+        const type = slot.dataset.type;
+        const index = parseInt(slot.dataset.index);
+        if (!type || isNaN(index)) return;
+        
+        const player = type === 'starter' ? state.starters[index] : state.reserves[index];
+        if (!player) return;
+        
+        // Se já tem um jogador selecionado para troca, fazer a troca imediatamente
+        if (_tapSwapSource) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (_tapSwapSource.type === type && _tapSwapSource.index === index) {
+                // Tocou no mesmo - cancelar
+                _tapSwapSource = null;
+                removeAllHighlights();
+                document.querySelectorAll('.starter-slot, .reserve-slot').forEach(function(s) { s.style.outline = ''; });
+                return;
+            }
+            
+            // Fazer a troca
+            dragData = _tapSwapSource;
+            handleDropOnSlot(e, type, index);
+            _tapSwapSource = null;
+            document.querySelectorAll('.starter-slot, .reserve-slot').forEach(function(s) { s.style.outline = ''; });
+            return;
+        }
+        
+        // Toque longo (300ms) = entrar em modo troca
+        _touchTimer = setTimeout(function() {
+            _tapSwapSource = { type: type, index: index, player: player, position: player.position || '' };
+            
+            // Feedback visual
+            slot.style.outline = '3px solid #10b981';
+            highlightCompatibleSlots(player.position, type);
+            
+            showToast('👆 Toque em outro jogador para trocar');
+            
+            // Vibrar se disponível
+            if (navigator.vibrate) navigator.vibrate(50);
+            
+            // Auto-cancelar após 6 segundos
+            setTimeout(function() {
+                if (_tapSwapSource) {
+                    _tapSwapSource = null;
+                    removeAllHighlights();
+                    document.querySelectorAll('.starter-slot, .reserve-slot').forEach(function(s) { s.style.outline = ''; });
+                }
+            }, 6000);
+        }, 300);
+    }, { passive: false });
+    
+    document.addEventListener('touchend', function() {
+        if (_touchTimer) {
+            clearTimeout(_touchTimer);
+            _touchTimer = null;
+        }
+    });
+    
+    document.addEventListener('touchmove', function() {
+        // Se moveu o dedo, cancelar o toque longo
+        if (_touchTimer) {
+            clearTimeout(_touchTimer);
+            _touchTimer = null;
+        }
+    });
+
     // Destacar slots compatíveis
     function highlightCompatibleSlots(playerPosition, sourceType) {
         // Mostrar indicador de drag
@@ -21720,22 +22370,28 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
         
         const action = open ? 'LIBERAR' : 'TRAVAR';
-        if (!confirm(`Deseja ${action} as substituições para TODOS os usuários?`)) {
+        if (!confirm(`Deseja ${action} as substituições para TODOS os usuários?${open ? '\n\nVai ficar liberado até você travar manualmente.' : '\n\nVai voltar ao modo automático (trava 30min antes da rodada).'}`)) {
             return;
         }
         
         console.log(`${open ? '🔓' : '🔒'} Admin ${action.toLowerCase()}ndo substituições`);
         
-        // Salvar no Firebase (todos receberão via listener)
         if (db) {
             await db.ref('gameState').update({
                 substitutionsOpen: open,
+                adminSubsOverride: open, // true = override ativo, false = volta automático
                 updatedAt: Date.now()
             });
         }
         
         state.substitutionsOpen = open;
-        alert(`✅ Substituições ${open ? 'LIBERADAS' : 'TRAVADAS'}!`);
+        state.adminSubsOverride = open;
+        
+        if (open) {
+            alert('✅ Substituições LIBERADAS!\n\nFicará liberado até você clicar em "Travar".');
+        } else {
+            alert('✅ Substituições TRAVADAS!\n\nVoltou ao modo automático:\n• Trava 30min antes do 1º jogo\n• Libera após a rodada');
+        }
         render();
     };
     
@@ -24129,6 +24785,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     
                     console.log('✅ Login automático bem sucedido!');
                     
+                    // Restaurar backup local se mais recente (protege substituições que falharam ao salvar)
+                    restoreLineupBackupIfNewer(savedUser, userData.lastUpdate);
+                    
                     // Iniciar listeners
                     listenToDraftChat();
                     listenToDraftStatus();
@@ -24235,6 +24894,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                             
                             console.log('✅ Dados carregados do Firebase');
                             
+                            // Restaurar backup local se mais recente (protege substituições que falharam ao salvar)
+                            restoreLineupBackupIfNewer(state.currentUser, userData.lastUpdate);
+                            
                             // Forçar sincronização imediata de fotos/escudos/times
                             lastPhotoSync = 0;
                             syncPlayerPhotos();
@@ -24273,6 +24935,25 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                     state.screen = 'auth';
                 }
             }
+            
+            // Eager fetch scores
+            try {
+                if (db && state.currentUser) {
+                    var _gs = await db.ref('gameState').once('value').then(function(s){return s.val();}).catch(function(){return null;});
+                    if (_gs && _gs.currentRound) {
+                        state.currentRound = _gs.currentRound;
+                        state.selectedRound = _gs.currentRound;
+                        if (_gs.substitutionsOpen !== undefined) state.substitutionsOpen = _gs.substitutionsOpen;
+                        if (_gs.roundStatus) state.roundStatus = _gs.roundStatus;
+                        var _ss = await db.ref('sharedScores/round_' + state.currentRound).once('value').then(function(s){return s.val();}).catch(function(){return null;});
+                        if (_ss) {
+                            Object.keys(_ss).forEach(function(nick) { if (_ss[nick] && _ss[nick].players) _put(state.currentRound, nick, _ss[nick]); });
+                            _sync();
+                        }
+                        console.log('⚡ Scores prontos: Rodada ' + state.currentRound);
+                    }
+                }
+            } catch(e) { console.log('⚡ Eager skip:', e); }
             
             render();
         } catch(e) {
@@ -24393,7 +25074,7 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
                 render();
             }
             
-            const allPlayers = await autoSyncViaApiFootball();
+            const allPlayers = await autoSyncViaApiFootball(silentSync);
             
             if (allPlayers.length > 0) {
                 // Preservar jogadores que estão escalados por algum usuário
@@ -24517,9 +25198,9 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     }
     
     // Auto-sync via API-Football (sem modal)
-    async function autoSyncViaApiFootball() {
-        // Só mostrar progresso se não estiver digitando ou na tela de login
-        const shouldShowProgress = state.isSyncingBackground && !isUserTyping && state.screen !== 'auth' && state.currentUser;
+    async function autoSyncViaApiFootball(silentSync = false) {
+        // Só mostrar progresso se não estiver digitando ou na tela de login E não for sync silencioso
+        const shouldShowProgress = !silentSync && state.isSyncingBackground && !isUserTyping && state.screen !== 'auth' && state.currentUser;
         
         if (shouldShowProgress) {
             state.syncProgress = '📡 Conectando API-Football...';
@@ -24679,9 +25360,17 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     // Função para verificar se tem jogos ao vivo agora
     function hasLiveGamesNow() {
         if (!state.liveFixtures || state.liveFixtures.length === 0) return false;
+        const _now = Date.now();
         return state.liveFixtures.some(f => {
             const status = f.fixture?.status?.short;
-            return ['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status);
+            // Status ao vivo da API
+            if (['1H', '2H', 'HT', 'ET', 'P', 'BT', 'LIVE'].includes(status)) return true;
+            // Jogo NS mas horário já passou (até 3h) = provavelmente ao vivo
+            if (status === 'NS') {
+                const gameTime = new Date(f.fixture?.date).getTime();
+                if (gameTime < _now && (_now - gameTime) < 3 * 60 * 60 * 1000) return true;
+            }
+            return false;
         });
     }
     
@@ -24712,19 +25401,24 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         if (hasLive) {
             // JOGO AO VIVO: atualizar a cada 3 minutos
             console.log('⚡ Modo AO VIVO: atualizando a cada 3 min');
-            liveUpdateInterval = setInterval(() => {
+            liveUpdateInterval = setInterval(async () => {
                 if (state.isConfirmed && !state.isUpdatingScores) {
                     console.log('🔄 Atualização automática (3 min - AO VIVO)');
-                    syncRoundScores();
+                    window._forceRefreshActive = true;
+                    // Atualizar FIXTURES primeiro (placares) e depois PONTUAÇÃO
+                    await fetchLiveFixtures(true);
+                    syncRoundScores(true);
+                    setTimeout(() => { window._forceRefreshActive = false; }, 30000);
                 }
             }, 3 * 60 * 1000); // 3 minutos
             
         } else if (hasSoon) {
             // JOGO EM BREVE: atualizar a cada 15 minutos
             console.log('⏰ Modo PRÉ-JOGO: atualizando a cada 15 min');
-            liveUpdateInterval = setInterval(() => {
+            liveUpdateInterval = setInterval(async () => {
                 if (state.isConfirmed && !state.isUpdatingScores) {
                     console.log('🔄 Atualização automática (15 min - PRÉ-JOGO)');
+                    await fetchLiveFixtures();
                     syncRoundScores(); // Usa cache compartilhado do Firebase
                     manageUpdateInterval();
                 }
@@ -24739,8 +25433,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
     
     // Iniciar gerenciador após carregar fixtures
     const originalFetchLiveFixtures = fetchLiveFixtures;
-    fetchLiveFixtures = async function() {
-        await originalFetchLiveFixtures();
+    fetchLiveFixtures = async function(forceRefresh) {
+        await originalFetchLiveFixtures(forceRefresh);
         manageUpdateInterval();
     };
     
@@ -24787,10 +25481,8 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         }
     
         // Sempre sincronizar pontuação e gerenciar updates (não depender de isConfirmed)
-        if (state.currentUser) {
-            await syncRoundScores();
-            manageUpdateInterval();
-        }
+        // NOTA: syncRoundScores agora roda após fetchLiveFixtures no setTimeout de 1.5s
+        // Aqui só fazemos o migration check e detecção de scores corrompidos
     }, 3000);
     
     // Detectar rodada atual ao iniciar - SEMPRE validar com a API
@@ -24801,6 +25493,12 @@ body.modal-open { overflow: hidden; position: fixed; width: 100%; height: 100%; 
         // Detectar countdown da rodada atual
         await autoDetectNextRound(true);
         render();
+        
+        // AGORA sincronizar pontuação (após fixtures carregadas)
+        if (state.currentUser) {
+            await syncRoundScores();
+            manageUpdateInterval();
+        }
     }, 1500);
     
     // ==================== FORÇAR SYNC (ADMIN) ====================
